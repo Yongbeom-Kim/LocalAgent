@@ -1,3 +1,5 @@
+import { DEFAULTS } from "@localagent/shared";
+
 export interface Config {
   amqpUrl: string;
   apiKeys: Map<string, string>;
@@ -22,7 +24,7 @@ export function loadConfig(): Config {
     amqpUrl,
     apiKeys,
     port: parseInt(process.env.PORT ?? "3000", 10),
-    inFlightTtlMs: parseInt(process.env.IN_FLIGHT_TTL_MS ?? "4200000", 10),
-    scavengerIntervalMs: parseInt(process.env.SCAVENGER_INTERVAL_MS ?? "60000", 10),
+    inFlightTtlMs: parseInt(process.env.IN_FLIGHT_TTL_MS ?? String(DEFAULTS.IN_FLIGHT_TTL_MS), 10),
+    scavengerIntervalMs: parseInt(process.env.SCAVENGER_INTERVAL_MS ?? String(DEFAULTS.SCAVENGER_INTERVAL_MS), 10),
   };
 }

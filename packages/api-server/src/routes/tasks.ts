@@ -31,7 +31,7 @@ export async function tasksRoutes(app: FastifyInstance): Promise<void> {
 
     const { exchange, routingKeyPrefix } = QUEUE_MAP.tasks;
     const rk = routingKey(routingKeyPrefix, message.data.type);
-    const channel = (app as any).publishChannel;
+    const channel = app.publishChannel;
 
     channel.publish(exchange, rk, Buffer.from(JSON.stringify(message.data)), { persistent: true, contentType: "application/json" });
 

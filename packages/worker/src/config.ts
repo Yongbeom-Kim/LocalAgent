@@ -1,3 +1,4 @@
+import { DEFAULTS } from "@localagent/shared";
 import type { WorkerMode } from "./core/pipeline.js";
 
 export interface WorkerConfig {
@@ -31,7 +32,7 @@ export function loadWorkerConfig(): WorkerConfig {
     apiServerUrl,
     apiKey,
     modes,
-    pollIntervalMs: parseInt(process.env.POLL_INTERVAL ?? "5000", 10),
+    pollIntervalMs: parseInt(process.env.POLL_INTERVAL ?? String(DEFAULTS.POLL_INTERVAL_MS), 10),
     telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
   };
 }

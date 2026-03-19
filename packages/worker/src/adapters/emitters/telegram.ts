@@ -1,5 +1,7 @@
 import type { EmitterPort } from "../../ports/emitter.js";
 import type { ResultMessage } from "@localagent/shared";
+import { OUTPUT_TYPE_SCHEMAS } from "@localagent/shared";
+import { formatResultText } from "./format.js";
 
 const TELEGRAM_MAX_LENGTH = 4096;
 
@@ -8,9 +10,8 @@ export class TelegramEmitter implements EmitterPort {
   constructor(private botToken: string) {}
 
   async emit(result: ResultMessage): Promise<void> {
-    const chatId = (result.outputMeta as { chatId: string }).chatId;
-    const prefix = result.status === "ok" ? "" : "[ERROR] ";
-    const text = `${prefix}Task ${result.taskId}:\n\n${result.output}`;
+    const { chatId } = OUTPUT_TYPE_SCHEMAS.telegram.parse(result.outputMeta);
+    const text = formatResultText(result);
 
     const chunks = this.chunk(text, TELEGRAM_MAX_LENGTH);
     for (const chunk of chunks) {

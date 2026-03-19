@@ -1,4 +1,4 @@
-import { routingKey, type TaskMessage, type JobMessage, type ResultMessage } from "@localagent/shared";
+import { routingKey, type TaskMessage, type JobMessage, type ResultMessage, type QueueName } from "@localagent/shared";
 import type { QueuePort } from "../ports/queue.js";
 import type { EmitterPort } from "../ports/emitter.js";
 import type { Enricher } from "./enricher.js";
@@ -6,7 +6,7 @@ import type { ExecutorCore } from "./executor.js";
 
 export type WorkerMode = "enrich" | "execute" | "emit";
 
-const MODE_QUEUES: Record<WorkerMode, string> = {
+const MODE_QUEUES: Record<WorkerMode, QueueName> = {
   enrich: "tasks",
   execute: "jobs",
   emit: "results",

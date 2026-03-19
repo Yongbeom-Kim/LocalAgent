@@ -10,7 +10,10 @@ export class HttpQueueAdapter implements QueuePort {
   async consume(queueName: string): Promise<ConsumedMessage | null> {
     const res = await fetch(`${this.baseUrl}/queues/${queueName}/consume`, { method: "GET", headers: this.headers() });
     if (res.status === 204) return null;
-    if (res.status !== 200) throw new Error(`Consume failed: ${res.status}`);
+    if (res.status !== 200) {
+      const body = await res.text();
+      throw new Error(`Consume failed: ${res.status} - ${body}`);
+    }
     return res.json() as Promise<ConsumedMessage>;
   }
 
@@ -19,7 +22,10 @@ export class HttpQueueAdapter implements QueuePort {
       method: "POST", headers: this.headers(), body: JSON.stringify({ receiptHandle }),
     });
     if (res.status === 404) { console.warn(`Stale receipt handle: ${receiptHandle}`); return; }
-    if (res.status !== 200) throw new Error(`Ack failed: ${res.status}`);
+    if (res.status !== 200) {
+      const body = await res.text();
+      throw new Error(`Ack failed: ${res.status} - ${body}`);
+    }
   }
 
   async nack(receiptHandle: string): Promise<void> {
@@ -27,13 +33,19 @@ export class HttpQueueAdapter implements QueuePort {
       method: "POST", headers: this.headers(), body: JSON.stringify({ receiptHandle }),
     });
     if (res.status === 404) { console.warn(`Stale receipt handle: ${receiptHandle}`); return; }
-    if (res.status !== 200) throw new Error(`Nack failed: ${res.status}`);
+    if (res.status !== 200) {
+      const body = await res.text();
+      throw new Error(`Nack failed: ${res.status} - ${body}`);
+    }
   }
 
   async publish(queueName: string, message: unknown, routingKey?: string): Promise<void> {
     const res = await fetch(`${this.baseUrl}/queues/${queueName}/publish`, {
       method: "POST", headers: this.headers(), body: JSON.stringify({ message, routingKey }),
     });
-    if (res.status !== 200) throw new Error(`Publish failed: ${res.status}`);
+    if (res.status !== 200) {
+      const body = await res.text();
+      throw new Error(`Publish failed: ${res.status} - ${body}`);
+    }
   }
 }

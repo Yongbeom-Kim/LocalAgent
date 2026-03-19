@@ -1,6 +1,6 @@
 import Fastify from "fastify";
 import { loadConfig } from "./config.js";
-import { connectAmqp, createChannel } from "./amqp.js";
+import { connectAmqp, createChannel, closeAmqp } from "./amqp.js";
 import { InFlightManager } from "./in-flight.js";
 import { healthRoutes } from "./routes/health.js";
 import { tasksRoutes } from "./routes/tasks.js";
@@ -33,6 +33,15 @@ async function main(): Promise<void> {
   await app.register(healthRoutes);
   await app.register(tasksRoutes);
   await app.register(queuesRoutes);
+
+  const shutdown = async () => {
+    console.log("Shutting down...");
+    inFlight.stopScavenger();
+    await app.close();
+    await closeAmqp();
+  };
+  process.on("SIGTERM", shutdown);
+  process.on("SIGINT", shutdown);
 
   await app.listen({ port: config.port, host: "0.0.0.0" });
 }

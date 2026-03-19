@@ -12,8 +12,8 @@ export class ClaudeCliExecutor implements ExecutorPort {
 
       const proc = spawn("claude", args, { stdio: ["ignore", "pipe", "pipe"], detached: true });
 
-      let stdout = "";
-      let stderr = "";
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
       let killed = false;
 
       const timer = setTimeout(() => {
@@ -21,13 +21,15 @@ export class ClaudeCliExecutor implements ExecutorPort {
         if (proc.pid) { try { process.kill(-proc.pid, "SIGKILL"); } catch { proc.kill("SIGKILL"); } }
       }, options.timeout);
 
-      proc.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-      proc.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+      proc.stdout.on("data", (chunk: Buffer) => { stdoutChunks.push(chunk); });
+      proc.stderr.on("data", (chunk: Buffer) => { stderrChunks.push(chunk); });
 
       proc.on("close", (code) => {
         clearTimeout(timer);
         if (killed) { resolve({ success: false, output: `Task timed out after ${options.timeout}ms` }); return; }
+        const stderr = Buffer.concat(stderrChunks).toString();
         if (code !== 0) { resolve({ success: false, output: stderr || `Claude CLI exited with code ${code}` }); return; }
+        const stdout = Buffer.concat(stdoutChunks).toString();
         resolve({ success: true, output: parseStreamJson(stdout) });
       });
     });
