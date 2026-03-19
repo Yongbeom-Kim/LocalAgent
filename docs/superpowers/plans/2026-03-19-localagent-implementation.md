@@ -178,12 +178,11 @@ LocalAgent/
   "dependencies": {
     "@localagent/shared": "workspace:*",
     "fastify": "^5.2.0",
-    "amqplib": "^0.10.0",
-    "uuid": "^11.1.0"
+    "amqplib": "^0.10.0"
   },
   "devDependencies": {
     "@types/amqplib": "^0.10.0",
-    "@types/uuid": "^10.0.0",
+    "@types/node": "^20.0.0",
     "typescript": "^5.7.0",
     "tsx": "^4.19.0",
     "vitest": "^3.0.0"
@@ -2980,7 +2979,7 @@ Expected: `{"status":"ok"}`
 curl -X POST http://localhost:3000/tasks \
   -H "Authorization: Bearer changeme-key-1" \
   -H "Content-Type: application/json" \
-  -d '{"type":"code_review","outputType":"telegram","outputMeta":{"chatId":"test"},"payload":{"text":"hello"}}'
+  -d '{"type":"code_review","outputType":"telegram","outputMeta":{"chatId":"test"},"payload":{"repo":"foo/bar","pr":1}}'
 ```
 
 Expected: `{"taskId":"<uuid>"}` with 201 status.
