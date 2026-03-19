@@ -170,36 +170,54 @@ to tasks exchange with routing key `task.<type>`.
 
 #### Queue Proxy
 
-Generic endpoints that proxy RMQ queues over HTTP. Workers poll these.
+Endpoints that proxy specific RMQ queues over HTTP. Workers poll these.
+
+**Allowed queues per operation:**
+
+| Operation | Allowed Queues |
+|-----------|---------------|
+| `consume` | `tasks`, `jobs`, `results` |
+| `ack/nack` | any (validated against in-flight map) |
+| `publish` | `jobs`, `results` |
+
+Queue names in URLs are short names (`tasks`, `jobs`, `results`). The server maps them internally:
+
+| Short Name | Queue | Exchange | Default Routing Key |
+|------------|-------|----------|-------------------|
+| `tasks` | `tasks.queue` | `tasks.exchange` | `task.<type>` |
+| `jobs` | `jobs.queue` | `jobs.exchange` | `job.<type>` |
+| `results` | `results.queue` | `results.exchange` | `result.<outputType>` |
 
 ```
-GET  /queues/:queueName/consume
-Response: { deliveryTag, message } or 204 (empty)
+GET  /queues/:name/consume
+Response: { receiptHandle, message } or 204 (empty)
 
-Dequeues one message from the named queue. Message remains unacked in RMQ
-until the worker confirms via /ack or /nack. Server maintains an in-memory
-map of deliveryTag → AMQP channel for in-flight messages.
+Dequeues one message. The `receiptHandle` is a server-generated UUID that
+maps internally to { amqpChannel, deliveryTag }. AMQP delivery tags are
+channel-scoped integers and must not be exposed directly.
 ```
 
 ```
-POST /queues/:queueName/ack
-Body: { deliveryTag }
+POST /queues/:name/ack
+Body: { receiptHandle }
 
 Acks the message on RMQ. Removes from in-flight map.
 ```
 
 ```
-POST /queues/:queueName/nack
-Body: { deliveryTag }
+POST /queues/:name/nack
+Body: { receiptHandle }
 
-Nacks with requeue: false. Message is dropped.
+Nacks with requeue: false. Message is dropped. Worker is expected to have
+already published a failure ResultMessage before nacking.
 ```
 
 ```
-POST /queues/:queueName/publish
-Body: { routingKey, message }
+POST /queues/:name/publish
+Body: { routingKey?, message }
 
-Publishes a message to the exchange associated with the named queue.
+Publishes to the exchange mapped from :name. If routingKey is omitted,
+uses the default routing key for that exchange (see table above).
 ```
 
 #### Health
@@ -211,7 +229,11 @@ Response: { status: "ok" }
 
 ### In-Flight Message Management
 
-The server holds unacked AMQP messages in memory, keyed by `deliveryTag`. If a worker disappears (no ack/nack within the task's configured timeout + a buffer), the server nacks the message with `requeue: true` so another worker can pick it up.
+The server maintains an in-memory map of `receiptHandle (UUID) → { channel, deliveryTag, createdAt }`.
+
+**Server restart:** If the API server restarts, all AMQP connections drop. RabbitMQ automatically requeues all unacked messages. Workers holding stale receipt handles will receive a 404 on ack/nack and should discard the message (it has already been requeued).
+
+**Timeout scavenging:** The server runs a periodic sweep (every 60s). Any in-flight message older than `IN_FLIGHT_TTL` (default: 70 minutes, slightly above the 1h task timeout) is nacked with `requeue: true`. This is a single global TTL — the server does not inspect message contents.
 
 ## Worker (`packages/worker/`)
 
@@ -235,7 +257,7 @@ Typical deployments:
 
 | Port | Methods | Purpose |
 |------|---------|---------|
-| `QueuePort` | `consume()`, `ack(tag)`, `nack(tag)`, `publish(queue, msg)` | Queue operations via HTTP |
+| `QueuePort` | `consume()`, `ack(handle)`, `nack(handle)`, `publish(queue, msg, routingKey?)` | Queue operations via HTTP |
 | `EmitterPort` | `emit(result): Promise<void>` | Send result to a chat platform |
 | `TaskResolverPort` | `resolve(task): Promise<context>` | Fetch external context for enrichment |
 | `ExecutorPort` | `execute(job): Promise<result>` | Run Claude Code |
@@ -258,15 +280,34 @@ Typical deployments:
 
 Constructor injection, no framework. `main.ts` reads `--mode` and config (API server URL, API key, emitter tokens), instantiates the relevant adapters, injects them into core classes, and starts the pipeline.
 
+### Concurrency
+
+Each worker mode processes **one message at a time**. The worker does not poll for the next message until the current one is fully processed (acked/nacked). This ensures a desktop machine only runs one Claude process at a time.
+
 ### Error Handling
 
 - On Claude CLI failure (non-zero exit or timeout): worker publishes a `ResultMessage` with `status: "error"` and the error details as `output`, then acks the job message. The emitter worker sends the failure notification to the user's chat.
-- No automatic retries. Failures are reported immediately.
+- No automatic retries. Failures are reported immediately. Nacked messages are dropped (no DLQ). This is intentional for the MVP — the failure result message serves as the notification.
 - On network errors (can't reach API server): worker logs and retries the poll on the next interval.
+- On stale receipt handle (404 from ack/nack): worker discards the message — it has been requeued by the server's timeout scavenger or a server restart.
+
+### Graceful Shutdown
+
+On SIGTERM/SIGINT:
+1. Stop polling for new messages.
+2. If a Claude CLI subprocess is running, wait for it to complete (up to the configured timeout). Do not kill it prematurely — the user is paying for that invocation.
+3. Ack/nack the in-flight message based on the result.
+4. Exit.
+
+If the user force-kills the worker (SIGKILL), the message remains unacked. The API server's timeout scavenger will eventually nack it with `requeue: true`.
 
 ### Task Timeout
 
 Default: 1 hour (3,600,000 ms). Configurable per task type in the shared contract. The executor spawns the Claude CLI subprocess and starts a timer. If the timer fires before the process exits, it sends `SIGKILL` to the process group and treats it as a failure.
+
+### Claude CLI Output Parsing
+
+The executor runs `claude -p "<prompt>" --output-format stream-json`. The stream-json format emits newline-delimited JSON objects. The executor collects all objects where `type === "assistant"` and concatenates their `content` text blocks to produce the final `ResultMessage.output` string. Non-text content (tool use, etc.) is discarded from the output.
 
 ## RabbitMQ Topology
 
@@ -287,6 +328,16 @@ Declared via `definitions.json`, loaded on broker startup.
 | `tasks.queue` | `tasks.exchange` | `task.#` |
 | `jobs.queue` | `jobs.exchange` | `job.#` |
 | `results.queue` | `results.exchange` | `result.#` |
+
+### Routing Keys
+
+| Stage | Routing Key Format | Example |
+|-------|-------------------|---------|
+| Task | `task.<type>` | `task.code_review` |
+| Job | `job.<type>` | `job.code_review` |
+| Result | `result.<outputType>` | `result.telegram` |
+
+The enricher preserves the task type when publishing a job. The executor uses the `outputType` from the job message as the result routing key.
 
 ### Message Durability
 
@@ -320,6 +371,10 @@ services:
       - TELEGRAM_BOT_TOKEN=...
       - LARK_WEBHOOK_URL=...
 ```
+
+## TLS
+
+Desktop workers connect to the VPS over the public internet. TLS is terminated by a reverse proxy (Caddy or nginx) in front of the API server. The API server itself listens on plain HTTP internally. The Docker Compose file should include a reverse proxy service, or the VPS runs one at the host level.
 
 ## Configuration
 
