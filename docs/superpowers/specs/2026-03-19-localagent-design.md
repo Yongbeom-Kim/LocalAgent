@@ -198,14 +198,15 @@ channel-scoped integers and must not be exposed directly.
 ```
 
 ```
-POST /queues/:name/ack
+POST /queues/ack
 Body: { receiptHandle }
 
 Acks the message on RMQ. Removes from in-flight map.
+Receipt handle is globally unique — no queue name needed.
 ```
 
 ```
-POST /queues/:name/nack
+POST /queues/nack
 Body: { receiptHandle }
 
 Nacks with requeue: false. Message is dropped. Worker is expected to have
