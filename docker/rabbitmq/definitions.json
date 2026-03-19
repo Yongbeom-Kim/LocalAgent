@@ -1,0 +1,38 @@
+{
+  "rabbit_version": "3.13.0",
+  "users": [
+    {
+      "name": "admin",
+      "password_hash": "CHANGE_ME",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"]
+    }
+  ],
+  "vhosts": [
+    { "name": "/" }
+  ],
+  "permissions": [
+    {
+      "user": "admin",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "exchanges": [
+    { "name": "tasks.exchange", "vhost": "/", "type": "topic", "durable": true, "auto_delete": false },
+    { "name": "jobs.exchange", "vhost": "/", "type": "topic", "durable": true, "auto_delete": false },
+    { "name": "results.exchange", "vhost": "/", "type": "topic", "durable": true, "auto_delete": false }
+  ],
+  "queues": [
+    { "name": "tasks.queue", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} },
+    { "name": "jobs.queue", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} },
+    { "name": "results.queue", "vhost": "/", "durable": true, "auto_delete": false, "arguments": {} }
+  ],
+  "bindings": [
+    { "source": "tasks.exchange", "vhost": "/", "destination": "tasks.queue", "destination_type": "queue", "routing_key": "task.#", "arguments": {} },
+    { "source": "jobs.exchange", "vhost": "/", "destination": "jobs.queue", "destination_type": "queue", "routing_key": "job.#", "arguments": {} },
+    { "source": "results.exchange", "vhost": "/", "destination": "results.queue", "destination_type": "queue", "routing_key": "result.#", "arguments": {} }
+  ]
+}

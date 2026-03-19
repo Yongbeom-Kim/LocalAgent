@@ -1,0 +1,44 @@
+services:
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    volumes:
+      - ./rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - internal
+
+  api-server:
+    build:
+      context: ../
+      dockerfile: packages/api-server/Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      AMQP_URL: amqp://admin:changeme@rabbitmq:5672
+      API_KEYS: "changeme-key-1:admin"
+      PORT: "3000"
+    depends_on:
+      - rabbitmq
+    networks:
+      - internal
+
+  emitter-worker:
+    build:
+      context: ../
+      dockerfile: packages/worker/Dockerfile
+    command: ["node", "dist/main.js", "--mode", "emit"]
+    environment:
+      API_SERVER_URL: http://api-server:3000
+      API_KEY: "changeme-key-1"
+      WORKER_MODE: emit
+    depends_on:
+      - api-server
+    networks:
+      - internal
+
+volumes:
+  rabbitmq-data:
+
+networks:
+  internal:
