@@ -7,12 +7,14 @@ COPY rush.json .
 COPY tsconfig.base.json .
 COPY common/ common/
 
-# Copy package manifests
+# Copy package manifests (Rush needs all projects listed in rush.json)
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/api/package.json packages/api/package.json
+COPY packages/daemon/package.json packages/daemon/package.json
 
 # Install Rush globally and run rush install
 RUN npm install -g @microsoft/rush@5.172.1
+RUN rm -rf common/temp/pnpm-store common/temp/node_modules common/temp/install-run common/temp/rush-recycler common/temp/last-install.flag
 RUN rush install --to @local-agent/api
 
 # Copy source

@@ -8,3 +8,4 @@ common/temp/
 common/autoinstallers/
 *.tgz
 .rush/
+rush-logs/
