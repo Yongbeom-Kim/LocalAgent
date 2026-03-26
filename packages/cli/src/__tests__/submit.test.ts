@@ -66,6 +66,7 @@ describe('submitTask', () => {
       ok: false,
       status: 503,
       statusText: 'Service Unavailable',
+      text: async () => 'server busy',
     });
 
     const result = await submitTask({
@@ -76,7 +77,7 @@ describe('submitTask', () => {
 
     expect(result).toEqual({
       success: false,
-      error: '503 Service Unavailable',
+      error: '503 Service Unavailable — server busy',
     });
   });
 
@@ -85,6 +86,7 @@ describe('submitTask', () => {
       ok: false,
       status: 400,
       statusText: 'Bad Request',
+      text: async () => '',
     });
 
     const result = await submitTask({

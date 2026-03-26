@@ -2,7 +2,7 @@
 import { Command } from 'commander';
 import { registerSubmitCommand } from './commands/submit';
 
-function main() {
+async function main() {
   const program = new Command();
 
   program
@@ -12,7 +12,7 @@ function main() {
 
   registerSubmitCommand(program);
 
-  program.parseAsync();
+  await program.parseAsync();
 }
 
 main();

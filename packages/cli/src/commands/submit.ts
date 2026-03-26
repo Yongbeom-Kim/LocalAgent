@@ -37,7 +37,9 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
   }
 
   if (!response.ok) {
-    return { success: false, error: `${response.status} ${response.statusText}` };
+    const body = await response.text().catch(() => '');
+    const detail = body ? ` — ${body}` : '';
+    return { success: false, error: `${response.status} ${response.statusText}${detail}` };
   }
 
   try {
