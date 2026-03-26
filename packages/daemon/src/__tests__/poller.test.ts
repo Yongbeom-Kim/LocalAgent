@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Poller } from '../poller';
 import { Task } from '@local-agent/shared';
+import { TaskOrchestrator } from '../core/task-orchestrator';
+import { TaskExecutor } from '../ports/task-executor';
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -8,11 +10,13 @@ vi.stubGlobal('fetch', mockFetch);
 
 describe('Poller', () => {
   let poller: Poller;
-  const mockHandler = vi.fn();
+  let mockExecutor: TaskExecutor;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    poller = new Poller('http://localhost:3000', mockHandler);
+    mockExecutor = { execute: vi.fn().mockResolvedValue(undefined) };
+    const orchestrator = new TaskOrchestrator(mockExecutor);
+    poller = new Poller('http://localhost:3000', orchestrator);
   });
 
   afterEach(() => {
@@ -20,7 +24,7 @@ describe('Poller', () => {
   });
 
   describe('pollOnce', () => {
-    it('fetches next task and calls handler + ack when task available', async () => {
+    it('fetches next task and calls orchestrator + ack when task available', async () => {
       const task: Task = {
         task_id: 'abc-123',
         task_type: 'generic',
@@ -41,7 +45,7 @@ describe('Poller', () => {
       await poller.pollOnce();
 
       expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks/next');
-      expect(mockHandler).toHaveBeenCalledWith(task);
+      expect(mockExecutor.execute).toHaveBeenCalledWith(task);
       expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks/abc-123/ack', {
         method: 'POST',
       });
@@ -50,7 +54,7 @@ describe('Poller', () => {
     it('does nothing when queue is empty (204)', async () => {
       mockFetch.mockResolvedValueOnce({ status: 204 });
       await poller.pollOnce();
-      expect(mockHandler).not.toHaveBeenCalled();
+      expect(mockExecutor.execute).not.toHaveBeenCalled();
     });
 
     it('handles fetch errors gracefully', async () => {

@@ -1,8 +1,7 @@
 import { Task, createLogger } from '@local-agent/shared';
+import { TaskOrchestrator } from './core/task-orchestrator';
 
 const logger = createLogger('daemon:poller');
-
-type TaskHandler = (task: Task) => Promise<void>;
 
 export class Poller {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -10,7 +9,7 @@ export class Poller {
 
   constructor(
     private readonly apiUrl: string,
-    private readonly handler: TaskHandler,
+    private readonly orchestrator: TaskOrchestrator,
   ) {}
 
   async pollOnce(): Promise<void> {
@@ -30,7 +29,7 @@ export class Poller {
       const task = (await res.json()) as Task;
       logger.info({ task_id: task.task_id }, 'Received task');
 
-      await this.handler(task);
+      await this.orchestrator.handle(task);
 
       try {
         const ackRes = await fetch(`${this.apiUrl}/tasks/${task.task_id}/ack`, { method: 'POST' });
