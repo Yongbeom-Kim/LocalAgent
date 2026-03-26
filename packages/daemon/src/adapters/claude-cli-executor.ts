@@ -16,7 +16,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
     }
 
     try {
-      const { stdout, stderr } = await execFileAsync('claude', ['-p', task.payload], {
+      const { stdout, stderr } = await execFileAsync('claude', ['--dangerously-skip-permissions', '-p', task.payload], {
         maxBuffer: 50 * 1024 * 1024, // 50 MB — Claude Code responses can be large
       });
 
