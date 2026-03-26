@@ -3,7 +3,7 @@ import { Poller } from './poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
 import { ClaudeCliExecutor } from './adapters/claude-cli-executor';
 
-function main() {
+async function main() {
   const config = loadDaemonConfig();
   const logger = createLogger('daemon', config.logLevel);
 
@@ -24,4 +24,8 @@ function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main();
+main().catch((err) => {
+  const logger = createLogger('daemon');
+  logger.fatal({ err }, 'Fatal error');
+  process.exit(1);
+});
