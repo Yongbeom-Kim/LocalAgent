@@ -1,4 +1,6 @@
+import { Command } from 'commander';
 import type { TaskSubmission } from '@local-agent/shared';
+import { DEFAULT_API_URL } from '@local-agent/shared';
 
 export interface SubmitOptions {
   payload: string;
@@ -39,10 +41,33 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
     return { success: false, error: `${response.status} ${response.statusText}` };
   }
 
-  const data = await response.json();
+  const data = (await response.json()) as { task_type: string; submitted_at: string };
   return {
     success: true,
     taskType: data.task_type,
     submittedAt: data.submitted_at,
   };
+}
+
+export function registerSubmitCommand(program: Command): void {
+  program
+    .command('submit')
+    .description('Submit a task to the queue')
+    .requiredOption('-p, --payload <string>', 'Task payload')
+    .option('-t, --type <string>', 'Task type', 'generic')
+    .option('-u, --api-url <string>', 'API base URL')
+    .action(async (opts: { payload: string; type: string; apiUrl?: string }) => {
+      const apiUrl = opts.apiUrl ?? process.env.API_URL ?? DEFAULT_API_URL;
+
+      const result = await submitTask({ payload: opts.payload, type: opts.type, apiUrl });
+
+      if (result.success) {
+        console.log('Task submitted successfully.');
+        console.log(`  Type: ${result.taskType}`);
+        console.log(`  Submitted at: ${result.submittedAt}`);
+      } else {
+        console.error(`Error: Failed to submit task — ${result.error}`);
+        process.exit(1);
+      }
+    });
 }
