@@ -1,0 +1,41 @@
+import dotenv from 'dotenv';
+import {
+  DEFAULT_PORT,
+  DEFAULT_RABBITMQ_URL,
+  DEFAULT_QUEUE_NAME,
+  DEFAULT_LOG_LEVEL,
+  DEFAULT_API_URL,
+  DEFAULT_POLL_INTERVAL_MS,
+} from './constants';
+
+dotenv.config();
+
+export interface ApiConfig {
+  port: number;
+  rabbitmqUrl: string;
+  queueName: string;
+  logLevel: string;
+}
+
+export interface DaemonConfig {
+  apiUrl: string;
+  pollIntervalMs: number;
+  logLevel: string;
+}
+
+export function loadApiConfig(env: Record<string, string | undefined> = process.env): ApiConfig {
+  return {
+    port: parseInt(env.PORT ?? String(DEFAULT_PORT), 10),
+    rabbitmqUrl: env.RABBITMQ_URL ?? DEFAULT_RABBITMQ_URL,
+    queueName: env.QUEUE_NAME ?? DEFAULT_QUEUE_NAME,
+    logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
+  };
+}
+
+export function loadDaemonConfig(env: Record<string, string | undefined> = process.env): DaemonConfig {
+  return {
+    apiUrl: env.API_URL ?? DEFAULT_API_URL,
+    pollIntervalMs: parseInt(env.POLL_INTERVAL_MS ?? String(DEFAULT_POLL_INTERVAL_MS), 10),
+    logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
+  };
+}

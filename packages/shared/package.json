@@ -1,0 +1,23 @@
+{
+  "name": "@local-agent/shared",
+  "version": "0.0.1",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "dotenv": "~16.4.7",
+    "pino": "~8.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "~20.17.0",
+    "typescript": "~5.7.0",
+    "vitest": "~1.6.0",
+    "rimraf": "~5.0.0"
+  }
+}
