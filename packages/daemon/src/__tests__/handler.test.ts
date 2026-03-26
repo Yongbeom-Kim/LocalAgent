@@ -1,7 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { ChildProcess } from 'node:child_process';
 import { Task } from '@local-agent/shared';
 
-// Mock child_process before importing handler
+// Mock child_process before importing handler (Vitest hoists vi.mock calls)
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
 }));
@@ -21,6 +22,8 @@ function createTask(overrides?: Partial<Task>): Task {
   };
 }
 
+type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+
 describe('handleTask', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -28,8 +31,8 @@ describe('handleTask', () => {
 
   it('spawns claude with the task payload and resolves on success', async () => {
     mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as Function)(null, { stdout: 'The answer is 4', stderr: '' });
-      return {} as any;
+      (callback as ExecFileCallback)(null, 'The answer is 4', '');
+      return {} as ChildProcess;
     });
 
     await expect(handleTask(createTask())).resolves.toBeUndefined();
@@ -49,8 +52,8 @@ describe('handleTask', () => {
       stderr: 'something went wrong',
     });
     mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as Function)(error);
-      return {} as any;
+      (callback as ExecFileCallback)(error, '', '');
+      return {} as ChildProcess;
     });
 
     await expect(handleTask(createTask())).resolves.toBeUndefined();
@@ -63,10 +66,16 @@ describe('handleTask', () => {
       stderr: '',
     });
     mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as Function)(error);
-      return {} as any;
+      (callback as ExecFileCallback)(error, '', '');
+      return {} as ChildProcess;
     });
 
     await expect(handleTask(createTask())).resolves.toBeUndefined();
+  });
+
+  it('skips spawning when payload is empty', async () => {
+    await expect(handleTask(createTask({ payload: '' }))).resolves.toBeUndefined();
+
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 });
