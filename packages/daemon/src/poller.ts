@@ -5,7 +5,8 @@ const logger = createLogger('daemon:poller');
 type TaskHandler = (task: Task) => Promise<void>;
 
 export class Poller {
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
 
   constructor(
     private readonly apiUrl: string,
@@ -31,8 +32,16 @@ export class Poller {
 
       await this.handler(task);
 
-      await fetch(`${this.apiUrl}/tasks/${task.task_id}/ack`, { method: 'POST' });
-      logger.info({ task_id: task.task_id }, 'Task acknowledged');
+      try {
+        const ackRes = await fetch(`${this.apiUrl}/tasks/${task.task_id}/ack`, { method: 'POST' });
+        if (ackRes.status !== 200) {
+          logger.warn({ task_id: task.task_id, status: ackRes.status }, 'ACK failed');
+        } else {
+          logger.info({ task_id: task.task_id }, 'Task acknowledged');
+        }
+      } catch (ackErr) {
+        logger.error({ task_id: task.task_id, err: ackErr }, 'ACK request failed');
+      }
     } catch (err) {
       logger.error({ err }, 'Poll error');
     }
@@ -40,12 +49,20 @@ export class Poller {
 
   start(intervalMs: number): void {
     logger.info({ intervalMs }, 'Starting poller');
-    this.timer = setInterval(() => this.pollOnce(), intervalMs);
+    this.running = true;
+    const loop = async () => {
+      await this.pollOnce();
+      if (this.running) {
+        this.timer = setTimeout(loop, intervalMs);
+      }
+    };
+    loop();
   }
 
   stop(): void {
+    this.running = false;
     if (this.timer) {
-      clearInterval(this.timer);
+      clearTimeout(this.timer);
       this.timer = null;
       logger.info('Poller stopped');
     }

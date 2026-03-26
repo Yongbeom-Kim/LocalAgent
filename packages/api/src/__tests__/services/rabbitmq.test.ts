@@ -1,20 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RabbitMQService } from '../../services/rabbitmq';
 
-// Mock amqplib - declare with var so they're hoisted along with vi.mock
-const mockChannel: any = {
-  assertQueue: vi.fn().mockResolvedValue({}),
-  sendToQueue: vi.fn().mockReturnValue(true),
-  get: vi.fn(),
-  ack: vi.fn(),
-};
-
-const mockConnection: any = {
-  createChannel: vi.fn().mockResolvedValue(mockChannel),
-  close: vi.fn().mockResolvedValue(undefined),
-  on: vi.fn(),
-};
-
 vi.mock('amqplib', () => {
   const mockCh = {
     assertQueue: vi.fn().mockResolvedValue({}),
@@ -36,9 +22,8 @@ vi.mock('amqplib', () => {
   };
 });
 
-let amqplibMock: any;
-
 describe('RabbitMQService', () => {
+  let amqplibMock: any;
   let service: RabbitMQService;
   let channel: any;
   let connection: any;
@@ -67,7 +52,8 @@ describe('RabbitMQService', () => {
     it('sends persistent message to queue', async () => {
       await service.connect();
       const msg = { task_type: 'generic', payload: 'test' };
-      service.publish(msg);
+      const result = service.publish(msg);
+      expect(result).toBe(true);
       expect(channel.sendToQueue).toHaveBeenCalledWith(
         'test-queue',
         expect.any(Buffer),

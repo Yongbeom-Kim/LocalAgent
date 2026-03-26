@@ -25,7 +25,7 @@ export interface DaemonConfig {
 
 export function loadApiConfig(env: Record<string, string | undefined> = process.env): ApiConfig {
   return {
-    port: parseInt(env.PORT ?? String(DEFAULT_PORT), 10),
+    port: env.PORT ? parseInt(env.PORT, 10) : DEFAULT_PORT,
     rabbitmqUrl: env.RABBITMQ_URL ?? DEFAULT_RABBITMQ_URL,
     queueName: env.QUEUE_NAME ?? DEFAULT_QUEUE_NAME,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
@@ -35,7 +35,7 @@ export function loadApiConfig(env: Record<string, string | undefined> = process.
 export function loadDaemonConfig(env: Record<string, string | undefined> = process.env): DaemonConfig {
   return {
     apiUrl: env.API_URL ?? DEFAULT_API_URL,
-    pollIntervalMs: parseInt(env.POLL_INTERVAL_MS ?? String(DEFAULT_POLL_INTERVAL_MS), 10),
+    pollIntervalMs: env.POLL_INTERVAL_MS ? parseInt(env.POLL_INTERVAL_MS, 10) : DEFAULT_POLL_INTERVAL_MS,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
   };
 }

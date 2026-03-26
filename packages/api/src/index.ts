@@ -46,6 +46,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error('Fatal error:', err);
+  const logger = createLogger('api');
+  logger.fatal({ err }, 'Fatal error');
   process.exit(1);
 });

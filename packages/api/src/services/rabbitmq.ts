@@ -7,14 +7,10 @@ interface GetMessage {
   fields: { deliveryTag: number };
 }
 
-interface DeliveryInfo {
-  message: GetMessage;
-}
-
 export class RabbitMQService {
   private connection: amqplib.ChannelModel | null = null;
   private channel: amqplib.Channel | null = null;
-  private deliveryMap = new Map<string, DeliveryInfo>();
+  private deliveryMap = new Map<string, GetMessage>();
 
   constructor(
     private readonly url: string,
@@ -22,11 +18,19 @@ export class RabbitMQService {
   ) {}
 
   async connect(): Promise<void> {
-    this.connection = await amqplib.connect(this.url);
-    this.connection!.on('error', () => {});
-    this.connection!.on('close', () => {});
-    this.channel = await this.connection!.createChannel();
-    await this.channel!.assertQueue(this.queueName, { durable: true });
+    const conn = await amqplib.connect(this.url);
+    conn.on('error', () => {
+      this.connection = null;
+      this.channel = null;
+    });
+    conn.on('close', () => {
+      this.connection = null;
+      this.channel = null;
+    });
+    this.connection = conn;
+    const ch = await conn.createChannel();
+    await ch.assertQueue(this.queueName, { durable: true });
+    this.channel = ch;
   }
 
   async close(): Promise<void> {
@@ -35,10 +39,10 @@ export class RabbitMQService {
     this.channel = null;
   }
 
-  publish(message: { task_type: string; payload: string; submitted_at?: string }): void {
+  publish(message: { task_type: string; payload: string; submitted_at?: string }): boolean {
     if (!this.channel) throw new Error('Not connected');
     const buffer = Buffer.from(JSON.stringify(message));
-    this.channel.sendToQueue(this.queueName, buffer, { persistent: true });
+    return this.channel.sendToQueue(this.queueName, buffer, { persistent: true });
   }
 
   async getNext(): Promise<Task | null> {
@@ -49,7 +53,7 @@ export class RabbitMQService {
     const parsed = JSON.parse(msg.content.toString());
     const taskId = uuidv4();
 
-    this.deliveryMap.set(taskId, { message: msg as unknown as GetMessage });
+    this.deliveryMap.set(taskId, msg as unknown as GetMessage);
 
     return {
       task_id: taskId,
@@ -60,10 +64,10 @@ export class RabbitMQService {
   }
 
   ack(taskId: string): boolean {
-    if (!this.channel) throw new Error('Not connected');
+    if (!this.channel) return false;
     const delivery = this.deliveryMap.get(taskId);
     if (!delivery) return false;
-    this.channel.ack(delivery.message as any);
+    this.channel.ack(delivery as any);
     this.deliveryMap.delete(taskId);
     return true;
   }

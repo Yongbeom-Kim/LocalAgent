@@ -4,7 +4,7 @@ import request from 'supertest';
 import { createTaskRoutes } from '../../routes/tasks';
 
 const mockRabbitMQ = {
-  publish: vi.fn(),
+  publish: vi.fn().mockReturnValue(true),
   getNext: vi.fn(),
   ack: vi.fn(),
 };
