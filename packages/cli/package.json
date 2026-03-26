@@ -1,0 +1,27 @@
+{
+  "name": "@local-agent/cli",
+  "version": "0.0.1",
+  "private": true,
+  "bin": {
+    "local-agent": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@local-agent/shared": "workspace:*",
+    "commander": "^13.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "~20.17.0",
+    "typescript": "~5.7.0",
+    "vitest": "~1.6.0",
+    "rimraf": "~5.0.0",
+    "ts-node": "~10.9.0"
+  }
+}

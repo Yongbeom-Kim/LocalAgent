@@ -18,6 +18,10 @@
     {
       "packageName": "@local-agent/daemon",
       "projectFolder": "packages/daemon"
+    },
+    {
+      "packageName": "@local-agent/cli",
+      "projectFolder": "packages/cli"
     }
   ]
 }
