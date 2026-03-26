@@ -1,11 +1,12 @@
 import amqplib from 'amqplib';
-import { v4 as uuidv4 } from 'uuid';
-import { Task } from '@local-agent/shared';
+import { Task, createLogger } from '@local-agent/shared';
 
 interface GetMessage {
   content: Buffer;
   fields: { deliveryTag: number };
 }
+
+const logger = createLogger('api:rabbitmq');
 
 export class RabbitMQService {
   private connection: amqplib.ChannelModel | null = null;
@@ -39,7 +40,7 @@ export class RabbitMQService {
     this.channel = null;
   }
 
-  publish(message: { task_type: string; payload: string; submitted_at?: string }): boolean {
+  publish(message: Task): boolean {
     if (!this.channel) throw new Error('Not connected');
     const buffer = Buffer.from(JSON.stringify(message));
     return this.channel.sendToQueue(this.queueName, buffer, { persistent: true });
@@ -50,17 +51,20 @@ export class RabbitMQService {
     const msg = await this.channel.get(this.queueName, { noAck: false });
     if (msg === false) return null;
 
-    const parsed = JSON.parse(msg.content.toString());
-    const taskId = uuidv4();
+    const parsed = JSON.parse(msg.content.toString()) as Task;
 
-    this.deliveryMap.set(taskId, msg as unknown as GetMessage);
+    if (this.deliveryMap.has(parsed.task_id)) {
+      logger.error(
+        { task_id: parsed.task_id, deliveryTag: msg.fields.deliveryTag },
+        'Duplicate task_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
+      );
+      this.channel.ack(msg);
+      return null;
+    }
 
-    return {
-      task_id: taskId,
-      task_type: parsed.task_type,
-      payload: parsed.payload,
-      submitted_at: parsed.submitted_at,
-    };
+    this.deliveryMap.set(parsed.task_id, msg as unknown as GetMessage);
+
+    return parsed;
   }
 
   ack(taskId: string): boolean {

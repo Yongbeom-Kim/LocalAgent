@@ -7,6 +7,7 @@ vi.mock('amqplib', () => {
     sendToQueue: vi.fn().mockReturnValue(true),
     get: vi.fn(),
     ack: vi.fn(),
+    nack: vi.fn(),
   };
   const mockConn = {
     createChannel: vi.fn().mockResolvedValue(mockCh),
@@ -33,7 +34,6 @@ describe('RabbitMQService', () => {
     amqplibMock = await import('amqplib');
     channel = (amqplibMock as any).__mockChannel;
     connection = (amqplibMock as any).__mockConnection;
-    // Re-wire after clearAllMocks
     connection.createChannel.mockResolvedValue(channel);
     (amqplibMock.default.connect as any).mockResolvedValue(connection);
     channel.assertQueue.mockResolvedValue({});
@@ -49,14 +49,20 @@ describe('RabbitMQService', () => {
   });
 
   describe('publish', () => {
-    it('sends persistent message to queue', async () => {
+    it('sends persistent full task payload to queue', async () => {
       await service.connect();
-      const msg = { task_type: 'generic', payload: 'test' };
+      const msg = {
+        task_id: 'task-123',
+        task_type: 'generic',
+        payload: 'test',
+        executor: 'claude_code',
+        submitted_at: '2026-03-26T00:00:00.000Z',
+      };
       const result = service.publish(msg);
       expect(result).toBe(true);
       expect(channel.sendToQueue).toHaveBeenCalledWith(
         'test-queue',
-        expect.any(Buffer),
+        Buffer.from(JSON.stringify(msg)),
         { persistent: true }
       );
     });
@@ -70,11 +76,13 @@ describe('RabbitMQService', () => {
       expect(result).toBeNull();
     });
 
-    it('returns task with generated ID when message available', async () => {
+    it('returns task with preserved task ID and executor when message available', async () => {
       await service.connect();
       const content = JSON.stringify({
+        task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
+        executor: 'ttadk',
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       channel.get.mockResolvedValue({
@@ -83,9 +91,13 @@ describe('RabbitMQService', () => {
       });
       const result = await service.getNext();
       expect(result).not.toBeNull();
-      expect(result!.task_type).toBe('generic');
-      expect(result!.payload).toBe('hello');
-      expect(result!.task_id).toBeDefined();
+      expect(result).toEqual({
+        task_id: 'task-123',
+        task_type: 'generic',
+        payload: 'hello',
+        executor: 'ttadk',
+        submitted_at: '2026-03-26T00:00:00.000Z',
+      });
     });
   });
 
@@ -93,8 +105,10 @@ describe('RabbitMQService', () => {
     it('acknowledges message by task ID', async () => {
       await service.connect();
       const content = JSON.stringify({
+        task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
+        executor: 'claude_code',
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       channel.get.mockResolvedValue({
@@ -105,6 +119,51 @@ describe('RabbitMQService', () => {
       const acked = service.ack(task!.task_id);
       expect(acked).toBe(true);
       expect(channel.ack).toHaveBeenCalledWith({ content: expect.any(Buffer), fields: { deliveryTag: 42 } });
+    });
+
+    it('acknowledges duplicate task IDs instead of overwriting the earlier ACK state', async () => {
+      await service.connect();
+      const firstMessage = {
+        content: Buffer.from(JSON.stringify({
+          task_id: 'duplicate-id',
+          task_type: 'generic',
+          payload: 'first',
+          executor: 'claude_code',
+          submitted_at: '2026-03-26T00:00:00.000Z',
+        })),
+        fields: { deliveryTag: 1 },
+      };
+      const secondMessage = {
+        content: Buffer.from(JSON.stringify({
+          task_id: 'duplicate-id',
+          task_type: 'generic',
+          payload: 'second',
+          executor: 'ttadk',
+          submitted_at: '2026-03-26T00:00:01.000Z',
+        })),
+        fields: { deliveryTag: 2 },
+      };
+      channel.get
+        .mockResolvedValueOnce(firstMessage)
+        .mockResolvedValueOnce(secondMessage);
+
+      const firstTask = await service.getNext();
+      const duplicateTask = await service.getNext();
+
+      expect(firstTask).toEqual({
+        task_id: 'duplicate-id',
+        task_type: 'generic',
+        payload: 'first',
+        executor: 'claude_code',
+        submitted_at: '2026-03-26T00:00:00.000Z',
+      });
+      expect(duplicateTask).toBeNull();
+      expect(channel.ack).toHaveBeenCalledWith(secondMessage);
+      expect(channel.nack).not.toHaveBeenCalled();
+      expect(service.ack('duplicate-id')).toBe(true);
+      expect(channel.ack).toHaveBeenCalledTimes(2);
+      expect(channel.ack).toHaveBeenCalledWith(firstMessage);
+      expect(service.ack('duplicate-id')).toBe(false);
     });
 
     it('returns false for unknown task ID', async () => {

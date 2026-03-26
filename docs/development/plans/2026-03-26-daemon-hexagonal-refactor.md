@@ -1,8 +1,8 @@
 # Daemon Hexagonal Architecture Refactor — Implementation Plan
 
-**Goal:** Refactor the daemon package from a flat structure into hexagonal architecture with ports, adapters, and a core orchestration layer — no functional changes.
+**Goal:** Refactor the daemon package from a flat structure into hexagonal architecture with ports, adapters, and a core orchestration layer. Later approved executor-routing work extends this design so queued tasks carry a required `executor` field and the daemon supports both Claude and TTADK.
 
-**Architecture:** Introduce a `TaskExecutor` port interface in `ports/`, a `ClaudeCliExecutor` adapter in `adapters/`, and a thin `TaskOrchestrator` core service in `core/`. The composition root (`index.ts`) wires everything via explicit constructor injection. The poller remains top-level infrastructure and accepts the orchestrator directly.
+**Architecture:** Introduce a `TaskExecutor` port interface in `ports/`, executor adapters in `adapters/`, and a `TaskOrchestrator` core service in `core/` that routes tasks by the required queued `executor` field by instantiating the matching executor on demand. The composition root (`index.ts`) constructs the orchestrator directly, and the poller remains top-level infrastructure.
 
 **Tech Stack:** TypeScript 5.7, Vitest 1.6, Rush 5 monorepo, pnpm 9
 
@@ -15,15 +15,17 @@
 | File | Action | Responsibility |
 |------|--------|----------------|
 | `packages/daemon/src/ports/task-executor.ts` | **Create** | `TaskExecutor` interface — outbound port contract |
-| `packages/daemon/src/core/task-orchestrator.ts` | **Create** | `TaskOrchestrator` class — thin core service delegating to port |
-| `packages/daemon/src/adapters/claude-cli-executor.ts` | **Create** | `ClaudeCliExecutor` class — implements `TaskExecutor` via `execFile` |
-| `packages/daemon/src/core/__tests__/task-orchestrator.test.ts` | **Create** | Unit tests for orchestrator delegation |
-| `packages/daemon/src/adapters/__tests__/claude-cli-executor.test.ts` | **Create** | Adapted tests from `handler.test.ts` |
+| `packages/daemon/src/core/task-orchestrator.ts` | **Create** | `TaskOrchestrator` class — thin core service routing by required task executor |
+| `packages/daemon/src/adapters/claude-cli-executor.ts` | **Create** | Claude executor adapter — implements `TaskExecutor` via `execFile` |
+| `packages/daemon/src/adapters/ttadk-executor.ts` | **Create** | TTADK executor adapter — implements `TaskExecutor` via `execFile` |
+| `packages/daemon/src/core/__tests__/task-orchestrator.test.ts` | **Create** | Unit tests for orchestrator routing |
+| `packages/daemon/src/adapters/__tests__/claude-cli-executor.test.ts` | **Create** | Claude adapter tests |
+| `packages/daemon/src/adapters/__tests__/ttadk-executor.test.ts` | **Create** | TTADK adapter tests |
 | `packages/daemon/src/poller.ts` | **Modify** | Accept `TaskOrchestrator` instead of callback |
-| `packages/daemon/src/__tests__/poller.test.ts` | **Modify** | Use `TaskOrchestrator` with mock executor |
-| `packages/daemon/src/index.ts` | **Modify** | Updated composition root with DI wiring |
-| `packages/daemon/src/handler.ts` | **Delete** | Logic moved to `ClaudeCliExecutor` |
-| `packages/daemon/src/__tests__/handler.test.ts` | **Delete** | Tests moved to `adapters/__tests__/` |
+| `packages/daemon/src/__tests__/poller.test.ts` | **Modify** | Use queued tasks with required executor field |
+| `packages/daemon/src/index.ts` | **Modify** | Updated composition root to construct `TaskOrchestrator` directly |
+| `packages/daemon/src/handler.ts` | **Delete** | Legacy Claude-only logic moved into executor adapters |
+| `packages/daemon/src/__tests__/handler.test.ts` | **Delete** | Legacy tests moved to `adapters/__tests__/` |
 
 ---
 
@@ -59,6 +61,8 @@ git commit -m "refactor(daemon): add TaskExecutor port interface"
 
 ## Task 2: Create TaskOrchestrator Core Service + Tests
 
+Note: the originally proposed injected executor registry was later superseded. The final shape still routes by required `task.executor`, but `TaskOrchestrator` now instantiates the matching executor on demand.
+
 **Files:**
 - Create: `packages/daemon/src/core/task-orchestrator.ts`
 - Create: `packages/daemon/src/core/__tests__/task-orchestrator.test.ts`
@@ -70,37 +74,63 @@ git commit -m "refactor(daemon): add TaskExecutor port interface"
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Task } from '@local-agent/shared';
 import { TaskOrchestrator } from '../task-orchestrator';
-import { TaskExecutor } from '../../ports/task-executor';
+
+const mockClaudeExecute = vi.fn();
+const mockTTADKExecute = vi.fn();
+
+vi.mock('../../adapters/claude-cli-executor', () => ({
+  ClaudeCliExecutor: vi.fn().mockImplementation(() => ({
+    execute: mockClaudeExecute,
+  })),
+}));
+
+vi.mock('../../adapters/ttadk-executor', () => ({
+  TTADKExecutor: vi.fn().mockImplementation(() => ({
+    execute: mockTTADKExecute,
+  })),
+}));
 
 function createTask(overrides?: Partial<Task>): Task {
   return {
     task_id: 'test-123',
     task_type: 'generic',
     payload: 'What is 2+2?',
+    executor: 'claude_code',
     submitted_at: '2026-03-26T00:00:00.000Z',
     ...overrides,
   };
 }
 
 describe('TaskOrchestrator', () => {
-  let mockExecutor: TaskExecutor;
   let orchestrator: TaskOrchestrator;
 
   beforeEach(() => {
-    mockExecutor = { execute: vi.fn().mockResolvedValue(undefined) };
-    orchestrator = new TaskOrchestrator(mockExecutor);
+    vi.clearAllMocks();
+    mockClaudeExecute.mockResolvedValue(undefined);
+    mockTTADKExecute.mockResolvedValue(undefined);
+    orchestrator = new TaskOrchestrator();
   });
 
-  it('delegates task execution to the injected executor', async () => {
-    const task = createTask();
+  it('routes claude_code tasks to the Claude executor', async () => {
+    const task = createTask({ executor: 'claude_code' });
     await orchestrator.handle(task);
-    expect(mockExecutor.execute).toHaveBeenCalledWith(task);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(task);
+    expect(mockTTADKExecute).not.toHaveBeenCalled();
   });
 
-  it('propagates executor errors', async () => {
-    const error = new Error('executor failed');
-    (mockExecutor.execute as ReturnType<typeof vi.fn>).mockRejectedValue(error);
-    await expect(orchestrator.handle(createTask())).rejects.toThrow('executor failed');
+  it('routes ttadk tasks to the TTADK executor', async () => {
+    const task = createTask({ executor: 'ttadk' });
+    await orchestrator.handle(task);
+    expect(mockTTADKExecute).toHaveBeenCalledWith(task);
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
+  });
+
+  it('rejects unknown executors without invoking another adapter', async () => {
+    await expect(
+      orchestrator.handle(createTask({ executor: 'unknown' as Task['executor'] })),
+    ).rejects.toThrow('Unknown task executor: unknown');
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
+    expect(mockTTADKExecute).not.toHaveBeenCalled();
   });
 });
 ```
@@ -115,16 +145,31 @@ Expected: FAIL — `TaskOrchestrator` does not exist yet
 ```typescript
 // packages/daemon/src/core/task-orchestrator.ts
 import { Task, createLogger } from '@local-agent/shared';
+import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
+import { TTADKExecutor } from '../adapters/ttadk-executor';
 import { TaskExecutor } from '../ports/task-executor';
 
 const logger = createLogger('daemon:orchestrator');
 
 export class TaskOrchestrator {
-  constructor(private readonly executor: TaskExecutor) {}
-
   async handle(task: Task): Promise<void> {
-    logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Processing task');
-    await this.executor.execute(task);
+    logger.info(
+      { task_id: task.task_id, task_type: task.task_type, executor: task.executor },
+      'Processing task',
+    );
+
+    let executor: TaskExecutor;
+
+    if (task.executor === 'claude_code') {
+      executor = new ClaudeCliExecutor();
+    } else if (task.executor === 'ttadk') {
+      executor = new TTADKExecutor();
+    } else {
+      logger.error({ task_id: task.task_id, executor: task.executor }, 'Unknown task executor — skipping');
+      return;
+    }
+
+    await executor.execute(task);
   }
 }
 ```
@@ -132,7 +177,7 @@ export class TaskOrchestrator {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd packages/daemon && npx vitest run src/core/__tests__/task-orchestrator.test.ts`
-Expected: PASS — both tests green
+Expected: PASS — routing tests green
 
 - [ ] **Step 5: Commit**
 
@@ -144,6 +189,8 @@ git commit -m "refactor(daemon): add TaskOrchestrator core service with tests"
 ---
 
 ## Task 3: Create ClaudeCliExecutor Adapter + Tests
+
+Note: this Claude adapter task remains valid, but later approved routing work adds TTADK alongside Claude rather than keeping a Claude-only executor set.
 
 **Files:**
 - Create: `packages/daemon/src/adapters/claude-cli-executor.ts`
@@ -310,6 +357,8 @@ git commit -m "refactor(daemon): add ClaudeCliExecutor adapter with tests"
 
 ## Task 4: Update Poller to Accept TaskOrchestrator + Update Tests
 
+Note: under the later approved contract, poller fixtures must include the required queued `executor` field even though poller polling and ACK behavior stays the same.
+
 **Files:**
 - Modify: `packages/daemon/src/poller.ts`
 - Modify: `packages/daemon/src/__tests__/poller.test.ts`
@@ -324,7 +373,15 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Poller } from '../poller';
 import { Task } from '@local-agent/shared';
 import { TaskOrchestrator } from '../core/task-orchestrator';
-import { TaskExecutor } from '../ports/task-executor';
+import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
+
+const mockClaudeExecute = vi.fn();
+
+vi.mock('../adapters/claude-cli-executor', () => ({
+  ClaudeCliExecutor: vi.fn().mockImplementation(() => ({
+    execute: mockClaudeExecute,
+  })),
+}));
 
 // Mock global fetch
 const mockFetch = vi.fn();
@@ -332,12 +389,11 @@ vi.stubGlobal('fetch', mockFetch);
 
 describe('Poller', () => {
   let poller: Poller;
-  let mockExecutor: TaskExecutor;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockExecutor = { execute: vi.fn().mockResolvedValue(undefined) };
-    const orchestrator = new TaskOrchestrator(mockExecutor);
+    mockClaudeExecute.mockResolvedValue(undefined);
+    const orchestrator = new TaskOrchestrator();
     poller = new Poller('http://localhost:3000', orchestrator);
   });
 
@@ -351,6 +407,7 @@ describe('Poller', () => {
         task_id: 'abc-123',
         task_type: 'generic',
         payload: 'hello',
+        executor: 'claude_code',
         submitted_at: '2026-03-26T00:00:00.000Z',
       };
 
@@ -367,7 +424,8 @@ describe('Poller', () => {
       await poller.pollOnce();
 
       expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks/next');
-      expect(mockExecutor.execute).toHaveBeenCalledWith(task);
+      expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
+      expect(mockClaudeExecute).toHaveBeenCalledWith(task);
       expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks/abc-123/ack', {
         method: 'POST',
       });
@@ -376,12 +434,11 @@ describe('Poller', () => {
     it('does nothing when queue is empty (204)', async () => {
       mockFetch.mockResolvedValueOnce({ status: 204 });
       await poller.pollOnce();
-      expect(mockExecutor.execute).not.toHaveBeenCalled();
+      expect(ClaudeCliExecutor).not.toHaveBeenCalled();
     });
 
     it('handles fetch errors gracefully', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
-      // Should not throw
       await expect(poller.pollOnce()).resolves.toBeUndefined();
     });
   });
@@ -504,7 +561,6 @@ git commit -m "refactor(daemon): update Poller to accept TaskOrchestrator"
 import { loadDaemonConfig, createLogger } from '@local-agent/shared';
 import { Poller } from './poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
-import { ClaudeCliExecutor } from './adapters/claude-cli-executor';
 
 function main() {
   const config = loadDaemonConfig();
@@ -512,8 +568,7 @@ function main() {
 
   logger.info({ apiUrl: config.apiUrl, pollIntervalMs: config.pollIntervalMs }, 'Starting daemon');
 
-  const executor = new ClaudeCliExecutor();
-  const orchestrator = new TaskOrchestrator(executor);
+  const orchestrator = new TaskOrchestrator();
   const poller = new Poller(config.apiUrl, orchestrator);
   poller.start(config.pollIntervalMs);
 
@@ -531,8 +586,8 @@ main();
 ```
 
 Changes from original:
-- Line 3-4: Import `TaskOrchestrator` and `ClaudeCliExecutor` instead of `handleTask`
-- Lines 13-15: Three-line DI wiring instead of single `new Poller(config.apiUrl, handleTask)`
+- Line 3-4: Import `TaskOrchestrator` instead of `handleTask`
+- Lines 12-13: Construct `TaskOrchestrator` directly before constructing `Poller`
 
 - [ ] **Step 2: Delete old handler.ts and its test**
 
@@ -544,7 +599,7 @@ rm packages/daemon/src/__tests__/handler.test.ts
 - [ ] **Step 3: Run all daemon tests**
 
 Run: `cd packages/daemon && npx vitest run`
-Expected: PASS — all tests green (2 orchestrator + 4 adapter + 3 poller = 9 total)
+Expected: PASS — all tests green (3 orchestrator + 4 Claude adapter + 4 TTADK adapter + 3 poller = 14 total)
 
 - [ ] **Step 4: Verify TypeScript compiles**
 
@@ -571,7 +626,7 @@ Expected: Build succeeds for `shared` + `daemon`
 - [ ] **Step 2: Run all daemon tests one final time**
 
 Run: `cd packages/daemon && npx vitest run`
-Expected: All 9 tests pass (2 orchestrator + 4 adapter + 3 poller)
+Expected: All 14 tests pass (3 orchestrator + 4 Claude adapter + 4 TTADK adapter + 3 poller)
 
 - [ ] **Step 3: Verify directory structure matches spec**
 
@@ -581,7 +636,9 @@ Expected output:
 ```
 packages/daemon/src/__tests__/poller.test.ts
 packages/daemon/src/adapters/__tests__/claude-cli-executor.test.ts
+packages/daemon/src/adapters/__tests__/ttadk-executor.test.ts
 packages/daemon/src/adapters/claude-cli-executor.ts
+packages/daemon/src/adapters/ttadk-executor.ts
 packages/daemon/src/core/__tests__/task-orchestrator.test.ts
 packages/daemon/src/core/task-orchestrator.ts
 packages/daemon/src/index.ts

@@ -1,4 +1,11 @@
-export { TaskSubmission, Task } from './types';
+export {
+  TaskSubmission,
+  Task,
+  TASK_EXECUTORS,
+  TASK_EXECUTOR_OPTIONS,
+  isTaskExecutorType,
+  type TaskExecutorType,
+} from './types';
 export { loadApiConfig, loadDaemonConfig, ApiConfig, DaemonConfig } from './config';
 export { createLogger } from './logger';
 export {

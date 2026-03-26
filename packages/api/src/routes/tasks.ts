@@ -1,4 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
+import { v4 as uuidv4 } from 'uuid';
+import { Task, TASK_EXECUTOR_OPTIONS, isTaskExecutorType } from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
@@ -6,7 +8,7 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_type, payload } = req.body;
+      const { task_type, payload, executor } = req.body;
 
       if (typeof task_type !== 'string' || !task_type) {
         res.status(400).json({ error: 'task_type is required and must be a string' });
@@ -16,16 +18,26 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'payload is required and must be a string' });
         return;
       }
+      if (typeof executor !== 'string' || !isTaskExecutorType(executor)) {
+        res.status(400).json({ error: `executor is required and must be one of: ${TASK_EXECUTOR_OPTIONS}` });
+        return;
+      }
 
-      const submitted_at = new Date().toISOString();
-      const buffered = rabbitmq.publish({ task_type, payload, submitted_at });
+      const task: Task = {
+        task_id: uuidv4(),
+        task_type,
+        payload,
+        executor,
+        submitted_at: new Date().toISOString(),
+      };
+      const buffered = rabbitmq.publish(task);
 
       if (!buffered) {
         res.status(503).json({ error: 'Server busy, try again later' });
         return;
       }
 
-      res.status(201).json({ task_type, payload, submitted_at });
+      res.status(201).json(task);
     } catch (err) {
       next(err);
     }

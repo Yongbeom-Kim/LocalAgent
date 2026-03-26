@@ -1,7 +1,6 @@
 import { loadDaemonConfig, createLogger } from '@local-agent/shared';
 import { Poller } from './poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
-import { ClaudeCliExecutor } from './adapters/claude-cli-executor';
 
 async function main() {
   const config = loadDaemonConfig();
@@ -9,8 +8,7 @@ async function main() {
 
   logger.info({ apiUrl: config.apiUrl, pollIntervalMs: config.pollIntervalMs }, 'Starting daemon');
 
-  const executor = new ClaudeCliExecutor();
-  const orchestrator = new TaskOrchestrator(executor);
+  const orchestrator = new TaskOrchestrator();
   const poller = new Poller(config.apiUrl, orchestrator);
   poller.start(config.pollIntervalMs);
 

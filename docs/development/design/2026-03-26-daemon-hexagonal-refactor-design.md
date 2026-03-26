@@ -1,31 +1,35 @@
 # Daemon Hexagonal Architecture Refactor
 
 **Date:** 2026-03-26
-**Type:** Pure refactor (no functional change)
+**Type:** Refactor design later extended by executor-routing changes
 **Package:** `@local-agent/daemon`
 
 ## 1. Context
 
-The daemon package currently has 3 source files with a flat structure:
+The daemon package currently has a refactored hexagonal structure centered around a poller, a core orchestrator, and executor adapters.
 
-- `index.ts` — composition root (loads config, wires Poller + handler, registers shutdown)
-- `poller.ts` — HTTP polling infrastructure (fetches tasks from API, calls handler, ACKs)
-- `handler.ts` — spawns `claude -p '<payload>'` via `execFile`, logs results
+Current concrete executor support includes:
 
-The handler is passed to the Poller as a callback function (`TaskHandler` type). There is no formal separation between domain logic, port interfaces, and adapter implementations.
+- `index.ts` — composition root (loads config, wires Poller + TaskOrchestrator, registers shutdown)
+- `poller.ts` — HTTP polling infrastructure (fetches tasks from API, calls orchestrator, ACKs)
+- `core/task-orchestrator.ts` — routes each task to the executor selected on the task payload
+- `adapters/claude-cli-executor.ts` — executes Claude Code tasks
+- `adapters/ttadk-executor.ts` — executes TTADK tasks
+
+Queued tasks now include a required `executor` field, and `TaskOrchestrator` uses that field to select the matching adapter. The earlier refactor still provides the architectural boundaries for this behavior.
 
 ## 2. Goal
 
 Refactor the daemon to follow hexagonal (ports & adapters) architecture:
 
 - Define an explicit **outbound port** (`TaskExecutor` interface) for task execution
-- Implement a **Claude Code CLI adapter** (`ClaudeCliExecutor` class) that fulfills this port
-- Introduce a thin **core orchestration service** (`TaskOrchestrator`) that the poller calls, which delegates to the port
-- Wire everything via explicit constructor injection in the composition root (`index.ts`)
+- Implement concrete executor adapters for the supported task executors, including **Claude Code CLI** (`ClaudeCliExecutor`) and TTADK (`TTADKExecutor`)
+- Route tasks inside `TaskOrchestrator` based on each task's required `executor` field
+- Keep `index.ts` limited to constructing `TaskOrchestrator` and `Poller`
 
 **Non-goals:**
-- No functional changes to behavior
-- No new features or error handling changes
+- This document does not redesign polling/ACK behavior
+- It does not specify the later executor field contract beyond staying compatible with required per-task executor routing
 - No DI framework introduction
 - No modeling of the poller as a formal driving port (it remains infrastructure)
 
@@ -48,26 +52,28 @@ handler.ts (free function)
 
 ```
 index.ts (composition root)
-  ├── new ClaudeCliExecutor()                     ← adapter
-  ├── new TaskOrchestrator(executor)              ← core
-  └── new Poller(apiUrl, orchestrator)            ← infrastructure
+  ├── new TaskOrchestrator()
+  └── new Poller(apiUrl, orchestrator)
         ├── fetch /tasks/next
-        ├── await orchestrator.handle(task)       ← calls core
+        ├── await orchestrator.handle(task)       ← routes by task.executor
         └── fetch /tasks/:id/ack
 
 core/task-orchestrator.ts
-  └── this.executor.execute(task)                 ← calls port
+  └── selects and instantiates executor using task.executor
 
 ports/task-executor.ts
   └── interface TaskExecutor { execute(task): Promise<void> }
 
 adapters/claude-cli-executor.ts
   └── implements TaskExecutor using execFile('claude', ...)
+
+adapters/ttadk-executor.ts
+  └── implements TaskExecutor using execFile('ttadk', ...)
 ```
 
 **Dependencies flow:**
-- `index.ts` → knows all concrete types (composition root)
-- `core/` → depends only on `ports/` (dependency inversion)
+- `index.ts` → wires polling to orchestration without per-executor DI
+- `core/` → depends on `ports/` and concrete executor adapters for task-directed branching
 - `adapters/` → depends on `ports/` (implements interfaces)
 - `poller.ts` → depends on `core/` (calls orchestrator)
 
@@ -78,15 +84,17 @@ packages/daemon/src/
 ├── index.ts                              # Composition root (DI wiring)
 ├── poller.ts                             # Infrastructure (updated to accept TaskOrchestrator)
 ├── core/
-│   ├── task-orchestrator.ts              # Thin orchestration service
+│   ├── task-orchestrator.ts              # Thin orchestration/routing service
 │   └── __tests__/
-│       └── task-orchestrator.test.ts     # Tests with mock TaskExecutor
+│       └── task-orchestrator.test.ts     # Tests with mock TaskExecutor registry
 ├── ports/
 │   └── task-executor.ts                  # TaskExecutor interface
 └── adapters/
-    ├── claude-cli-executor.ts            # Implements TaskExecutor via execFile
+    ├── claude-cli-executor.ts            # Claude implementation of TaskExecutor
+    ├── ttadk-executor.ts                 # TTADK implementation of TaskExecutor
     └── __tests__/
-        └── claude-cli-executor.test.ts   # Existing handler tests, relocated
+        ├── claude-cli-executor.test.ts   # Claude adapter tests
+        └── ttadk-executor.test.ts        # TTADK adapter tests
 ```
 
 **No barrel exports** — import directly from specific files.
@@ -112,50 +120,60 @@ export interface TaskExecutor {
 ```typescript
 // core/task-orchestrator.ts
 import { Task, createLogger } from '@local-agent/shared';
+import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
+import { TTADKExecutor } from '../adapters/ttadk-executor';
 import { TaskExecutor } from '../ports/task-executor';
 
 const logger = createLogger('daemon:orchestrator');
 
 export class TaskOrchestrator {
-  constructor(private readonly executor: TaskExecutor) {}
-
   async handle(task: Task): Promise<void> {
-    logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Processing task');
-    await this.executor.execute(task);
+    logger.info(
+      { task_id: task.task_id, task_type: task.task_type, executor: task.executor },
+      'Processing task',
+    );
+
+    let executor: TaskExecutor;
+
+    if (task.executor === 'claude_code') {
+      executor = new ClaudeCliExecutor();
+    } else if (task.executor === 'ttadk') {
+      executor = new TTADKExecutor();
+    } else {
+      logger.error({ task_id: task.task_id, executor: task.executor }, 'Unknown task executor — refusing to ack');
+      throw new Error(`Unknown task executor: ${task.executor}`);
+    }
+
+    await executor.execute(task);
   }
 }
 ```
 
-- Accepts `TaskExecutor` via constructor injection
-- Thin delegation for now; natural extension point for future domain logic
-- The `handle` method signature matches what the poller needs
+- Branches on required `task.executor`
+- Instantiates the matching executor on demand rather than receiving a registry
+- The `handle` method signature still matches what the poller needs
 
-### 6.3 Adapter: ClaudeCliExecutor
+### 6.3 Adapters: ClaudeCliExecutor and TTADKExecutor
 
 ```typescript
 // adapters/claude-cli-executor.ts
-import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
-import { Task, createLogger } from '@local-agent/shared';
-import { TaskExecutor } from '../ports/task-executor';
-
-const logger = createLogger('daemon:claude-cli');
-const execFileAsync = promisify(execFile);
-
 export class ClaudeCliExecutor implements TaskExecutor {
   async execute(task: Task): Promise<void> {
-    // Exact same logic as current handleTask()
-    // - Validates payload
-    // - Spawns claude -p '<payload>'
-    // - Logs stdout/stderr
-    // - Catches and logs errors without rethrowing
+    // Executes claude_code tasks
+  }
+}
+
+// adapters/ttadk-executor.ts
+export class TTADKExecutor implements TaskExecutor {
+  async execute(task: Task): Promise<void> {
+    // Executes ttadk tasks
   }
 }
 ```
 
-- Class implementing `TaskExecutor` interface
-- Contains the exact same logic as current `handler.ts` `handleTask()` function
-- No behavioral changes
+- Each class implements `TaskExecutor`
+- Claude and TTADK are both supported adapters
+- Concrete command details stay with the adapter for each executor
 
 ### 6.4 Updated Poller
 
@@ -189,7 +207,6 @@ export class Poller {
 import { loadDaemonConfig, createLogger } from '@local-agent/shared';
 import { Poller } from './poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
-import { ClaudeCliExecutor } from './adapters/claude-cli-executor';
 
 function main() {
   const config = loadDaemonConfig();
@@ -197,9 +214,7 @@ function main() {
 
   logger.info({ apiUrl: config.apiUrl, pollIntervalMs: config.pollIntervalMs }, 'Starting daemon');
 
-  // Dependency injection: adapter → core → infrastructure
-  const executor = new ClaudeCliExecutor();
-  const orchestrator = new TaskOrchestrator(executor);
+  const orchestrator = new TaskOrchestrator();
   const poller = new Poller(config.apiUrl, orchestrator);
   poller.start(config.pollIntervalMs);
 
@@ -209,31 +224,31 @@ function main() {
 
 ## 7. Test Strategy
 
-**Approach:** Update existing tests to work with the new structure. All current test cases must pass. No new test cases required.
+**Approach:** Preserve the previously intended coverage while adapting it to the routing design. No additional broad feature areas are required, but routing-specific cases must be covered so the final structure is not misleading.
 
-### 7.1 Handler Tests → Adapter Tests
+### 7.1 Adapter Tests
 
-The existing `__tests__/handler.test.ts` moves to `adapters/__tests__/claude-cli-executor.test.ts`:
+The original handler tests become executor adapter tests under `adapters/__tests__/`:
 
-- Same 4 test cases (success, non-zero exit, ENOENT, empty payload)
-- Change import from `handleTask` to `ClaudeCliExecutor` class
-- Instantiate `new ClaudeCliExecutor()` and call `executor.execute(task)` instead of `handleTask(task)`
-- Same mocking of `node:child_process`
+- Claude adapter tests cover the Claude execution path
+- TTADK adapter tests cover the TTADK execution path
+- Both keep the same non-throwing subprocess-failure behavior expected by the poller/ACK flow
 
 ### 7.2 Poller Tests
 
 The existing `__tests__/poller.test.ts` stays at the same level (poller is top-level):
 
-- Update to provide a `TaskOrchestrator` instance (with a mock `TaskExecutor`) instead of a mock handler function
-- Same 3 test cases (task available + ACK, empty queue, fetch error)
-- The mock handler becomes: `new TaskOrchestrator({ execute: mockExecute })`
+- Update task fixtures so queued tasks include the required `executor`
+- Continue to verify fetch, orchestration call, and ACK behavior
+- Poller behavior remains unchanged aside from depending on orchestrator routing
 
-### 7.3 Orchestrator Tests (new, minimal)
+### 7.3 Orchestrator Tests
 
-`core/__tests__/task-orchestrator.test.ts`:
+`core/__tests__/task-orchestrator.test.ts` should verify routing behavior:
 
-- Verify orchestrator delegates to executor
-- Mock `TaskExecutor` interface, verify `execute()` is called with the task
+- `claude_code` tasks route to the Claude executor
+- `ttadk` tasks route to the TTADK executor
+- Unknown executor values are surfaced as failures so the poller does not ACK malformed work
 
 ## 8. Files Changed
 
@@ -243,25 +258,28 @@ The existing `__tests__/poller.test.ts` stays at the same level (poller is top-l
 | `src/__tests__/handler.test.ts` | **Delete** | Moves to `adapters/__tests__/claude-cli-executor.test.ts` |
 | `src/ports/task-executor.ts` | **Create** | `TaskExecutor` interface |
 | `src/core/task-orchestrator.ts` | **Create** | `TaskOrchestrator` class |
-| `src/core/__tests__/task-orchestrator.test.ts` | **Create** | Orchestrator unit tests |
-| `src/adapters/claude-cli-executor.ts` | **Create** | `ClaudeCliExecutor` class (logic from handler.ts) |
-| `src/adapters/__tests__/claude-cli-executor.test.ts` | **Create** | Tests from handler.test.ts, adapted |
-| `src/index.ts` | **Modify** | Updated composition root with DI wiring |
+| `src/core/__tests__/task-orchestrator.test.ts` | **Create** | Orchestrator routing tests |
+| `src/adapters/claude-cli-executor.ts` | **Create** | Claude executor adapter |
+| `src/adapters/ttadk-executor.ts` | **Create** | TTADK executor adapter |
+| `src/adapters/__tests__/claude-cli-executor.test.ts` | **Create** | Claude adapter tests |
+| `src/adapters/__tests__/ttadk-executor.test.ts` | **Create** | TTADK adapter tests |
+| `src/index.ts` | **Modify** | Updated composition root to construct `TaskOrchestrator` directly |
 | `src/poller.ts` | **Modify** | Constructor takes `TaskOrchestrator` instead of callback |
-| `src/__tests__/poller.test.ts` | **Modify** | Updated to use `TaskOrchestrator` with mock executor |
+| `src/__tests__/poller.test.ts` | **Modify** | Updated task fixtures for required executor field |
 
 ## 9. Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
-| Breaking existing tests | All 7 existing test cases are preserved and adapted |
+| Breaking existing tests | Existing adapter and poller coverage is preserved, and orchestrator routing coverage is made explicit for `claude_code`, `ttadk`, and unknown executors |
 | Import path changes breaking builds | TypeScript compiler will catch any broken imports |
-| Subtle behavior change in refactor | No logic changes; only moving code and wrapping in class |
-| Over-engineering for 1 adapter | Kept minimal: thin orchestrator, single port, no DI framework |
+| Subtle behavior change in refactor | Keep polling/ACK behavior unchanged; only routing and file boundaries move |
+| Over-engineering for 1 adapter | No longer applicable after dual-executor approval; keep the orchestrator and port surface minimal |
 
 ## 10. Acceptance Criteria
 
-1. All existing tests pass (adapted to new structure)
-2. `rush build` succeeds with no TypeScript errors
-3. No behavioral changes — same logging, same error handling, same subprocess invocation
-4. Clean hex architecture: core depends only on ports, adapters implement ports
+1. Existing adapter and poller tests pass after being updated for the new structure and required `executor` field
+2. Routing coverage exists for `TaskOrchestrator` across Claude, TTADK, and unknown executor inputs
+3. `rush build` succeeds with no TypeScript errors
+4. No behavioral changes to polling/ACK flow or adapter subprocess error handling beyond executor selection
+5. Clean architecture with focused responsibilities: poller calls the orchestrator, adapters implement `TaskExecutor`, and executor selection stays in `TaskOrchestrator`

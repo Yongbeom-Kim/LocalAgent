@@ -1,9 +1,16 @@
 import { Command } from 'commander';
-import { DEFAULT_API_URL, type TaskSubmission } from '@local-agent/shared';
+import {
+  DEFAULT_API_URL,
+  TASK_EXECUTOR_OPTIONS,
+  type TaskExecutorType,
+  type TaskSubmission,
+  isTaskExecutorType,
+} from '@local-agent/shared';
 
 export interface SubmitOptions {
   payload: string;
   type: string;
+  executor: TaskExecutorType;
   apiUrl: string;
 }
 
@@ -14,11 +21,20 @@ export interface SubmitResult {
   error?: string;
 }
 
+function assertValidExecutor(executor: TaskExecutorType): void {
+  if (!isTaskExecutorType(executor)) {
+    throw new Error(`executor must be one of: ${TASK_EXECUTOR_OPTIONS}`);
+  }
+}
+
 export async function submitTask(options: SubmitOptions): Promise<SubmitResult> {
+  assertValidExecutor(options.executor);
+
   const url = `${options.apiUrl.replace(/\/+$/, '')}/tasks`;
   const body: TaskSubmission = {
     task_type: options.type,
     payload: options.payload,
+    executor: options.executor,
   };
 
   let response: Response;
@@ -54,17 +70,26 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
   }
 }
 
-export function registerSubmitCommand(program: Command): void {
+export function registerSubmitCommand(
+  program: Command,
+  submit: typeof submitTask = submitTask,
+): void {
   program
     .command('submit')
     .description('Submit a task to the queue')
     .requiredOption('-p, --payload <string>', 'Task payload')
     .option('-t, --type <string>', 'Task type', 'generic')
+    .requiredOption('-e, --executor <claude_code|ttadk>', 'Task executor')
     .option('-u, --api-url <string>', 'API base URL')
-    .action(async (opts: { payload: string; type: string; apiUrl?: string }) => {
+    .action(async (opts: { payload: string; type: string; executor: TaskExecutorType; apiUrl?: string }) => {
       const apiUrl = opts.apiUrl ?? process.env.API_URL ?? DEFAULT_API_URL;
 
-      const result = await submitTask({ payload: opts.payload, type: opts.type, apiUrl });
+      const result = await submit({
+        payload: opts.payload,
+        type: opts.type,
+        executor: opts.executor,
+        apiUrl,
+      });
 
       if (result.success) {
         console.log('Task submitted successfully.');
