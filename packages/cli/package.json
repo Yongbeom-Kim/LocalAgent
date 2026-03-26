@@ -2,6 +2,7 @@
   "name": "@local-agent/cli",
   "version": "0.0.1",
   "private": true,
+  "main": "dist/index.js",
   "bin": {
     "local-agent": "dist/index.js"
   },

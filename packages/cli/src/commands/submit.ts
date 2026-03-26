@@ -1,6 +1,5 @@
 import { Command } from 'commander';
-import type { TaskSubmission } from '@local-agent/shared';
-import { DEFAULT_API_URL } from '@local-agent/shared';
+import { DEFAULT_API_URL, type TaskSubmission } from '@local-agent/shared';
 
 export interface SubmitOptions {
   payload: string;
@@ -16,7 +15,7 @@ export interface SubmitResult {
 }
 
 export async function submitTask(options: SubmitOptions): Promise<SubmitResult> {
-  const url = `${options.apiUrl}/tasks`;
+  const url = `${options.apiUrl.replace(/\/+$/, '')}/tasks`;
   const body: TaskSubmission = {
     task_type: options.type,
     payload: options.payload,
@@ -41,12 +40,16 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
     return { success: false, error: `${response.status} ${response.statusText}` };
   }
 
-  const data = (await response.json()) as { task_type: string; submitted_at: string };
-  return {
-    success: true,
-    taskType: data.task_type,
-    submittedAt: data.submitted_at,
-  };
+  try {
+    const data = (await response.json()) as { task_type: string; submitted_at: string };
+    return {
+      success: true,
+      taskType: data.task_type,
+      submittedAt: data.submitted_at,
+    };
+  } catch {
+    return { success: false, error: 'invalid response from server (non-JSON body)' };
+  }
 }
 
 export function registerSubmitCommand(program: Command): void {

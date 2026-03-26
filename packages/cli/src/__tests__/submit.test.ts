@@ -5,11 +5,12 @@ const mockFetch = vi.fn();
 
 describe('submitTask', () => {
   beforeEach(() => {
+    mockFetch.mockReset();
     vi.stubGlobal('fetch', mockFetch);
   });
 
   afterEach(() => {
-    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   it('returns success with taskType and submittedAt on 201', async () => {
