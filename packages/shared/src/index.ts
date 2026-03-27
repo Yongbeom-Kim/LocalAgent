@@ -5,6 +5,10 @@ export {
   TASK_EXECUTOR_OPTIONS,
   isTaskExecutorType,
   type TaskExecutorType,
+  EXECUTOR_MODELS,
+  type ExecutorModelType,
+  isValidExecutorModel,
+  getExecutorModelOptions,
 } from './types';
 export { loadApiConfig, loadDaemonConfig, ApiConfig, DaemonConfig } from './config';
 export { createLogger } from './logger';
