@@ -23,18 +23,20 @@ describe('POST /tasks', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello', executor: 'ttadk' });
+      .send({ task_type: 'generic', payload: 'hello', executor: 'ttadk', executor_model: 'gpt-5.4' });
     expect(res.status).toBe(201);
     expect(res.body.task_id).toBeDefined();
     expect(res.body.task_type).toBe('generic');
     expect(res.body.payload).toBe('hello');
     expect(res.body.executor).toBe('ttadk');
+    expect(res.body.executor_model).toBe('gpt-5.4');
     expect(res.body.submitted_at).toBeDefined();
     expect(mockRabbitMQ.publish).toHaveBeenCalledWith({
       task_id: expect.any(String),
       task_type: 'generic',
       payload: 'hello',
       executor: 'ttadk',
+      executor_model: 'gpt-5.4',
       submitted_at: expect.any(String),
     });
   });
@@ -44,7 +46,7 @@ describe('POST /tasks', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello', executor: 'ttadk' });
+      .send({ task_type: 'generic', payload: 'hello', executor: 'ttadk', executor_model: 'gpt-5.4' });
 
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'Server busy, try again later' });
@@ -81,6 +83,37 @@ describe('POST /tasks', () => {
       .post('/tasks')
       .send({ task_type: 'generic', payload: 'hello', executor: 'bad' });
     expect(res.status).toBe(400);
+  });
+
+  it('returns 201 with executor_model in response', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({ task_type: 'generic', payload: 'hello', executor: 'ttadk', executor_model: 'gpt-5.4' });
+    expect(res.status).toBe(201);
+    expect(res.body.executor_model).toBe('gpt-5.4');
+    expect(mockRabbitMQ.publish).toHaveBeenCalledWith(
+      expect.objectContaining({ executor_model: 'gpt-5.4' }),
+    );
+  });
+
+  it('returns 400 when executor_model is missing', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({ task_type: 'generic', payload: 'hello', executor: 'claude_code' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/executor_model/);
+  });
+
+  it('returns 400 when executor_model is invalid for executor', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({ task_type: 'generic', payload: 'hello', executor: 'claude_code', executor_model: 'gpt-5.4' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/executor_model/);
+    expect(res.body.error).toMatch(/opus/);
   });
 });
 

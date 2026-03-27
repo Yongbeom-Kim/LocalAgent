@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { Task, TASK_EXECUTOR_OPTIONS, isTaskExecutorType } from '@local-agent/shared';
+import { Task, TASK_EXECUTOR_OPTIONS, isTaskExecutorType, isValidExecutorModel, getExecutorModelOptions } from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
@@ -8,7 +8,7 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_type, payload, executor } = req.body;
+      const { task_type, payload, executor, executor_model } = req.body;
 
       if (typeof task_type !== 'string' || !task_type) {
         res.status(400).json({ error: 'task_type is required and must be a string' });
@@ -22,12 +22,19 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: `executor is required and must be one of: ${TASK_EXECUTOR_OPTIONS}` });
         return;
       }
+      if (!isValidExecutorModel(executor, executor_model)) {
+        res.status(400).json({
+          error: `executor_model must be one of: ${getExecutorModelOptions(executor)}`,
+        });
+        return;
+      }
 
       const task: Task = {
         task_id: uuidv4(),
         task_type,
         payload,
         executor,
+        executor_model,
         submitted_at: new Date().toISOString(),
       };
       const buffered = rabbitmq.publish(task);
