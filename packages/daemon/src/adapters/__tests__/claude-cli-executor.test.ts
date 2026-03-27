@@ -18,6 +18,7 @@ function createTask(overrides?: Partial<Task>): Task {
     task_type: 'generic',
     payload: 'What is 2+2?',
     executor: 'claude_code',
+    executor_model: 'opus',
     submitted_at: '2026-03-26T00:00:00.000Z',
     ...overrides,
   };
@@ -43,7 +44,7 @@ describe('ClaudeCliExecutor', () => {
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'claude',
-      ['--dangerously-skip-permissions', '-p', 'What is 2+2?'],
+      ['--dangerously-skip-permissions', '--model', 'opus', '-p', 'What is 2+2?'],
       { maxBuffer: 50 * 1024 * 1024 },
       expect.any(Function),
     );
