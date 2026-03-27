@@ -5,12 +5,15 @@ import {
   type TaskExecutorType,
   type TaskSubmission,
   isTaskExecutorType,
+  isValidExecutorModel,
+  getExecutorModelOptions,
 } from '@local-agent/shared';
 
 export interface SubmitOptions {
   payload: string;
   type: string;
   executor: TaskExecutorType;
+  model: string;
   apiUrl: string;
 }
 
@@ -27,14 +30,24 @@ function assertValidExecutor(executor: TaskExecutorType): void {
   }
 }
 
+function assertValidExecutorModel(executor: TaskExecutorType, model: string): void {
+  if (!isValidExecutorModel(executor, model)) {
+    throw new Error(
+      `executor_model must be one of: ${getExecutorModelOptions(executor)}`,
+    );
+  }
+}
+
 export async function submitTask(options: SubmitOptions): Promise<SubmitResult> {
   assertValidExecutor(options.executor);
+  assertValidExecutorModel(options.executor, options.model);
 
   const url = `${options.apiUrl.replace(/\/+$/, '')}/tasks`;
   const body: TaskSubmission = {
     task_type: options.type,
     payload: options.payload,
     executor: options.executor,
+    executor_model: options.model,
   };
 
   let response: Response;
@@ -80,14 +93,16 @@ export function registerSubmitCommand(
     .requiredOption('-p, --payload <string>', 'Task payload')
     .option('-t, --type <string>', 'Task type', 'generic')
     .requiredOption('-e, --executor <claude_code|ttadk>', 'Task executor')
+    .requiredOption('-m, --model <string>', 'Executor model')
     .option('-u, --api-url <string>', 'API base URL')
-    .action(async (opts: { payload: string; type: string; executor: TaskExecutorType; apiUrl?: string }) => {
+    .action(async (opts: { payload: string; type: string; executor: TaskExecutorType; model: string; apiUrl?: string }) => {
       const apiUrl = opts.apiUrl ?? process.env.API_URL ?? DEFAULT_API_URL;
 
       const result = await submit({
         payload: opts.payload,
         type: opts.type,
         executor: opts.executor,
+        model: opts.model,
         apiUrl,
       });
 
