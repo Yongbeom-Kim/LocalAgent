@@ -126,6 +126,7 @@ describe('GET /tasks/next', () => {
       task_type: 'generic',
       payload: 'hello',
       executor: 'claude_code',
+      executor_model: 'opus',
       submitted_at: '2026-03-26T00:00:00.000Z',
     });
     const app = buildApp();
