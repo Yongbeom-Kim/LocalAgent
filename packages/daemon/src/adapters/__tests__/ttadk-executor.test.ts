@@ -17,6 +17,7 @@ function createTask(overrides?: Partial<Task>): Task {
     task_type: 'generic',
     payload: 'What is 2+2?',
     executor: 'ttadk',
+    executor_model: 'gpt-5.4',
     submitted_at: '2026-03-26T00:00:00.000Z',
     ...overrides,
   };
@@ -42,7 +43,7 @@ describe('TTADKExecutor', () => {
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'ttadk',
-      ['code', '-t', 'claude', '-a', '--dangerously-skip-permissions -p', 'What is 2+2?'],
+      ['code', '-t', 'claude', '-m', 'gpt-5.4', '-a', '--dangerously-skip-permissions -p What is 2+2?'],
       { maxBuffer: 50 * 1024 * 1024 },
       expect.any(Function),
     );
@@ -80,5 +81,21 @@ describe('TTADKExecutor', () => {
     await expect(executor.execute(createTask({ payload: '' }))).resolves.toBeUndefined();
 
     expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('passes executor_model to -m flag instead of hardcoded value', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, 'ok', '');
+      return {} as ChildProcess;
+    });
+
+    await executor.execute(createTask({ executor_model: 'kimi-k2.5' }));
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'ttadk',
+      ['code', '-t', 'claude', '-m', 'kimi-k2.5', '-a', '--dangerously-skip-permissions -p What is 2+2?'],
+      { maxBuffer: 50 * 1024 * 1024 },
+      expect.any(Function),
+    );
   });
 });

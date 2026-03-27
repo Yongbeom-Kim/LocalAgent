@@ -16,10 +16,9 @@ export class TTADKExecutor implements TaskExecutor {
     }
 
     try {
-      // Available models: glm-5-ttadk, kimi-k2.5, glm-4.7-ttadk, gpt-5.3-codex, gpt-5.4, gpt-5.2-codex
       const { stdout, stderr } = await execFileAsync(
         'ttadk',
-        ['code', '-t', 'claude', '-m', 'gpt-5.4', '-a', `--dangerously-skip-permissions -p ${task.payload}`],
+        ['code', '-t', 'claude', '-m', task.executor_model, '-a', `--dangerously-skip-permissions -p ${task.payload}`],
         {
           maxBuffer: 50 * 1024 * 1024,
         },
