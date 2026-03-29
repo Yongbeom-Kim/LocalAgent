@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
 import { Job } from '@local-agent/shared';
+import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -25,6 +26,14 @@ function createJob(overrides?: Partial<Job>): Job {
   };
 }
 
+function createEnv(overrides?: Partial<ExecutionEnvironment>): ExecutionEnvironment {
+  return {
+    workDir: '/tmp/localagent-job-test',
+    pluginDirs: [],
+    ...overrides,
+  };
+}
+
 type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
 
 describe('ClaudeCliExecutor', () => {
@@ -41,7 +50,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -62,7 +71,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -83,7 +92,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -93,7 +102,7 @@ describe('ClaudeCliExecutor', () => {
   });
 
   it('returns failure result when payload is empty', async () => {
-    const result = await executor.execute(createJob({ payload: '' }));
+    const result = await executor.execute(createJob({ payload: '' }), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -103,18 +112,46 @@ describe('ClaudeCliExecutor', () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
-  it('spawns claude with correct arguments', async () => {
+  it('spawns claude with --bare flag and cwd from environment', async () => {
     mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
       (callback as ExecFileCallback)(null, '', '');
       return {} as ChildProcess;
     });
 
-    await executor.execute(createJob());
+    await executor.execute(createJob(), createEnv());
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'claude',
-      ['--dangerously-skip-permissions', '--model', 'opus', '-p', 'What is 2+2?'],
-      { maxBuffer: 50 * 1024 * 1024 },
+      ['--bare', '--dangerously-skip-permissions', '--model', 'opus', '-p', 'What is 2+2?'],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
+      expect.any(Function),
+    );
+  });
+
+  it('includes --plugin-dir flags for each plugin directory', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, '', '');
+      return {} as ChildProcess;
+    });
+
+    const env = createEnv({
+      workDir: '/tmp/job',
+      pluginDirs: ['/tmp/job/marketplaces/repo1/plugin-a', '/tmp/job/marketplaces/repo2/plugin-b'],
+    });
+
+    await executor.execute(createJob(), env);
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'claude',
+      [
+        '--bare',
+        '--dangerously-skip-permissions',
+        '--model', 'opus',
+        '--plugin-dir', '/tmp/job/marketplaces/repo1/plugin-a',
+        '--plugin-dir', '/tmp/job/marketplaces/repo2/plugin-b',
+        '-p', 'What is 2+2?',
+      ],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/job' },
       expect.any(Function),
     );
   });
@@ -126,7 +163,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(Buffer.byteLength(result.stdout, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
     expect(Buffer.byteLength(result.stderr, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
