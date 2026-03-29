@@ -3,6 +3,8 @@ import {
   EXECUTOR_MODELS,
   isValidExecutorModel,
   getExecutorModelOptions,
+  type Job,
+  type MarketplaceConfig,
 } from '../types';
 
 describe('EXECUTOR_MODELS', () => {
@@ -59,11 +61,14 @@ describe('getExecutorModelOptions', () => {
 });
 
 describe('MarketplaceConfig', () => {
-  it('is exported from the package', async () => {
-    const types = await import('../types');
-    // MarketplaceConfig is a type-only export, so we verify
-    // that Job and JobSubmission accept the marketplaces field
-    const job: types.Job = {
+  it('accepts marketplaces field on Job', () => {
+    // This test verifies the MarketplaceConfig type and the marketplaces
+    // field are correctly defined by exercising them at compile time
+    // and asserting the runtime values.
+    const marketplaces: MarketplaceConfig[] = [
+      { url: 'https://github.com/example/repo.git', plugins: ['my-plugin'] },
+    ];
+    const job: Job = {
       job_id: 'j1',
       task_id: 't1',
       task_type: 'test',
@@ -79,9 +84,8 @@ describe('MarketplaceConfig', () => {
     expect(job.marketplaces![0].plugins).toEqual(['my-plugin']);
   });
 
-  it('allows Job without marketplaces field', async () => {
-    const types = await import('../types');
-    const job: types.Job = {
+  it('allows Job without marketplaces field', () => {
+    const job: Job = {
       job_id: 'j1',
       task_id: 't1',
       task_type: 'test',

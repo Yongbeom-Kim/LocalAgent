@@ -11,10 +11,10 @@ const mockSetup = vi.fn().mockResolvedValue(mockEnv);
 const mockTeardown = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../../services/job-environment', () => ({
-  JobEnvironment: vi.fn(() => ({
-    setup: mockSetup,
-    teardown: mockTeardown,
-  })),
+  JobEnvironment: vi.fn(function (this: { setup: typeof mockSetup; teardown: typeof mockTeardown }) {
+    this.setup = mockSetup;
+    this.teardown = mockTeardown;
+  }),
 }));
 
 const mockResultSubmission: TaskResultSubmission = {
