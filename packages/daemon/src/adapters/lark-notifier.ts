@@ -1,11 +1,11 @@
-import { TaskResult, createLogger } from '@local-agent/shared';
+import { TaskResult, createLogger, DEFAULT_LARK_MAX_RETRIES } from '@local-agent/shared';
 
 const logger = createLogger('lark-daemon:notifier');
 
 const LARK_TOKEN_URL = 'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
 const LARK_MESSAGE_URL = 'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id';
 const MAX_SNIPPET_CHARS = 2000;
-const MAX_RETRIES = 3;
+const MAX_RETRIES = DEFAULT_LARK_MAX_RETRIES;
 
 export class LarkNotifier {
   constructor(

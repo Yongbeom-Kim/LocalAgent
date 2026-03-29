@@ -30,7 +30,13 @@ export class LarkPoller {
       const result = (await res.json()) as TaskResult;
       logger.info({ result_id: result.result_id, task_id: result.task_id }, 'Received result');
 
-      await this.notifier.notify(result);
+      let notificationSuccess = false;
+      try {
+        await this.notifier.notify(result);
+        notificationSuccess = true;
+      } catch (notifyErr) {
+        logger.error({ result_id: result.result_id, err: notifyErr }, 'Notification failed');
+      }
 
       try {
         const ackRes = await fetch(`${this.apiUrl}/results/${this.queueName}/${result.result_id}/ack`, {
