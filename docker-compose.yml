@@ -87,3 +87,22 @@ services:
     profiles:
       - task-enrichment-daemon
       - full
+
+  telegram-result-daemon:
+    build:
+      context: .
+      dockerfile: packages/telegram-result-daemon/Dockerfile
+    environment:
+      API_URL: http://api:3000
+      POLL_INTERVAL_MS: "5000"
+      LOG_LEVEL: info
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_started
+    profiles:
+      - telegram-result-daemon
+      - full
