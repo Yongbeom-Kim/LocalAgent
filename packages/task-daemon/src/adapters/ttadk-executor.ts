@@ -1,11 +1,12 @@
 import { execFile } from 'node:child_process';
 import { Job, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
 import { TaskExecutor } from '../ports/task-executor';
+import { ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:ttadk');
 
 export class TTADKExecutor implements TaskExecutor {
-  async execute(job: Job): Promise<TaskResultSubmission> {
+  async execute(job: Job, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
     logger.info({ job_id: job.job_id, task_id: job.task_id, task_type: job.task_type }, 'Spawning TTADK');
 
     if (!job.payload) {
@@ -20,11 +21,20 @@ export class TTADKExecutor implements TaskExecutor {
       };
     }
 
+    const claudeArgs = [
+      '--bare',
+      '--dangerously-skip-permissions',
+      ...env.pluginDirs.flatMap(dir => ['--plugin-dir', dir]),
+      '-p', job.payload,
+    ].join(' ');
+
+    const args = ['code', '-t', 'claude', '-m', job.executor_model, '-a', claudeArgs];
+
     return new Promise((resolve) => {
       execFile(
         'ttadk',
-        ['code', '-t', 'claude', '-m', job.executor_model, '-a', `--dangerously-skip-permissions -p ${job.payload}`],
-        { maxBuffer: 50 * 1024 * 1024 },
+        args,
+        { maxBuffer: 50 * 1024 * 1024, cwd: env.workDir },
         (error, stdout, stderr) => {
           if (error) {
             const execErr = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
 import { Job } from '@local-agent/shared';
+import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -25,6 +26,14 @@ function createJob(overrides?: Partial<Job>): Job {
   };
 }
 
+function createEnv(overrides?: Partial<ExecutionEnvironment>): ExecutionEnvironment {
+  return {
+    workDir: '/tmp/localagent-job-test',
+    pluginDirs: [],
+    ...overrides,
+  };
+}
+
 type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
 
 describe('TTADKExecutor', () => {
@@ -41,7 +50,7 @@ describe('TTADKExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-456');
@@ -62,7 +71,7 @@ describe('TTADKExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-456');
@@ -83,7 +92,7 @@ describe('TTADKExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.status).toBe('failure');
@@ -91,7 +100,7 @@ describe('TTADKExecutor', () => {
   });
 
   it('returns failure result when payload is empty', async () => {
-    const result = await executor.execute(createJob({ payload: '' }));
+    const result = await executor.execute(createJob({ payload: '' }), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-456');
@@ -101,18 +110,42 @@ describe('TTADKExecutor', () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
-  it('spawns ttadk with correct arguments', async () => {
+  it('spawns ttadk with --bare and plugin flags forwarded via -a', async () => {
     mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
       (callback as ExecFileCallback)(null, '', '');
       return {} as ChildProcess;
     });
 
-    await executor.execute(createJob());
+    await executor.execute(createJob({ executor: 'ttadk', executor_model: 'glm-5-ttadk' }), createEnv());
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'ttadk',
-      ['code', '-t', 'claude', '-m', 'gpt-5.4', '-a', '--dangerously-skip-permissions -p What is 2+2?'],
-      { maxBuffer: 50 * 1024 * 1024 },
+      ['code', '-t', 'claude', '-m', 'glm-5-ttadk', '-a', '--bare --dangerously-skip-permissions -p What is 2+2?'],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
+      expect.any(Function),
+    );
+  });
+
+  it('includes --plugin-dir flags in -a argument', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, '', '');
+      return {} as ChildProcess;
+    });
+
+    const env = createEnv({
+      workDir: '/tmp/job',
+      pluginDirs: ['/tmp/job/repo/plugin-a', '/tmp/job/repo/plugin-b'],
+    });
+
+    await executor.execute(createJob({ executor: 'ttadk', executor_model: 'glm-5-ttadk' }), env);
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'ttadk',
+      [
+        'code', '-t', 'claude', '-m', 'glm-5-ttadk',
+        '-a', '--bare --dangerously-skip-permissions --plugin-dir /tmp/job/repo/plugin-a --plugin-dir /tmp/job/repo/plugin-b -p What is 2+2?',
+      ],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/job' },
       expect.any(Function),
     );
   });
@@ -124,7 +157,7 @@ describe('TTADKExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob());
+    const result = await executor.execute(createJob(), createEnv());
 
     expect(Buffer.byteLength(result.stdout, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
     expect(Buffer.byteLength(result.stderr, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
