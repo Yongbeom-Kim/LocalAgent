@@ -20,6 +20,10 @@
       "projectFolder": "packages/daemon"
     },
     {
+      "packageName": "@local-agent/lark-result-daemon",
+      "projectFolder": "packages/lark-result-daemon"
+    },
+    {
       "packageName": "@local-agent/cli",
       "projectFolder": "packages/cli"
     }
