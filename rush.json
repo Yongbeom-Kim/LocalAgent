@@ -24,6 +24,10 @@
       "projectFolder": "packages/lark-result-daemon"
     },
     {
+      "packageName": "@local-agent/task-enrichment-daemon",
+      "projectFolder": "packages/task-enrichment-daemon"
+    },
+    {
       "packageName": "@local-agent/cli",
       "projectFolder": "packages/cli"
     }

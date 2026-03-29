@@ -1,0 +1,4 @@
+rules:
+  default:
+    executor: claude_code
+    executor_model: sonnet
