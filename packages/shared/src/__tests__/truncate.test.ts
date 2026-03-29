@@ -29,4 +29,36 @@ describe('truncate', () => {
     const exact = 'a'.repeat(100);
     expect(truncate(exact, 100)).toBe(exact);
   });
+
+  it('returns empty string when maxBytes is 0', () => {
+    expect(truncate('hello', 0)).toBe('');
+  });
+
+  it('throws TypeError for negative maxBytes', () => {
+    expect(() => truncate('hello', -1)).toThrow(TypeError);
+  });
+
+  it('throws TypeError for non-integer maxBytes', () => {
+    expect(() => truncate('hello', 1.5)).toThrow(TypeError);
+  });
+
+  it('throws TypeError for string maxBytes', () => {
+    expect(() => truncate('hello', '100' as any)).toThrow(TypeError);
+  });
+
+  it('throws TypeError for null input', () => {
+    expect(() => truncate(null as any, 100)).toThrow(TypeError);
+  });
+
+  it('throws TypeError for undefined input', () => {
+    expect(() => truncate(undefined as any, 100)).toThrow(TypeError);
+  });
+
+  it('handles edge case where truncation produces exactly maxBytes with multi-byte chars', () => {
+    // Mixed ASCII and multi-byte characters
+    const mixed = 'a😀b😀c';
+    const result = truncate(mixed, 7); // Can fit 'a😀b' (6 bytes)
+    expect(Buffer.byteLength(result, 'utf-8')).toBeLessThanOrEqual(7);
+    expect(result).toBe('a😀b');
+  });
 });
