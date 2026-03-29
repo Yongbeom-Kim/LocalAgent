@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
-import { Task } from '@local-agent/shared';
+import { Job } from '@local-agent/shared';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -11,14 +11,16 @@ import { execFile } from 'node:child_process';
 
 const mockExecFile = vi.mocked(execFile);
 
-function createTask(overrides?: Partial<Task>): Task {
+function createJob(overrides?: Partial<Job>): Job {
   return {
+    job_id: 'job-456',
     task_id: 'test-123',
     task_type: 'generic',
     payload: 'What is 2+2?',
     executor: 'claude_code',
     executor_model: 'opus',
     submitted_at: '2026-03-26T00:00:00.000Z',
+    enriched_at: '2026-03-26T00:00:01.000Z',
     ...overrides,
   };
 }
@@ -39,8 +41,9 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createTask());
+    const result = await executor.execute(createJob());
 
+    expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
     expect(result.status).toBe('success');
     expect(result.exit_code).toBe(0);
@@ -59,8 +62,9 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createTask());
+    const result = await executor.execute(createJob());
 
+    expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
     expect(result.status).toBe('failure');
     expect(result.exit_code).toBe(1);
@@ -79,8 +83,9 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createTask());
+    const result = await executor.execute(createJob());
 
+    expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
     expect(result.status).toBe('failure');
     expect(result.exit_code).toBeNull();
@@ -88,12 +93,13 @@ describe('ClaudeCliExecutor', () => {
   });
 
   it('returns failure result when payload is empty', async () => {
-    const result = await executor.execute(createTask({ payload: '' }));
+    const result = await executor.execute(createJob({ payload: '' }));
 
+    expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
     expect(result.status).toBe('failure');
     expect(result.exit_code).toBeNull();
-    expect(result.stderr).toBe('Task payload is missing or empty');
+    expect(result.stderr).toBe('Job payload is missing or empty');
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
@@ -103,7 +109,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    await executor.execute(createTask());
+    await executor.execute(createJob());
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'claude',
@@ -120,7 +126,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createTask());
+    const result = await executor.execute(createJob());
 
     expect(Buffer.byteLength(result.stdout, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
     expect(Buffer.byteLength(result.stderr, 'utf-8')).toBeLessThanOrEqual(100 * 1024);

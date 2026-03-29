@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Task, TaskResultSubmission } from '@local-agent/shared';
+import { Job, TaskResultSubmission } from '@local-agent/shared';
 import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
 
 const mockResultSubmission: TaskResultSubmission = {
+  job_id: 'job-456',
   task_id: 'abc-123',
   status: 'success',
   exit_code: 0,
@@ -22,14 +23,16 @@ vi.mock('../adapters/claude-cli-executor', () => ({
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 
-function createTask(overrides?: Partial<Task>): Task {
+function createJob(overrides?: Partial<Job>): Job {
   return {
+    job_id: 'job-456',
     task_id: 'abc-123',
     task_type: 'generic',
     payload: 'hello',
     executor: 'claude_code',
     executor_model: 'opus',
     submitted_at: '2026-03-26T00:00:00.000Z',
+    enriched_at: '2026-03-26T00:00:01.000Z',
     ...overrides,
   };
 }
@@ -50,13 +53,13 @@ describe('TaskPoller', () => {
   });
 
   describe('pollOnce', () => {
-    it('fetches task, executes, posts result, then acks', async () => {
-      const task = createTask();
+    it('fetches job, executes, posts result, then acks', async () => {
+      const job = createJob();
 
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
-          json: () => Promise.resolve(task),
+          json: () => Promise.resolve(job),
         })
         .mockResolvedValueOnce({
           status: 201,
@@ -69,24 +72,24 @@ describe('TaskPoller', () => {
 
       await poller.pollOnce();
 
-      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next');
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/jobs/next');
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mockResultSubmission),
       });
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/abc-123/ack', {
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
         method: 'POST',
       });
     });
 
-    it('still acks task even if result POST fails', async () => {
-      const task = createTask();
+    it('still acks job even if result POST fails', async () => {
+      const job = createJob();
 
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
-          json: () => Promise.resolve(task),
+          json: () => Promise.resolve(job),
         })
         .mockResolvedValueOnce({
           status: 500,
@@ -99,18 +102,18 @@ describe('TaskPoller', () => {
       await poller.pollOnce();
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/abc-123/ack', {
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
         method: 'POST',
       });
     });
 
-    it('still acks task even if result POST throws', async () => {
-      const task = createTask();
+    it('still acks job even if result POST throws', async () => {
+      const job = createJob();
 
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
-          json: () => Promise.resolve(task),
+          json: () => Promise.resolve(job),
         })
         .mockRejectedValueOnce(new Error('Network error'))
         .mockResolvedValueOnce({
@@ -121,7 +124,7 @@ describe('TaskPoller', () => {
       await poller.pollOnce();
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/abc-123/ack', {
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
         method: 'POST',
       });
     });
@@ -133,10 +136,10 @@ describe('TaskPoller', () => {
     });
 
     it('does not post result or ack when executor is unknown', async () => {
-      const task = createTask({ executor: 'invalid' as never });
+      const job = createJob({ executor: 'invalid' as never });
       mockFetch.mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve(task),
+        json: () => Promise.resolve(job),
       });
 
       await poller.pollOnce();
