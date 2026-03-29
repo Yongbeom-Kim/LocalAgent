@@ -1,9 +1,9 @@
-import { Task, createLogger } from '@local-agent/shared';
+import { Task, TaskResultSubmission, createLogger } from '@local-agent/shared';
 import { TaskOrchestrator } from './core/task-orchestrator';
 
-const logger = createLogger('daemon:poller');
+const logger = createLogger('task-daemon:poller');
 
-export class Poller {
+export class TaskPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
 
@@ -29,8 +29,29 @@ export class Poller {
       const task = (await res.json()) as Task;
       logger.info({ task_id: task.task_id }, 'Received task');
 
-      await this.orchestrator.handle(task);
+      let result: TaskResultSubmission;
+      try {
+        result = await this.orchestrator.handle(task);
+      } catch (err) {
+        logger.error({ task_id: task.task_id, err }, 'Orchestrator error — not acking');
+        return;
+      }
 
+      // Publish result to API (best-effort)
+      try {
+        const resultRes = await fetch(`${this.apiUrl}/results`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(result),
+        });
+        if (resultRes.status !== 201) {
+          logger.warn({ task_id: task.task_id, status: resultRes.status }, 'Result publish failed');
+        }
+      } catch (resultErr) {
+        logger.error({ task_id: task.task_id, err: resultErr }, 'Result publish request failed');
+      }
+
+      // ACK the task
       try {
         const ackRes = await fetch(`${this.apiUrl}/tasks/${task.task_id}/ack`, { method: 'POST' });
         if (ackRes.status !== 200) {
@@ -47,7 +68,7 @@ export class Poller {
   }
 
   start(intervalMs: number): void {
-    logger.info({ intervalMs }, 'Starting poller');
+    logger.info({ intervalMs }, 'Starting task poller');
     this.running = true;
     const loop = async () => {
       await this.pollOnce();
@@ -63,7 +84,7 @@ export class Poller {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
-      logger.info('Poller stopped');
+      logger.info('Task poller stopped');
     }
   }
 }
