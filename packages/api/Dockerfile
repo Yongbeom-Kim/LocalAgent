@@ -10,7 +10,9 @@ COPY common/ common/
 # Copy package manifests (Rush needs all projects listed in rush.json)
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/api/package.json packages/api/package.json
-COPY packages/daemon/package.json packages/daemon/package.json
+COPY packages/task-daemon/package.json packages/task-daemon/package.json
+COPY packages/lark-result-daemon/package.json packages/lark-result-daemon/package.json
+COPY packages/cli/package.json packages/cli/package.json
 
 # Install Rush globally and run rush install
 RUN npm install -g @microsoft/rush@5.172.1
