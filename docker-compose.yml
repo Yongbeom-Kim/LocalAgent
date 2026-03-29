@@ -27,3 +27,43 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+    profiles:
+      - api
+      - full
+
+  task-daemon:
+    build:
+      context: .
+      dockerfile: packages/task-daemon/Dockerfile
+    environment:
+      API_URL: http://api:3000
+      POLL_INTERVAL_MS: "5000"
+      LOG_LEVEL: info
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_started
+    profiles:
+      - task-daemon
+      - full
+
+  lark-result-daemon:
+    build:
+      context: .
+      dockerfile: packages/lark-result-daemon/Dockerfile
+    environment:
+      API_URL: http://api:3000
+      POLL_INTERVAL_MS: "5000"
+      LOG_LEVEL: info
+      LARK_APP_ID: ${LARK_APP_ID}
+      LARK_APP_SECRET: ${LARK_APP_SECRET}
+      LARK_RECIPIENT_ID: ${LARK_RECIPIENT_ID}
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_started
+    profiles:
+      - lark-result-daemon
+      - full
