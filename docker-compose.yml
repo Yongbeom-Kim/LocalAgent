@@ -39,6 +39,9 @@ services:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"
       LOG_LEVEL: info
+      DEBUG: "${DEBUG:-0}"
+    volumes:
+      - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
     depends_on:
       rabbitmq:
         condition: service_healthy

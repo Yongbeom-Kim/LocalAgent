@@ -25,6 +25,8 @@ RUN cd packages/task-daemon && npx tsc
 
 FROM node:20-alpine
 
+RUN apk add --no-cache git
+
 WORKDIR /app
 
 COPY --from=builder /app/rush.json .
