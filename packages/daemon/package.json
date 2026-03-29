@@ -2,11 +2,13 @@
   "name": "@local-agent/daemon",
   "version": "0.0.1",
   "private": true,
-  "main": "dist/index.js",
+  "main": "dist/task-daemon.js",
   "scripts": {
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts",
+    "start:task-daemon": "node dist/task-daemon.js",
+    "start:lark-daemon": "node dist/lark-daemon.js",
+    "dev:task-daemon": "ts-node src/task-daemon.ts",
+    "dev:lark-daemon": "ts-node src/lark-daemon.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rimraf dist"
