@@ -5,6 +5,7 @@
   "pnpmOptions": {
     "useWorkspaces": true
   },
+  "projectFolderMaxDepth": 3,
   "nodeSupportedVersionRange": ">=20.0.0 <21.0.0 || >=22.0.0 <23.0.0",
   "projects": [
     {
@@ -17,19 +18,19 @@
     },
     {
       "packageName": "@local-agent/task-daemon",
-      "projectFolder": "packages/task-daemon"
+      "projectFolder": "packages/daemon/task"
     },
     {
       "packageName": "@local-agent/lark-result-daemon",
-      "projectFolder": "packages/lark-result-daemon"
+      "projectFolder": "packages/daemon/lark-result"
     },
     {
       "packageName": "@local-agent/telegram-result-daemon",
-      "projectFolder": "packages/telegram-result-daemon"
+      "projectFolder": "packages/daemon/telegram-result"
     },
     {
       "packageName": "@local-agent/task-enrichment-daemon",
-      "projectFolder": "packages/task-enrichment-daemon"
+      "projectFolder": "packages/daemon/task-enrichment"
     },
     {
       "packageName": "@local-agent/cli",

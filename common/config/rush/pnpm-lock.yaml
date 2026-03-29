@@ -78,11 +78,80 @@ importers:
         specifier: ~1.6.0
         version: 1.6.1(@types/node@20.17.58)
 
-  ../../packages/lark-result-daemon:
+  ../../packages/daemon/lark-result:
     dependencies:
       '@local-agent/shared':
         specifier: workspace:*
-        version: link:../shared
+        version: link:../../shared
+      dotenv:
+        specifier: ~16.4.7
+        version: 16.4.7
+    devDependencies:
+      rimraf:
+        specifier: ~5.0.0
+        version: 5.0.10
+      ts-node:
+        specifier: ~10.9.0
+        version: 10.9.2(@types/node@20.17.58)(typescript@5.7.3)
+      typescript:
+        specifier: ~5.7.0
+        version: 5.7.3
+      vitest:
+        specifier: ~1.6.0
+        version: 1.6.1(@types/node@20.17.58)
+
+  ../../packages/daemon/task:
+    dependencies:
+      '@local-agent/shared':
+        specifier: workspace:*
+        version: link:../../shared
+    devDependencies:
+      rimraf:
+        specifier: ~5.0.0
+        version: 5.0.10
+      ts-node:
+        specifier: ~10.9.0
+        version: 10.9.2(@types/node@20.17.58)(typescript@5.7.3)
+      typescript:
+        specifier: ~5.7.0
+        version: 5.7.3
+      vitest:
+        specifier: ~1.6.0
+        version: 1.6.1(@types/node@20.17.58)
+
+  ../../packages/daemon/task-enrichment:
+    dependencies:
+      '@local-agent/shared':
+        specifier: workspace:*
+        version: link:../../shared
+      dotenv:
+        specifier: ~16.4.7
+        version: 16.4.7
+      js-yaml:
+        specifier: ~4.1.0
+        version: 4.1.1
+    devDependencies:
+      '@types/js-yaml':
+        specifier: ~4.0.9
+        version: 4.0.9
+      rimraf:
+        specifier: ~5.0.0
+        version: 5.0.10
+      ts-node:
+        specifier: ~10.9.0
+        version: 10.9.2(@types/node@20.17.58)(typescript@5.7.3)
+      typescript:
+        specifier: ~5.7.0
+        version: 5.7.3
+      vitest:
+        specifier: ~1.6.0
+        version: 1.6.1(@types/node@20.17.58)
+
+  ../../packages/daemon/telegram-result:
+    dependencies:
+      '@local-agent/shared':
+        specifier: workspace:*
+        version: link:../../shared
       dotenv:
         specifier: ~16.4.7
         version: 16.4.7
@@ -115,75 +184,6 @@ importers:
       rimraf:
         specifier: ~5.0.0
         version: 5.0.10
-      typescript:
-        specifier: ~5.7.0
-        version: 5.7.3
-      vitest:
-        specifier: ~1.6.0
-        version: 1.6.1(@types/node@20.17.58)
-
-  ../../packages/task-daemon:
-    dependencies:
-      '@local-agent/shared':
-        specifier: workspace:*
-        version: link:../shared
-    devDependencies:
-      rimraf:
-        specifier: ~5.0.0
-        version: 5.0.10
-      ts-node:
-        specifier: ~10.9.0
-        version: 10.9.2(@types/node@20.17.58)(typescript@5.7.3)
-      typescript:
-        specifier: ~5.7.0
-        version: 5.7.3
-      vitest:
-        specifier: ~1.6.0
-        version: 1.6.1(@types/node@20.17.58)
-
-  ../../packages/task-enrichment-daemon:
-    dependencies:
-      '@local-agent/shared':
-        specifier: workspace:*
-        version: link:../shared
-      dotenv:
-        specifier: ~16.4.7
-        version: 16.4.7
-      js-yaml:
-        specifier: ~4.1.0
-        version: 4.1.1
-    devDependencies:
-      '@types/js-yaml':
-        specifier: ~4.0.9
-        version: 4.0.9
-      rimraf:
-        specifier: ~5.0.0
-        version: 5.0.10
-      ts-node:
-        specifier: ~10.9.0
-        version: 10.9.2(@types/node@20.17.58)(typescript@5.7.3)
-      typescript:
-        specifier: ~5.7.0
-        version: 5.7.3
-      vitest:
-        specifier: ~1.6.0
-        version: 1.6.1(@types/node@20.17.58)
-
-  ../../packages/telegram-result-daemon:
-    dependencies:
-      '@local-agent/shared':
-        specifier: workspace:*
-        version: link:../shared
-      dotenv:
-        specifier: ~16.4.7
-        version: 16.4.7
-    devDependencies:
-      rimraf:
-        specifier: ~5.0.0
-        version: 5.0.10
-      ts-node:
-        specifier: ~10.9.0
-        version: 10.9.2(@types/node@20.17.58)(typescript@5.7.3)
       typescript:
         specifier: ~5.7.0
         version: 5.7.3

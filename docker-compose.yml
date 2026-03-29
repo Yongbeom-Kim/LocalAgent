@@ -34,7 +34,7 @@ services:
   task-daemon:
     build:
       context: .
-      dockerfile: packages/task-daemon/Dockerfile
+      dockerfile: packages/daemon/task/Dockerfile
     environment:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"
@@ -54,7 +54,7 @@ services:
   lark-result-daemon:
     build:
       context: .
-      dockerfile: packages/lark-result-daemon/Dockerfile
+      dockerfile: packages/daemon/lark-result/Dockerfile
     environment:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"
@@ -74,7 +74,7 @@ services:
   task-enrichment-daemon:
     build:
       context: .
-      dockerfile: packages/task-enrichment-daemon/Dockerfile
+      dockerfile: packages/daemon/task-enrichment/Dockerfile
     environment:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"
@@ -91,7 +91,7 @@ services:
   telegram-result-daemon:
     build:
       context: .
-      dockerfile: packages/telegram-result-daemon/Dockerfile
+      dockerfile: packages/daemon/telegram-result/Dockerfile
     environment:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"

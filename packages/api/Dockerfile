@@ -10,8 +10,8 @@ COPY common/ common/
 # Copy package manifests (Rush needs all projects listed in rush.json)
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/api/package.json packages/api/package.json
-COPY packages/task-daemon/package.json packages/task-daemon/package.json
-COPY packages/lark-result-daemon/package.json packages/lark-result-daemon/package.json
+COPY packages/daemon/task/package.json packages/daemon/task/package.json
+COPY packages/daemon/lark-result/package.json packages/daemon/lark-result/package.json
 COPY packages/cli/package.json packages/cli/package.json
 
 # Install Rush globally and run rush install

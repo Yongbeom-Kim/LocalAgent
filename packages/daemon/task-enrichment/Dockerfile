@@ -8,10 +8,10 @@ COPY common/ common/
 
 # Rush requires all project manifests
 COPY packages/shared/package.json packages/shared/package.json
-COPY packages/task-daemon/package.json packages/task-daemon/package.json
+COPY packages/daemon/task/package.json packages/daemon/task/package.json
 COPY packages/api/package.json packages/api/package.json
-COPY packages/lark-result-daemon/package.json packages/lark-result-daemon/package.json
-COPY packages/task-enrichment-daemon/package.json packages/task-enrichment-daemon/package.json
+COPY packages/daemon/lark-result/package.json packages/daemon/lark-result/package.json
+COPY packages/daemon/task-enrichment/package.json packages/daemon/task-enrichment/package.json
 COPY packages/cli/package.json packages/cli/package.json
 
 RUN npm install -g @microsoft/rush@5.172.1
@@ -19,10 +19,10 @@ RUN rm -rf common/temp/pnpm-store common/temp/node_modules common/temp/install-r
 RUN rush install --to @local-agent/task-enrichment-daemon
 
 COPY packages/shared/ packages/shared/
-COPY packages/task-enrichment-daemon/ packages/task-enrichment-daemon/
+COPY packages/daemon/task-enrichment/ packages/daemon/task-enrichment/
 
 RUN cd packages/shared && npx tsc
-RUN cd packages/task-enrichment-daemon && npx tsc
+RUN cd packages/daemon/task-enrichment && npx tsc
 
 FROM node:20-alpine
 
@@ -32,12 +32,12 @@ COPY --from=builder /app/rush.json .
 COPY --from=builder /app/common/ common/
 COPY --from=builder /app/packages/shared/package.json packages/shared/package.json
 COPY --from=builder /app/packages/shared/dist/ packages/shared/dist/
-COPY --from=builder /app/packages/task-enrichment-daemon/package.json packages/task-enrichment-daemon/package.json
-COPY --from=builder /app/packages/task-enrichment-daemon/dist/ packages/task-enrichment-daemon/dist/
-COPY --from=builder /app/packages/task-enrichment-daemon/config/ packages/task-enrichment-daemon/config/
-COPY --from=builder /app/packages/task-enrichment-daemon/node_modules/ packages/task-enrichment-daemon/node_modules/
+COPY --from=builder /app/packages/daemon/task-enrichment/package.json packages/daemon/task-enrichment/package.json
+COPY --from=builder /app/packages/daemon/task-enrichment/dist/ packages/daemon/task-enrichment/dist/
+COPY --from=builder /app/packages/daemon/task-enrichment/config/ packages/daemon/task-enrichment/config/
+COPY --from=builder /app/packages/daemon/task-enrichment/node_modules/ packages/daemon/task-enrichment/node_modules/
 COPY --from=builder /app/packages/shared/node_modules/ packages/shared/node_modules/
 
-WORKDIR /app/packages/task-enrichment-daemon
+WORKDIR /app/packages/daemon/task-enrichment
 
 CMD ["node", "dist/index.js"]

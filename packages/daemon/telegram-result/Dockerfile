@@ -8,20 +8,22 @@ COPY common/ common/
 
 # Rush requires all project manifests
 COPY packages/shared/package.json packages/shared/package.json
-COPY packages/lark-result-daemon/package.json packages/lark-result-daemon/package.json
+COPY packages/daemon/telegram-result/package.json packages/daemon/telegram-result/package.json
 COPY packages/api/package.json packages/api/package.json
-COPY packages/task-daemon/package.json packages/task-daemon/package.json
+COPY packages/daemon/task/package.json packages/daemon/task/package.json
+COPY packages/daemon/lark-result/package.json packages/daemon/lark-result/package.json
 COPY packages/cli/package.json packages/cli/package.json
+COPY packages/daemon/task-enrichment/package.json packages/daemon/task-enrichment/package.json
 
 RUN npm install -g @microsoft/rush@5.172.1
 RUN rm -rf common/temp/pnpm-store common/temp/node_modules common/temp/install-run common/temp/rush-recycler common/temp/last-install.flag
-RUN rush install --to @local-agent/lark-result-daemon
+RUN rush install --to @local-agent/telegram-result-daemon
 
 COPY packages/shared/ packages/shared/
-COPY packages/lark-result-daemon/ packages/lark-result-daemon/
+COPY packages/daemon/telegram-result/ packages/daemon/telegram-result/
 
 RUN cd packages/shared && npx tsc
-RUN cd packages/lark-result-daemon && npx tsc
+RUN cd packages/daemon/telegram-result && npx tsc
 
 FROM node:20-alpine
 
@@ -31,11 +33,11 @@ COPY --from=builder /app/rush.json .
 COPY --from=builder /app/common/ common/
 COPY --from=builder /app/packages/shared/package.json packages/shared/package.json
 COPY --from=builder /app/packages/shared/dist/ packages/shared/dist/
-COPY --from=builder /app/packages/lark-result-daemon/package.json packages/lark-result-daemon/package.json
-COPY --from=builder /app/packages/lark-result-daemon/dist/ packages/lark-result-daemon/dist/
-COPY --from=builder /app/packages/lark-result-daemon/node_modules/ packages/lark-result-daemon/node_modules/
+COPY --from=builder /app/packages/daemon/telegram-result/package.json packages/daemon/telegram-result/package.json
+COPY --from=builder /app/packages/daemon/telegram-result/dist/ packages/daemon/telegram-result/dist/
+COPY --from=builder /app/packages/daemon/telegram-result/node_modules/ packages/daemon/telegram-result/node_modules/
 COPY --from=builder /app/packages/shared/node_modules/ packages/shared/node_modules/
 
-WORKDIR /app/packages/lark-result-daemon
+WORKDIR /app/packages/daemon/telegram-result
 
 CMD ["node", "dist/index.js"]
