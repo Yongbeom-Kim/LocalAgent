@@ -1,4 +1,4 @@
-import { Task, TaskResultSubmission, createLogger } from '@local-agent/shared';
+import { Job, TaskResultSubmission, createLogger } from '@local-agent/shared';
 import { TaskOrchestrator } from './core/task-orchestrator';
 
 const logger = createLogger('task-daemon:poller');
@@ -14,10 +14,10 @@ export class TaskPoller {
 
   async pollOnce(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiUrl}/tasks/next`);
+      const res = await fetch(`${this.apiUrl}/jobs/next`);
 
       if (res.status === 204) {
-        logger.debug('No tasks available');
+        logger.debug('No jobs available');
         return;
       }
 
@@ -26,14 +26,14 @@ export class TaskPoller {
         return;
       }
 
-      const task = (await res.json()) as Task;
-      logger.info({ task_id: task.task_id }, 'Received task');
+      const job = (await res.json()) as Job;
+      logger.info({ job_id: job.job_id, task_id: job.task_id }, 'Received job');
 
       let result: TaskResultSubmission;
       try {
-        result = await this.orchestrator.handle(task);
+        result = await this.orchestrator.handle(job);
       } catch (err) {
-        logger.error({ task_id: task.task_id, err }, 'Orchestrator error — not acking');
+        logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
         return;
       }
 
@@ -45,22 +45,22 @@ export class TaskPoller {
           body: JSON.stringify(result),
         });
         if (resultRes.status !== 201) {
-          logger.warn({ task_id: task.task_id, status: resultRes.status }, 'Result publish failed');
+          logger.warn({ job_id: job.job_id, status: resultRes.status }, 'Result publish failed');
         }
       } catch (resultErr) {
-        logger.error({ task_id: task.task_id, err: resultErr }, 'Result publish request failed');
+        logger.error({ job_id: job.job_id, err: resultErr }, 'Result publish request failed');
       }
 
-      // ACK the task
+      // ACK the job
       try {
-        const ackRes = await fetch(`${this.apiUrl}/tasks/${task.task_id}/ack`, { method: 'POST' });
+        const ackRes = await fetch(`${this.apiUrl}/jobs/${job.job_id}/ack`, { method: 'POST' });
         if (ackRes.status !== 200) {
-          logger.warn({ task_id: task.task_id, status: ackRes.status }, 'ACK failed');
+          logger.warn({ job_id: job.job_id, status: ackRes.status }, 'ACK failed');
         } else {
-          logger.info({ task_id: task.task_id }, 'Task acknowledged');
+          logger.info({ job_id: job.job_id }, 'Job acknowledged');
         }
       } catch (ackErr) {
-        logger.error({ task_id: task.task_id, err: ackErr }, 'ACK request failed');
+        logger.error({ job_id: job.job_id, err: ackErr }, 'ACK request failed');
       }
     } catch (err) {
       logger.error({ err }, 'Poll error');
