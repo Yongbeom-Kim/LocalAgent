@@ -1,5 +1,5 @@
 import amqplib from 'amqplib';
-import { Task, Job, TaskResult, createLogger, DEFAULT_RESULTS_EXCHANGE_NAME, DEFAULT_LARK_QUEUE_NAME, DEFAULT_JOBS_QUEUE_NAME } from '@local-agent/shared';
+import { Task, Job, TaskResult, createLogger, DEFAULT_RESULTS_EXCHANGE_NAME, DEFAULT_LARK_QUEUE_NAME, DEFAULT_JOBS_QUEUE_NAME, DEFAULT_TELEGRAM_QUEUE_NAME } from '@local-agent/shared';
 
 interface GetMessage {
   content: Buffer;
@@ -37,6 +37,8 @@ export class RabbitMQService {
     await ch.assertExchange(DEFAULT_RESULTS_EXCHANGE_NAME, 'fanout', { durable: true });
     await ch.assertQueue(DEFAULT_LARK_QUEUE_NAME, { durable: true });
     await ch.bindQueue(DEFAULT_LARK_QUEUE_NAME, DEFAULT_RESULTS_EXCHANGE_NAME, '');
+    await ch.assertQueue(DEFAULT_TELEGRAM_QUEUE_NAME, { durable: true });
+    await ch.bindQueue(DEFAULT_TELEGRAM_QUEUE_NAME, DEFAULT_RESULTS_EXCHANGE_NAME, '');
     this.channel = ch;
   }
 

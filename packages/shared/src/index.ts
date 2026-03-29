@@ -30,5 +30,6 @@ export {
   DEFAULT_RESULTS_EXCHANGE_NAME,
   DEFAULT_LARK_QUEUE_NAME,
   DEFAULT_JOBS_QUEUE_NAME,
+  DEFAULT_TELEGRAM_QUEUE_NAME,
 } from './constants';
 export { truncate } from './truncate';

@@ -7,3 +7,4 @@ export const DEFAULT_LOG_LEVEL = 'info';
 export const DEFAULT_RESULTS_EXCHANGE_NAME = 'results';
 export const DEFAULT_LARK_QUEUE_NAME = 'lark-messages';
 export const DEFAULT_JOBS_QUEUE_NAME = 'jobs';
+export const DEFAULT_TELEGRAM_QUEUE_NAME = 'telegram-messages';
