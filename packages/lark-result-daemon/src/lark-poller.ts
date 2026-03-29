@@ -28,7 +28,7 @@ export class LarkPoller {
       }
 
       const result = (await res.json()) as TaskResult;
-      logger.info({ result_id: result.result_id, task_id: result.task_id }, 'Received result');
+      logger.info({ result_id: result.result_id, job_id: result.job_id, task_id: result.task_id }, 'Received result');
 
       await this.notifier.notify(result);
 

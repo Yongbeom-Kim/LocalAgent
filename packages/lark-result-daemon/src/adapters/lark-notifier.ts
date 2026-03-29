@@ -52,7 +52,7 @@ export class LarkNotifier {
       : result.stdout;
 
     const text = [
-      `Task ${result.task_id} — ${result.status}`,
+      `Job ${result.job_id} (Task ${result.task_id}) — ${result.status}`,
       `Exit code: ${result.exit_code ?? 'N/A'}`,
       snippet ? `Output:\n${snippet}` : 'No output',
     ].join('\n');
