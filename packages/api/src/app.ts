@@ -1,5 +1,6 @@
 import express from 'express';
 import { createTaskRoutes } from './routes/tasks';
+import { createJobRoutes } from './routes/jobs';
 import { createResultRoutes } from './routes/results';
 import { createHealthRoutes } from './routes/health';
 import { errorHandler } from './middleware/error-handler';
@@ -10,6 +11,7 @@ export function createApp(rabbitmq: RabbitMQService): express.Application {
 
   app.use(express.json());
   app.use('/tasks', createTaskRoutes(rabbitmq));
+  app.use('/jobs', createJobRoutes(rabbitmq));
   app.use('/results', createResultRoutes(rabbitmq));
   app.use('/health', createHealthRoutes(rabbitmq));
   app.use(errorHandler);
