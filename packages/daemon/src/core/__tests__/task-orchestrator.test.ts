@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Task } from '@local-agent/shared';
+import { Task, TaskResultSubmission } from '@local-agent/shared';
 
-const mockClaudeExecute = vi.fn();
-const mockTTADKExecute = vi.fn();
+const mockResultSubmission: TaskResultSubmission = {
+  task_id: 'test-123',
+  status: 'success',
+  exit_code: 0,
+  stdout: 'output',
+  stderr: '',
+};
+
+const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockTTADKExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 
 vi.mock('../../adapters/claude-cli-executor', () => ({
   ClaudeCliExecutor: vi.fn().mockImplementation(() => ({
@@ -37,50 +45,40 @@ describe('TaskOrchestrator', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockClaudeExecute.mockResolvedValue(undefined);
-    mockTTADKExecute.mockResolvedValue(undefined);
+    mockClaudeExecute.mockResolvedValue(mockResultSubmission);
+    mockTTADKExecute.mockResolvedValue(mockResultSubmission);
     orchestrator = new TaskOrchestrator();
   });
 
-  it('creates Claude executor for claude_code tasks only', async () => {
+  it('returns TaskResultSubmission from Claude executor for claude_code tasks', async () => {
     const task = createTask({ executor: 'claude_code' });
-
-    await orchestrator.handle(task);
+    const result = await orchestrator.handle(task);
 
     expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
     expect(TTADKExecutor).not.toHaveBeenCalled();
     expect(mockClaudeExecute).toHaveBeenCalledWith(task);
-    expect(mockTTADKExecute).not.toHaveBeenCalled();
+    expect(result).toEqual(mockResultSubmission);
   });
 
-  it('creates TTADK executor for ttadk tasks only', async () => {
+  it('returns TaskResultSubmission from TTADK executor for ttadk tasks', async () => {
     const task = createTask({ executor: 'ttadk' });
-
-    await orchestrator.handle(task);
+    const result = await orchestrator.handle(task);
 
     expect(TTADKExecutor).toHaveBeenCalledTimes(1);
     expect(ClaudeCliExecutor).not.toHaveBeenCalled();
     expect(mockTTADKExecute).toHaveBeenCalledWith(task);
-    expect(mockClaudeExecute).not.toHaveBeenCalled();
+    expect(result).toEqual(mockResultSubmission);
   });
 
   it('rejects invalid executor values without constructing adapters', async () => {
     const task = createTask({ executor: 'invalid' as never });
-
     await expect(orchestrator.handle(task)).rejects.toThrow('Unknown task executor: invalid');
-
     expect(ClaudeCliExecutor).not.toHaveBeenCalled();
     expect(TTADKExecutor).not.toHaveBeenCalled();
-    expect(mockClaudeExecute).not.toHaveBeenCalled();
-    expect(mockTTADKExecute).not.toHaveBeenCalled();
   });
 
   it('propagates unexpected executor rejections so ack does not happen', async () => {
     mockClaudeExecute.mockRejectedValue(new Error('boom'));
-
     await expect(orchestrator.handle(createTask({ executor: 'claude_code' }))).rejects.toThrow('boom');
-
-    expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
-    expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
   });
 });

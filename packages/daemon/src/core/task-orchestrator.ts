@@ -1,12 +1,12 @@
-import { Task, createLogger } from '@local-agent/shared';
+import { Task, TaskResultSubmission, createLogger } from '@local-agent/shared';
 import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
 import { TTADKExecutor } from '../adapters/ttadk-executor';
 import { TaskExecutor } from '../ports/task-executor';
 
-const logger = createLogger('daemon:orchestrator');
+const logger = createLogger('task-daemon:orchestrator');
 
 export class TaskOrchestrator {
-  async handle(task: Task): Promise<void> {
+  async handle(task: Task): Promise<TaskResultSubmission> {
     logger.info(
       { task_id: task.task_id, task_type: task.task_type, executor: task.executor },
       'Processing task',
@@ -23,6 +23,6 @@ export class TaskOrchestrator {
       throw new Error(`Unknown task executor: ${task.executor}`);
     }
 
-    await executor.execute(task);
+    return executor.execute(task);
   }
 }
