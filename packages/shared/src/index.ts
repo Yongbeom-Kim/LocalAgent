@@ -1,6 +1,8 @@
 export {
   TaskSubmission,
   Task,
+  type JobSubmission,
+  type Job,
   TASK_EXECUTORS,
   TASK_EXECUTOR_OPTIONS,
   isTaskExecutorType,
@@ -26,5 +28,6 @@ export {
   DEFAULT_LOG_LEVEL,
   DEFAULT_RESULTS_EXCHANGE_NAME,
   DEFAULT_LARK_QUEUE_NAME,
+  DEFAULT_JOBS_QUEUE_NAME,
 } from './constants';
 export { truncate } from './truncate';

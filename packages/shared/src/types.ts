@@ -31,11 +31,16 @@ export function getExecutorModelOptions(executor: TaskExecutorType): string {
 export interface TaskSubmission {
   task_type: string;
   payload: string;
-  executor: TaskExecutorType;
-  executor_model: string;
 }
 
 export interface Task {
+  task_id: string;
+  task_type: string;
+  payload: string;
+  submitted_at: string;
+}
+
+export interface JobSubmission {
   task_id: string;
   task_type: string;
   payload: string;
@@ -44,12 +49,24 @@ export interface Task {
   submitted_at: string;
 }
 
+export interface Job {
+  job_id: string;
+  task_id: string;
+  task_type: string;
+  payload: string;
+  executor: TaskExecutorType;
+  executor_model: string;
+  submitted_at: string;
+  enriched_at: string;
+}
+
 export const RESULT_STATUSES = ['success', 'failure'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const MAX_RESULT_OUTPUT_BYTES = 100 * 1024; // 100KB
 
 export interface TaskResultSubmission {
+  job_id: string;
   task_id: string;
   status: ResultStatus;
   exit_code: number | null;
