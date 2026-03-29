@@ -13,17 +13,21 @@ const mockResultSubmission: TaskResultSubmission = {
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockTTADKExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 
-vi.mock('../../adapters/claude-cli-executor', () => ({
-  ClaudeCliExecutor: vi.fn().mockImplementation(() => ({
-    execute: mockClaudeExecute,
-  })),
-}));
+vi.mock('../../adapters/claude-cli-executor', () => {
+  return {
+    ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+      this.execute = mockClaudeExecute;
+    }),
+  };
+});
 
-vi.mock('../../adapters/ttadk-executor', () => ({
-  TTADKExecutor: vi.fn().mockImplementation(() => ({
-    execute: mockTTADKExecute,
-  })),
-}));
+vi.mock('../../adapters/ttadk-executor', () => {
+  return {
+    TTADKExecutor: vi.fn(function (this: { execute: typeof mockTTADKExecute }) {
+      this.execute = mockTTADKExecute;
+    }),
+  };
+});
 
 import { ClaudeCliExecutor } from '../../adapters/claude-cli-executor';
 import { TTADKExecutor } from '../../adapters/ttadk-executor';
@@ -47,9 +51,10 @@ describe('TaskOrchestrator', () => {
   let orchestrator: TaskOrchestrator;
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockClaudeExecute.mockResolvedValue(mockResultSubmission);
-    mockTTADKExecute.mockResolvedValue(mockResultSubmission);
+    mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockTTADKExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    vi.mocked(ClaudeCliExecutor).mockClear();
+    vi.mocked(TTADKExecutor).mockClear();
     orchestrator = new TaskOrchestrator();
   });
 

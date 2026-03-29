@@ -14,11 +14,13 @@ const mockResultSubmission: TaskResultSubmission = {
 
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 
-vi.mock('../adapters/claude-cli-executor', () => ({
-  ClaudeCliExecutor: vi.fn().mockImplementation(() => ({
-    execute: mockClaudeExecute,
-  })),
-}));
+vi.mock('../adapters/claude-cli-executor', () => {
+  return {
+    ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+      this.execute = mockClaudeExecute;
+    }),
+  };
+});
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -43,8 +45,9 @@ describe('TaskPoller', () => {
   let poller: TaskPoller;
 
   beforeEach(() => {
-    vi.clearAllMocks();
-    mockClaudeExecute.mockResolvedValue(mockResultSubmission);
+    mockFetch.mockClear();
+    mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    vi.mocked(ClaudeCliExecutor).mockClear();
     poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator());
   });
 

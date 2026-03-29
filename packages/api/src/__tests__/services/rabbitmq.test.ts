@@ -58,8 +58,6 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'test',
-        executor: 'claude_code',
-        executor_model: 'opus',
         submitted_at: '2026-03-26T00:00:00.000Z',
       };
       const result = service.publish(msg);
