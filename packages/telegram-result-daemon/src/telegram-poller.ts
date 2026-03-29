@@ -1,0 +1,72 @@
+import { TaskResult, createLogger } from '@local-agent/shared';
+import { TelegramNotifier } from './adapters/telegram-notifier';
+
+const logger = createLogger('telegram-daemon:poller');
+
+export class TelegramPoller {
+  private timer: ReturnType<typeof setTimeout> | null = null;
+  private running = false;
+
+  constructor(
+    private readonly apiUrl: string,
+    private readonly queueName: string,
+    private readonly notifier: TelegramNotifier,
+  ) {}
+
+  async pollOnce(): Promise<void> {
+    try {
+      const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`);
+
+      if (res.status === 204) {
+        logger.debug('No results available');
+        return;
+      }
+
+      if (res.status !== 200) {
+        logger.warn({ status: res.status }, 'Unexpected response from API');
+        return;
+      }
+
+      const result = (await res.json()) as TaskResult;
+      logger.info({ result_id: result.result_id, job_id: result.job_id, task_id: result.task_id }, 'Received result');
+
+      await this.notifier.notify(result);
+
+      try {
+        const ackRes = await fetch(`${this.apiUrl}/results/${this.queueName}/${result.result_id}/ack`, {
+          method: 'POST',
+        });
+        if (ackRes.status !== 200) {
+          logger.warn({ result_id: result.result_id, status: ackRes.status }, 'Result ACK failed');
+        } else {
+          logger.info({ result_id: result.result_id }, 'Result acknowledged');
+        }
+      } catch (ackErr) {
+        logger.error({ result_id: result.result_id, err: ackErr }, 'Result ACK request failed');
+      }
+    } catch (err) {
+      logger.error({ err }, 'Telegram poll error');
+    }
+  }
+
+  start(intervalMs: number): void {
+    logger.info({ intervalMs, queueName: this.queueName }, 'Starting telegram poller');
+    this.running = true;
+    const loop = async () => {
+      await this.pollOnce();
+      if (this.running) {
+        this.timer = setTimeout(loop, intervalMs);
+      }
+    };
+    loop();
+  }
+
+  stop(): void {
+    this.running = false;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = null;
+      logger.info('Telegram poller stopped');
+    }
+  }
+}
