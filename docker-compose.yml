@@ -67,3 +67,20 @@ services:
     profiles:
       - lark-result-daemon
       - full
+
+  task-enrichment-daemon:
+    build:
+      context: .
+      dockerfile: packages/task-enrichment-daemon/Dockerfile
+    environment:
+      API_URL: http://api:3000
+      POLL_INTERVAL_MS: "5000"
+      LOG_LEVEL: info
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_started
+    profiles:
+      - task-enrichment-daemon
+      - full
