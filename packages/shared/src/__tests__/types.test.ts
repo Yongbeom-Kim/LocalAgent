@@ -57,3 +57,40 @@ describe('getExecutorModelOptions', () => {
     );
   });
 });
+
+describe('MarketplaceConfig', () => {
+  it('is exported from the package', async () => {
+    const types = await import('../types');
+    // MarketplaceConfig is a type-only export, so we verify
+    // that Job and JobSubmission accept the marketplaces field
+    const job: types.Job = {
+      job_id: 'j1',
+      task_id: 't1',
+      task_type: 'test',
+      payload: 'p',
+      executor: 'claude_code',
+      executor_model: 'sonnet',
+      submitted_at: '2026-01-01T00:00:00Z',
+      enriched_at: '2026-01-01T00:00:01Z',
+      marketplaces: [{ url: 'https://github.com/example/repo.git', plugins: ['my-plugin'] }],
+    };
+    expect(job.marketplaces).toHaveLength(1);
+    expect(job.marketplaces![0].url).toBe('https://github.com/example/repo.git');
+    expect(job.marketplaces![0].plugins).toEqual(['my-plugin']);
+  });
+
+  it('allows Job without marketplaces field', async () => {
+    const types = await import('../types');
+    const job: types.Job = {
+      job_id: 'j1',
+      task_id: 't1',
+      task_type: 'test',
+      payload: 'p',
+      executor: 'claude_code',
+      executor_model: 'sonnet',
+      submitted_at: '2026-01-01T00:00:00Z',
+      enriched_at: '2026-01-01T00:00:01Z',
+    };
+    expect(job.marketplaces).toBeUndefined();
+  });
+});

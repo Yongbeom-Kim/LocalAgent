@@ -1,6 +1,7 @@
 export {
   TaskSubmission,
   Task,
+  type MarketplaceConfig,
   type JobSubmission,
   type Job,
   TASK_EXECUTORS,

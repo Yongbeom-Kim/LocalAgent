@@ -40,6 +40,11 @@ export interface Task {
   submitted_at: string;
 }
 
+export interface MarketplaceConfig {
+  url: string;
+  plugins: string[];
+}
+
 export interface JobSubmission {
   task_id: string;
   task_type: string;
@@ -47,6 +52,7 @@ export interface JobSubmission {
   executor: TaskExecutorType;
   executor_model: string;
   submitted_at: string;
+  marketplaces?: MarketplaceConfig[];
 }
 
 export interface Job {
@@ -58,6 +64,7 @@ export interface Job {
   executor_model: string;
   submitted_at: string;
   enriched_at: string;
+  marketplaces?: MarketplaceConfig[];
 }
 
 export const RESULT_STATUSES = ['success', 'failure'] as const;
