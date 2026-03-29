@@ -1,0 +1,1 @@
+console.log('telegram-result-daemon placeholder');
