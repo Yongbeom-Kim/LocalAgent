@@ -1,14 +1,17 @@
 import { loadDaemonConfig, createLogger } from '@local-agent/shared';
 import { TaskPoller } from './task-poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
+import { JobEnvironment } from './services/job-environment';
 
 async function main() {
   const config = loadDaemonConfig();
   const logger = createLogger('task-daemon', config.logLevel);
 
-  logger.info({ apiUrl: config.apiUrl, pollIntervalMs: config.pollIntervalMs }, 'Starting task-daemon');
+  const debug = process.env.DEBUG === '1';
+  logger.info({ apiUrl: config.apiUrl, pollIntervalMs: config.pollIntervalMs, debug }, 'Starting task-daemon');
 
-  const orchestrator = new TaskOrchestrator();
+  const jobEnv = new JobEnvironment(debug);
+  const orchestrator = new TaskOrchestrator(jobEnv);
   const poller = new TaskPoller(config.apiUrl, orchestrator);
   poller.start(config.pollIntervalMs);
 

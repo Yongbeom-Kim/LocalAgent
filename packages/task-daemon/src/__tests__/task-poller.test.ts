@@ -2,6 +2,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Job, TaskResultSubmission } from '@local-agent/shared';
 import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
+import { ExecutionEnvironment } from '../services/job-environment';
+
+const mockEnv: ExecutionEnvironment = {
+  workDir: '/tmp/localagent-job-test',
+  pluginDirs: [],
+};
+
+const mockSetup = vi.fn().mockResolvedValue(mockEnv);
+const mockTeardown = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('../services/job-environment', () => ({
+  JobEnvironment: vi.fn(function (this: { setup: typeof mockSetup; teardown: typeof mockTeardown }) {
+    this.setup = mockSetup;
+    this.teardown = mockTeardown;
+  }),
+}));
 
 const mockResultSubmission: TaskResultSubmission = {
   job_id: 'job-456',
@@ -40,6 +56,7 @@ function createJob(overrides?: Partial<Job>): Job {
 }
 
 import { TaskPoller } from '../task-poller';
+import { JobEnvironment } from '../services/job-environment';
 
 describe('TaskPoller', () => {
   let poller: TaskPoller;
@@ -47,8 +64,11 @@ describe('TaskPoller', () => {
   beforeEach(() => {
     mockFetch.mockClear();
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockSetup.mockClear().mockResolvedValue(mockEnv);
+    mockTeardown.mockClear().mockResolvedValue(undefined);
     vi.mocked(ClaudeCliExecutor).mockClear();
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator());
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv));
   });
 
   afterEach(() => {
@@ -138,16 +158,34 @@ describe('TaskPoller', () => {
       expect(ClaudeCliExecutor).not.toHaveBeenCalled();
     });
 
-    it('does not post result or ack when executor is unknown', async () => {
+    it('posts failure result and acks when executor is unknown', async () => {
       const job = createJob({ executor: 'invalid' as never });
-      mockFetch.mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(job),
-      });
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
 
       await poller.pollOnce();
 
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      // orchestrator catches unknown executor error and returns failure result
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: expect.stringContaining('"status":"failure"'),
+      });
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
+        method: 'POST',
+      });
     });
 
     it('handles fetch errors gracefully', async () => {
