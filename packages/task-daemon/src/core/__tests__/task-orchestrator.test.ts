@@ -1,5 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Job, TaskResultSubmission } from '@local-agent/shared';
+import { ExecutionEnvironment } from '../../services/job-environment';
+
+const mockEnv: ExecutionEnvironment = {
+  workDir: '/tmp/localagent-job-test',
+  pluginDirs: [],
+};
+
+const mockSetup = vi.fn().mockResolvedValue(mockEnv);
+const mockTeardown = vi.fn().mockResolvedValue(undefined);
+
+vi.mock('../../services/job-environment', () => ({
+  JobEnvironment: vi.fn(() => ({
+    setup: mockSetup,
+    teardown: mockTeardown,
+  })),
+}));
 
 const mockResultSubmission: TaskResultSubmission = {
   job_id: 'job-456',
@@ -13,25 +29,22 @@ const mockResultSubmission: TaskResultSubmission = {
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockTTADKExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 
-vi.mock('../../adapters/claude-cli-executor', () => {
-  return {
-    ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
-      this.execute = mockClaudeExecute;
-    }),
-  };
-});
+vi.mock('../../adapters/claude-cli-executor', () => ({
+  ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+    this.execute = mockClaudeExecute;
+  }),
+}));
 
-vi.mock('../../adapters/ttadk-executor', () => {
-  return {
-    TTADKExecutor: vi.fn(function (this: { execute: typeof mockTTADKExecute }) {
-      this.execute = mockTTADKExecute;
-    }),
-  };
-});
+vi.mock('../../adapters/ttadk-executor', () => ({
+  TTADKExecutor: vi.fn(function (this: { execute: typeof mockTTADKExecute }) {
+    this.execute = mockTTADKExecute;
+  }),
+}));
 
 import { ClaudeCliExecutor } from '../../adapters/claude-cli-executor';
 import { TTADKExecutor } from '../../adapters/ttadk-executor';
 import { TaskOrchestrator } from '../task-orchestrator';
+import { JobEnvironment } from '../../services/job-environment';
 
 function createJob(overrides?: Partial<Job>): Job {
   return {
@@ -49,13 +62,26 @@ function createJob(overrides?: Partial<Job>): Job {
 
 describe('TaskOrchestrator', () => {
   let orchestrator: TaskOrchestrator;
+  let jobEnv: JobEnvironment;
 
   beforeEach(() => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockTTADKExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockSetup.mockClear().mockResolvedValue(mockEnv);
+    mockTeardown.mockClear().mockResolvedValue(undefined);
     vi.mocked(ClaudeCliExecutor).mockClear();
     vi.mocked(TTADKExecutor).mockClear();
-    orchestrator = new TaskOrchestrator();
+    jobEnv = new JobEnvironment(false);
+    orchestrator = new TaskOrchestrator(jobEnv);
+  });
+
+  it('calls setup before execution and teardown after', async () => {
+    const job = createJob();
+    await orchestrator.handle(job);
+
+    expect(mockSetup).toHaveBeenCalledWith(job);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(job, mockEnv);
+    expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
   });
 
   it('returns TaskResultSubmission from Claude executor for claude_code jobs', async () => {
@@ -64,7 +90,7 @@ describe('TaskOrchestrator', () => {
 
     expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
     expect(TTADKExecutor).not.toHaveBeenCalled();
-    expect(mockClaudeExecute).toHaveBeenCalledWith(job);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(job, mockEnv);
     expect(result).toEqual(mockResultSubmission);
   });
 
@@ -74,19 +100,38 @@ describe('TaskOrchestrator', () => {
 
     expect(TTADKExecutor).toHaveBeenCalledTimes(1);
     expect(ClaudeCliExecutor).not.toHaveBeenCalled();
-    expect(mockTTADKExecute).toHaveBeenCalledWith(job);
+    expect(mockTTADKExecute).toHaveBeenCalledWith(job, mockEnv);
     expect(result).toEqual(mockResultSubmission);
   });
 
-  it('rejects invalid executor values without constructing adapters', async () => {
-    const job = createJob({ executor: 'invalid' as never });
-    await expect(orchestrator.handle(job)).rejects.toThrow('Unknown job executor: invalid');
-    expect(ClaudeCliExecutor).not.toHaveBeenCalled();
-    expect(TTADKExecutor).not.toHaveBeenCalled();
+  it('returns failure result when setup fails', async () => {
+    mockSetup.mockRejectedValue(new Error('clone failed'));
+
+    const result = await orchestrator.handle(createJob());
+
+    expect(result.status).toBe('failure');
+    expect(result.stderr).toContain('Environment setup failed');
+    expect(result.stderr).toContain('clone failed');
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
-  it('propagates unexpected executor rejections so ack does not happen', async () => {
-    mockClaudeExecute.mockRejectedValue(new Error('boom'));
-    await expect(orchestrator.handle(createJob({ executor: 'claude_code' }))).rejects.toThrow('boom');
+  it('calls teardown even when execution fails', async () => {
+    mockClaudeExecute.mockRejectedValue(new Error('execution boom'));
+
+    const result = await orchestrator.handle(createJob());
+
+    expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
+    expect(result.status).toBe('failure');
+    expect(result.stderr).toContain('execution boom');
+  });
+
+  it('returns failure for unknown executor', async () => {
+    const job = createJob({ executor: 'invalid' as never });
+    const result = await orchestrator.handle(job);
+
+    expect(result.status).toBe('failure');
+    expect(result.stderr).toContain('Unknown job executor: invalid');
+    expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
   });
 });
