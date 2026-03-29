@@ -4,7 +4,6 @@ import { DEFAULT_TELEGRAM_MAX_RETRIES, MAX_MESSAGE_CHARS } from '../constants';
 const logger = createLogger('telegram-daemon:notifier');
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
-const MAX_RETRIES = DEFAULT_TELEGRAM_MAX_RETRIES;
 
 // MarkdownV2 special chars that must be escaped outside code blocks
 const MARKDOWNV2_ESCAPE_REGEX = /([_*\[\]()~`>#+\-=|{}.!\\])/g;
@@ -35,7 +34,7 @@ export class TelegramNotifier {
   }
 
   async notify(result: TaskResult): Promise<void> {
-    for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    for (let attempt = 1; attempt <= DEFAULT_TELEGRAM_MAX_RETRIES; attempt++) {
       try {
         await this.sendMessage(result);
         return;
@@ -44,10 +43,10 @@ export class TelegramNotifier {
           { result_id: result.result_id, attempt, err },
           'Telegram notification attempt failed',
         );
-        if (attempt === MAX_RETRIES) {
+        if (attempt === DEFAULT_TELEGRAM_MAX_RETRIES) {
           logger.error(
             { result_id: result.result_id },
-            `Telegram notification failed after ${MAX_RETRIES} attempts — giving up`,
+            `Telegram notification failed after ${DEFAULT_TELEGRAM_MAX_RETRIES} attempts — giving up`,
           );
         }
       }
