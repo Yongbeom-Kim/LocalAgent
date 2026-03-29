@@ -8,6 +8,9 @@ vi.mock('amqplib', () => {
     get: vi.fn(),
     ack: vi.fn(),
     nack: vi.fn(),
+    assertExchange: vi.fn().mockResolvedValue({}),
+    bindQueue: vi.fn().mockResolvedValue({}),
+    publish: vi.fn().mockReturnValue(true),
   };
   const mockConn = {
     createChannel: vi.fn().mockResolvedValue(mockCh),
@@ -176,6 +179,100 @@ describe('RabbitMQService', () => {
     it('returns false for unknown task ID', async () => {
       await service.connect();
       const acked = service.ack('unknown-id');
+      expect(acked).toBe(false);
+    });
+  });
+
+  describe('connect — exchange topology', () => {
+    it('asserts results fanout exchange and lark-messages queue with binding', async () => {
+      await service.connect();
+      expect(channel.assertExchange).toHaveBeenCalledWith('results', 'fanout', { durable: true });
+      expect(channel.assertQueue).toHaveBeenCalledWith('lark-messages', { durable: true });
+      expect(channel.bindQueue).toHaveBeenCalledWith('lark-messages', 'results', '');
+    });
+  });
+
+  describe('publishToExchange', () => {
+    it('publishes persistent message to named exchange', async () => {
+      await service.connect();
+      const msg = {
+        result_id: 'res-1',
+        task_id: 'task-123',
+        status: 'success' as const,
+        exit_code: 0,
+        stdout: 'output',
+        stderr: '',
+        completed_at: '2026-03-27T00:00:00.000Z',
+      };
+      const result = service.publishToExchange('results', msg);
+      expect(result).toBe(true);
+      expect(channel.publish).toHaveBeenCalledWith(
+        'results',
+        '',
+        Buffer.from(JSON.stringify(msg)),
+        { persistent: true },
+      );
+    });
+
+    it('throws when not connected', () => {
+      expect(() => service.publishToExchange('results', {} as any)).toThrow('Not connected');
+    });
+  });
+
+  describe('getNextFromQueue', () => {
+    it('returns null when queue is empty', async () => {
+      await service.connect();
+      channel.get.mockResolvedValue(false);
+      const result = await service.getNextFromQueue('lark-messages');
+      expect(result).toBeNull();
+      expect(channel.get).toHaveBeenCalledWith('lark-messages', { noAck: false });
+    });
+
+    it('returns result when message available', async () => {
+      await service.connect();
+      const content = JSON.stringify({
+        result_id: 'res-1',
+        task_id: 'task-123',
+        status: 'success',
+        exit_code: 0,
+        stdout: 'output',
+        stderr: '',
+        completed_at: '2026-03-27T00:00:00.000Z',
+      });
+      channel.get.mockResolvedValue({
+        content: Buffer.from(content),
+        fields: { deliveryTag: 99 },
+      });
+      const result = await service.getNextFromQueue('lark-messages');
+      expect(result).toEqual(JSON.parse(content));
+    });
+  });
+
+  describe('ackFromQueue', () => {
+    it('acknowledges result by result_id and queue name', async () => {
+      await service.connect();
+      const msg = {
+        content: Buffer.from(JSON.stringify({
+          result_id: 'res-1',
+          task_id: 'task-123',
+          status: 'success',
+          exit_code: 0,
+          stdout: 'output',
+          stderr: '',
+          completed_at: '2026-03-27T00:00:00.000Z',
+        })),
+        fields: { deliveryTag: 99 },
+      };
+      channel.get.mockResolvedValue(msg);
+      await service.getNextFromQueue('lark-messages');
+      const acked = service.ackFromQueue('lark-messages', 'res-1');
+      expect(acked).toBe(true);
+      expect(channel.ack).toHaveBeenCalledWith(msg);
+    });
+
+    it('returns false for unknown result_id', async () => {
+      await service.connect();
+      const acked = service.ackFromQueue('lark-messages', 'unknown');
       expect(acked).toBe(false);
     });
   });
