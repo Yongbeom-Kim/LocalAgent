@@ -7,6 +7,7 @@ const logger = createLogger('enrichment-daemon:service');
 interface EnrichmentRule {
   executor: string;
   executor_model: string;
+  marketplaces?: Array<{ url: string; plugins: string[] }>;
 }
 
 interface EnrichmentConfig {
@@ -51,6 +52,7 @@ export class EnrichmentService {
       executor: rule.executor as TaskExecutorType,
       executor_model: rule.executor_model,
       submitted_at: task.submitted_at,
+      marketplaces: rule.marketplaces,
     };
   }
 }

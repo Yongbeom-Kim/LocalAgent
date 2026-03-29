@@ -116,4 +116,43 @@ describe('EnrichmentService', () => {
       expect(result!.executor_model).toBe('sonnet');
     });
   });
+
+  describe('marketplace passthrough', () => {
+    it('includes marketplaces from rule in enriched job', () => {
+      const service = EnrichmentService.fromObject({
+        rules: {
+          development: {
+            executor: 'claude_code',
+            executor_model: 'opus',
+            marketplaces: [
+              { url: 'https://github.com/anthropics/claude-plugins-official.git', plugins: ['superpowers'] },
+              { url: 'https://github.com/Yongbeom-Kim/personal-claude-code.git', plugins: ['development'] },
+            ],
+          },
+        },
+      });
+
+      const result = service.enrich(createTask({ task_type: 'development' }));
+
+      expect(result).not.toBeNull();
+      expect(result!.marketplaces).toHaveLength(2);
+      expect(result!.marketplaces![0].url).toBe('https://github.com/anthropics/claude-plugins-official.git');
+      expect(result!.marketplaces![0].plugins).toEqual(['superpowers']);
+      expect(result!.marketplaces![1].url).toBe('https://github.com/Yongbeom-Kim/personal-claude-code.git');
+      expect(result!.marketplaces![1].plugins).toEqual(['development']);
+    });
+
+    it('omits marketplaces when rule has none', () => {
+      const service = EnrichmentService.fromObject({
+        rules: {
+          default: { executor: 'claude_code', executor_model: 'sonnet' },
+        },
+      });
+
+      const result = service.enrich(createTask({ task_type: 'anything' }));
+
+      expect(result).not.toBeNull();
+      expect(result!.marketplaces).toBeUndefined();
+    });
+  });
 });
