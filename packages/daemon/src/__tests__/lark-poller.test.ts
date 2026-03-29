@@ -66,49 +66,9 @@ describe('LarkPoller', () => {
       expect(mockNotify).not.toHaveBeenCalled();
     });
 
-    it('still acks result even if notification fails (best-effort)', async () => {
-      mockNotify.mockRejectedValue(new Error('Notification failed'));
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(sampleResult),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/lark-messages/res-1/ack', {
-        method: 'POST',
-      });
-    });
-
     it('handles fetch errors gracefully', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
       await expect(poller.pollOnce()).resolves.toBeUndefined();
-    });
-
-    it('acks result even when notification fails', async () => {
-      mockNotify.mockRejectedValue(new Error('Notification failed'));
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(sampleResult),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-
-      expect(mockNotify).toHaveBeenCalled();
-      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
   });
 });

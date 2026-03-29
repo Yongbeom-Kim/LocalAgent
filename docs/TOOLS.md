@@ -19,3 +19,5 @@
 
 # Configured but not used
 - Playwright: Configured in Claude settings, but excluded from this project's workflow by user choice
+- 4_5v_mcp: Image analysis via AI vision models — excluded from this project's workflow by user choice
+- web_reader: Fetch and convert URLs to LLM-friendly input — excluded from this project's workflow by user choice
