@@ -43,3 +43,21 @@ export interface Task {
   executor_model: string;
   submitted_at: string;
 }
+
+export const RESULT_STATUSES = ['success', 'failure'] as const;
+export type ResultStatus = (typeof RESULT_STATUSES)[number];
+
+export const MAX_RESULT_OUTPUT_BYTES = 100 * 1024; // 100KB
+
+export interface TaskResultSubmission {
+  task_id: string;
+  status: ResultStatus;
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+}
+
+export interface TaskResult extends TaskResultSubmission {
+  result_id: string;
+  completed_at: string;
+}

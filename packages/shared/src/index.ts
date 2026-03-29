@@ -9,6 +9,11 @@ export {
   type ExecutorModelType,
   isValidExecutorModel,
   getExecutorModelOptions,
+  type TaskResultSubmission,
+  type TaskResult,
+  type ResultStatus,
+  RESULT_STATUSES,
+  MAX_RESULT_OUTPUT_BYTES,
 } from './types';
 export { loadApiConfig, loadDaemonConfig, ApiConfig, DaemonConfig } from './config';
 export { createLogger } from './logger';
