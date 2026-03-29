@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Command } from 'commander';
-import { DEFAULT_API_URL, isValidExecutorModel, getExecutorModelOptions } from '@local-agent/shared';
+import { DEFAULT_API_URL } from '@local-agent/shared';
 
 const mockFetch = vi.fn();
 
@@ -24,7 +24,6 @@ describe('submitTask', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'test prompt',
-        executor: 'claude_code',
         submitted_at: '2026-03-26T10:00:00.000Z',
       }),
     });
@@ -32,8 +31,6 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test prompt',
       type: 'generic',
-      executor: 'claude_code',
-      model: 'opus',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -52,7 +49,6 @@ describe('submitTask', () => {
         task_id: 'task-123',
         task_type: 'code-review',
         payload: 'review this',
-        executor: 'ttadk',
         submitted_at: '2026-03-26T10:00:00.000Z',
       }),
     });
@@ -60,8 +56,6 @@ describe('submitTask', () => {
     await submitModule.submitTask({
       payload: 'review this',
       type: 'code-review',
-      executor: 'ttadk',
-      model: 'gpt-5.4',
       apiUrl: 'http://example.com:3000',
     });
 
@@ -71,24 +65,8 @@ describe('submitTask', () => {
       body: JSON.stringify({
         task_type: 'code-review',
         payload: 'review this',
-        executor: 'ttadk',
-        executor_model: 'gpt-5.4',
       }),
     });
-  });
-
-  it('rejects unsupported executor values before submit', async () => {
-    await expect(
-      submitModule.submitTask({
-        payload: 'review this',
-        type: 'code-review',
-        executor: 'bad' as never,
-        model: 'anything',
-        apiUrl: 'http://localhost:3000',
-      }),
-    ).rejects.toThrow(/executor/i);
-
-    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('returns error on HTTP 503', async () => {
@@ -102,8 +80,6 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
-      executor: 'claude_code',
-      model: 'opus',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -124,8 +100,6 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
-      executor: 'claude_code',
-      model: 'opus',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -142,8 +116,6 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
-      executor: 'claude_code',
-      model: 'opus',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -159,8 +131,6 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
-      executor: 'claude_code',
-      model: 'opus',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -182,8 +152,6 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
-      executor: 'claude_code',
-      model: 'opus',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -191,54 +159,6 @@ describe('submitTask', () => {
       success: false,
       error: 'invalid response from server (non-JSON body)',
     });
-  });
-
-  it('sends executor_model in request body', async () => {
-    mockFetch.mockResolvedValueOnce({
-      ok: true,
-      status: 201,
-      json: async () => ({
-        task_id: 'task-123',
-        task_type: 'code-review',
-        payload: 'review this',
-        executor: 'ttadk',
-        executor_model: 'gpt-5.4',
-        submitted_at: '2026-03-26T10:00:00.000Z',
-      }),
-    });
-
-    await submitModule.submitTask({
-      payload: 'review this',
-      type: 'code-review',
-      executor: 'ttadk',
-      model: 'gpt-5.4',
-      apiUrl: 'http://example.com:3000',
-    });
-
-    expect(mockFetch).toHaveBeenCalledWith('http://example.com:3000/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        task_type: 'code-review',
-        payload: 'review this',
-        executor: 'ttadk',
-        executor_model: 'gpt-5.4',
-      }),
-    });
-  });
-
-  it('rejects invalid model for executor before submit', async () => {
-    await expect(
-      submitModule.submitTask({
-        payload: 'test',
-        type: 'generic',
-        executor: 'claude_code',
-        model: 'gpt-5.4',
-        apiUrl: 'http://localhost:3000',
-      }),
-    ).rejects.toThrow(/executor_model/i);
-
-    expect(mockFetch).not.toHaveBeenCalled();
   });
 });
 
@@ -259,7 +179,7 @@ describe('registerSubmitCommand', () => {
     vi.restoreAllMocks();
   });
 
-  it('wires explicit executor and apiUrl from CLI options into submitTask', async () => {
+  it('wires explicit apiUrl from CLI options into submitTask', async () => {
     const submitTaskSpy = vi.fn().mockResolvedValue({
       success: true,
       taskType: 'generic',
@@ -270,15 +190,13 @@ describe('registerSubmitCommand', () => {
     const program = new Command();
     submitModule.registerSubmitCommand(program, submitTaskSpy);
 
-    await program.parseAsync(['submit', '--payload', 'test prompt', '--executor', 'ttadk', '--model', 'gpt-5.4', '--api-url', 'http://example.com:3000'], {
+    await program.parseAsync(['submit', '--payload', 'test prompt', '--api-url', 'http://example.com:3000'], {
       from: 'user',
     });
 
     expect(submitTaskSpy).toHaveBeenCalledWith({
       payload: 'test prompt',
       type: 'generic',
-      executor: 'ttadk',
-      model: 'gpt-5.4',
       apiUrl: 'http://example.com:3000',
     });
     expect(logSpy).toHaveBeenCalledWith('Task submitted successfully.');
@@ -295,38 +213,14 @@ describe('registerSubmitCommand', () => {
     const program = new Command();
     submitModule.registerSubmitCommand(program, submitTaskSpy);
 
-    await program.parseAsync(['submit', '--payload', 'test prompt', '--executor', 'claude_code', '--model', 'opus'], {
+    await program.parseAsync(['submit', '--payload', 'test prompt'], {
       from: 'user',
     });
 
     expect(submitTaskSpy).toHaveBeenCalledWith({
       payload: 'test prompt',
       type: 'generic',
-      executor: 'claude_code',
-      model: 'opus',
       apiUrl: DEFAULT_API_URL,
     });
   });
-
-  it('wires model from CLI --model option into submitTask', async () => {
-    const submitTaskSpy = vi.fn().mockResolvedValue({
-      success: true,
-      taskType: 'generic',
-      submittedAt: '2026-03-26T10:00:00.000Z',
-    });
-    vi.spyOn(console, 'log').mockImplementation(() => undefined);
-
-    const program = new Command();
-    submitModule.registerSubmitCommand(program, submitTaskSpy);
-
-    await program.parseAsync(
-      ['submit', '--payload', 'test', '--executor', 'ttadk', '--model', 'gpt-5.4'],
-      { from: 'user' },
-    );
-
-    expect(submitTaskSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ model: 'gpt-5.4' }),
-    );
-  });
 });
-
