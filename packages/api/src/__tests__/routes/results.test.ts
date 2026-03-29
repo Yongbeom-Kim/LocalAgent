@@ -18,6 +18,7 @@ function buildApp() {
 
 function validSubmission() {
   return {
+    job_id: 'job-456',
     task_id: 'task-123',
     status: 'success',
     exit_code: 0,
@@ -35,6 +36,7 @@ describe('POST /results', () => {
     expect(res.status).toBe(201);
     expect(res.body.result_id).toBeDefined();
     expect(res.body.completed_at).toBeDefined();
+    expect(res.body.job_id).toBe('job-456');
     expect(res.body.task_id).toBe('task-123');
     expect(res.body.status).toBe('success');
     expect(res.body.exit_code).toBe(0);
@@ -49,21 +51,29 @@ describe('POST /results', () => {
       'results',
       expect.objectContaining({
         result_id: expect.any(String),
+        job_id: 'job-456',
         task_id: 'task-123',
         status: 'success',
       }),
     );
   });
 
+  it('returns 400 when job_id missing', async () => {
+    const app = buildApp();
+    const { job_id, ...noJobId } = validSubmission();
+    const res = await request(app).post('/results').send(noJobId);
+    expect(res.status).toBe(400);
+  });
+
   it('returns 400 when task_id missing', async () => {
     const app = buildApp();
-    const res = await request(app).post('/results').send({ status: 'success', exit_code: 0, stdout: '', stderr: '' });
+    const res = await request(app).post('/results').send({ job_id: 'job-456', status: 'success', exit_code: 0, stdout: '', stderr: '' });
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when status missing', async () => {
     const app = buildApp();
-    const res = await request(app).post('/results').send({ task_id: 'task-123', exit_code: 0, stdout: '', stderr: '' });
+    const res = await request(app).post('/results').send({ job_id: 'job-456', task_id: 'task-123', exit_code: 0, stdout: '', stderr: '' });
     expect(res.status).toBe(400);
   });
 
