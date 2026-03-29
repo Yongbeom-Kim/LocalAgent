@@ -16,8 +16,8 @@
       "projectFolder": "packages/api"
     },
     {
-      "packageName": "@local-agent/daemon",
-      "projectFolder": "packages/daemon"
+      "packageName": "@local-agent/task-daemon",
+      "projectFolder": "packages/task-daemon"
     },
     {
       "packageName": "@local-agent/lark-result-daemon",

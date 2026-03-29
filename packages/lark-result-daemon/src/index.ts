@@ -1,4 +1,5 @@
-import { loadLarkDaemonConfig, createLogger, DEFAULT_LARK_QUEUE_NAME } from '@local-agent/shared';
+import { loadLarkDaemonConfig } from './config';
+import { createLogger, DEFAULT_LARK_QUEUE_NAME } from '@local-agent/shared';
 import { LarkPoller } from './lark-poller';
 import { LarkNotifier } from './adapters/lark-notifier';
 
