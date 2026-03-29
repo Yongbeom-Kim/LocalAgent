@@ -25,3 +25,4 @@ export {
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_LOG_LEVEL,
 } from './constants';
+export { truncate } from './truncate';
