@@ -195,6 +195,7 @@ describe('RabbitMQService', () => {
       await service.connect();
       const msg = {
         result_id: 'res-1',
+        job_id: 'job-456',
         task_id: 'task-123',
         status: 'success' as const,
         exit_code: 0,
@@ -230,6 +231,7 @@ describe('RabbitMQService', () => {
       await service.connect();
       const content = JSON.stringify({
         result_id: 'res-1',
+        job_id: 'job-456',
         task_id: 'task-123',
         status: 'success',
         exit_code: 0,
@@ -252,6 +254,7 @@ describe('RabbitMQService', () => {
       const msg = {
         content: Buffer.from(JSON.stringify({
           result_id: 'res-1',
+          job_id: 'job-456',
           task_id: 'task-123',
           status: 'success',
           exit_code: 0,

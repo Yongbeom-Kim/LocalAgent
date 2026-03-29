@@ -9,6 +9,7 @@ import { LarkNotifier } from '../adapters/lark-notifier';
 function createResult(overrides?: Partial<TaskResult>): TaskResult {
   return {
     result_id: 'res-1',
+    job_id: 'job-456',
     task_id: 'task-123',
     status: 'success',
     exit_code: 0,
@@ -61,7 +62,7 @@ describe('LarkNotifier', () => {
     );
   });
 
-  it('includes task_id, status, and truncated stdout in message', async () => {
+  it('includes job_id, task_id, status, and truncated stdout in message', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -77,6 +78,7 @@ describe('LarkNotifier', () => {
     const sendCall = mockFetch.mock.calls[1];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
+    expect(content.text).toContain('job-456');
     expect(content.text).toContain('task-123');
     expect(content.text).toContain('success');
     expect(content.text.length).toBeLessThan(3000);

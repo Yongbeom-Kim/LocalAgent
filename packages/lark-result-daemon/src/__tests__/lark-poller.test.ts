@@ -17,6 +17,7 @@ import { LarkNotifier } from '../adapters/lark-notifier';
 
 const sampleResult: TaskResult = {
   result_id: 'res-1',
+  job_id: 'job-456',
   task_id: 'task-123',
   status: 'success',
   exit_code: 0,
