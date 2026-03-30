@@ -84,8 +84,7 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executor: 'ttadk',
-        executor_model: 'gpt-5.4',
+        executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       channel.get.mockResolvedValue({
@@ -98,8 +97,7 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executor: 'ttadk',
-        executor_model: 'gpt-5.4',
+        executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
     });
@@ -112,8 +110,7 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executor: 'claude_code',
-        executor_model: 'opus',
+        executors: [{ executor: 'claude_code', executor_model: 'opus' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       channel.get.mockResolvedValue({
@@ -133,8 +130,7 @@ describe('RabbitMQService', () => {
           task_id: 'duplicate-id',
           task_type: 'generic',
           payload: 'first',
-          executor: 'claude_code',
-          executor_model: 'opus',
+          executors: [{ executor: 'claude_code', executor_model: 'opus' }],
           submitted_at: '2026-03-26T00:00:00.000Z',
         })),
         fields: { deliveryTag: 1 },
@@ -144,8 +140,7 @@ describe('RabbitMQService', () => {
           task_id: 'duplicate-id',
           task_type: 'generic',
           payload: 'second',
-          executor: 'ttadk',
-          executor_model: 'gpt-5.4',
+          executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
           submitted_at: '2026-03-26T00:00:01.000Z',
         })),
         fields: { deliveryTag: 2 },
@@ -161,8 +156,7 @@ describe('RabbitMQService', () => {
         task_id: 'duplicate-id',
         task_type: 'generic',
         payload: 'first',
-        executor: 'claude_code',
-        executor_model: 'opus',
+        executors: [{ executor: 'claude_code', executor_model: 'opus' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       expect(duplicateTask).toBeNull();
