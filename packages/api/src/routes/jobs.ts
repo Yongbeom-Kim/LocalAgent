@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { Job, isTaskExecutorType, isValidExecutorModel, TASK_EXECUTOR_OPTIONS, getExecutorModelOptions } from '@local-agent/shared';
+import { Job, isValidExecutorPreferences, ExecutorPreference } from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createJobRoutes(rabbitmq: RabbitMQService): Router {
@@ -8,7 +8,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_id, task_type, payload, executor, executor_model, submitted_at, marketplaces } = req.body;
+      const { task_id, task_type, payload, executors, submitted_at, marketplaces } = req.body;
 
       if (typeof task_id !== 'string' || !task_id) {
         res.status(400).json({ error: 'task_id is required and must be a string' });
@@ -22,13 +22,9 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'payload is required and must be a string' });
         return;
       }
-      if (typeof executor !== 'string' || !isTaskExecutorType(executor)) {
-        res.status(400).json({ error: `executor is required and must be one of: ${TASK_EXECUTOR_OPTIONS}` });
-        return;
-      }
-      if (!isValidExecutorModel(executor, executor_model)) {
+      if (!isValidExecutorPreferences(executors)) {
         res.status(400).json({
-          error: `executor_model must be one of: ${getExecutorModelOptions(executor)}`,
+          error: 'executors must be a non-empty array of valid {executor, executor_model} pairs',
         });
         return;
       }
@@ -42,8 +38,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         task_id,
         task_type,
         payload,
-        executor,
-        executor_model,
+        executors,
         submitted_at,
         enriched_at: new Date().toISOString(),
         ...(marketplaces ? { marketplaces } : {}),
