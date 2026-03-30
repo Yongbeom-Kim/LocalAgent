@@ -1,12 +1,12 @@
 import { execFile } from 'node:child_process';
-import { Job, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
+import { JobAttempt, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
 import { TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:claude-cli');
 
 export class ClaudeCliExecutor implements TaskExecutor {
-  async execute(job: Job, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
+  async execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
     logger.info({ job_id: job.job_id, task_id: job.task_id, task_type: job.task_type }, 'Spawning Claude Code');
 
     if (!job.payload) {
