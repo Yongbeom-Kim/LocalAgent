@@ -1,4 +1,5 @@
 rules:
   default:
-    executor: claude_code
-    executor_model: sonnet
+    executors:
+      - executor: claude_code
+        executor_model: sonnet

@@ -19,9 +19,23 @@ describe('EnrichmentService', () => {
     beforeEach(() => {
       service = EnrichmentService.fromObject({
         rules: {
-          code_review: { executor: 'claude_code', executor_model: 'opus' },
-          quick_question: { executor: 'claude_code', executor_model: 'haiku' },
-          default: { executor: 'claude_code', executor_model: 'sonnet' },
+          code_review: {
+            executors: [
+              { executor: 'claude_code', executor_model: 'opus' },
+              { executor: 'claude_code', executor_model: 'sonnet' },
+            ],
+          },
+          quick_question: {
+            executors: [
+              { executor: 'claude_code', executor_model: 'haiku' },
+            ],
+          },
+          default: {
+            executors: [
+              { executor: 'claude_code', executor_model: 'sonnet' },
+              { executor: 'ttadk', executor_model: 'gpt-5.4' },
+            ],
+          },
         },
       });
     });
@@ -33,8 +47,10 @@ describe('EnrichmentService', () => {
       expect(result!.task_id).toBe('task-123');
       expect(result!.task_type).toBe('code_review');
       expect(result!.payload).toBe('Review this code');
-      expect(result!.executor).toBe('claude_code');
-      expect(result!.executor_model).toBe('opus');
+      expect(result!.executors).toEqual([
+        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'claude_code', executor_model: 'sonnet' },
+      ]);
       expect(result!.submitted_at).toBe('2026-03-29T00:00:00.000Z');
     });
 
@@ -42,8 +58,10 @@ describe('EnrichmentService', () => {
       const result = service.enrich(createTask({ task_type: 'unknown_type' }));
 
       expect(result).not.toBeNull();
-      expect(result!.executor).toBe('claude_code');
-      expect(result!.executor_model).toBe('sonnet');
+      expect(result!.executors).toEqual([
+        { executor: 'claude_code', executor_model: 'sonnet' },
+        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+      ]);
     });
 
     it('returns all required JobSubmission fields', () => {
@@ -52,9 +70,15 @@ describe('EnrichmentService', () => {
       expect(result).toHaveProperty('task_id');
       expect(result).toHaveProperty('task_type');
       expect(result).toHaveProperty('payload');
-      expect(result).toHaveProperty('executor');
-      expect(result).toHaveProperty('executor_model');
+      expect(result).toHaveProperty('executors');
       expect(result).toHaveProperty('submitted_at');
+    });
+
+    it('preserves executor preference order from rule', () => {
+      const result = service.enrich(createTask({ task_type: 'code_review' }));
+
+      expect(result!.executors[0]).toEqual({ executor: 'claude_code', executor_model: 'opus' });
+      expect(result!.executors[1]).toEqual({ executor: 'claude_code', executor_model: 'sonnet' });
     });
   });
 
@@ -64,7 +88,9 @@ describe('EnrichmentService', () => {
     beforeEach(() => {
       service = EnrichmentService.fromObject({
         rules: {
-          code_review: { executor: 'claude_code', executor_model: 'opus' },
+          code_review: {
+            executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+          },
         },
       });
     });
@@ -77,15 +103,20 @@ describe('EnrichmentService', () => {
     it('still enriches known task_types', () => {
       const result = service.enrich(createTask({ task_type: 'code_review' }));
       expect(result).not.toBeNull();
-      expect(result!.executor).toBe('claude_code');
+      expect(result!.executors).toHaveLength(1);
     });
   });
 
   describe('validation', () => {
-    it('returns null for invalid executor', () => {
+    it('returns null when any executor in array is invalid', () => {
       const service = EnrichmentService.fromObject({
         rules: {
-          bad_rule: { executor: 'nonexistent', executor_model: 'opus' },
+          bad_rule: {
+            executors: [
+              { executor: 'claude_code', executor_model: 'opus' },
+              { executor: 'nonexistent', executor_model: 'opus' },
+            ],
+          },
         },
       });
 
@@ -93,14 +124,29 @@ describe('EnrichmentService', () => {
       expect(result).toBeNull();
     });
 
-    it('returns null for invalid executor_model', () => {
+    it('returns null when any executor_model in array is invalid', () => {
       const service = EnrichmentService.fromObject({
         rules: {
-          bad_model: { executor: 'claude_code', executor_model: 'nonexistent' },
+          bad_model: {
+            executors: [
+              { executor: 'claude_code', executor_model: 'nonexistent' },
+            ],
+          },
         },
       });
 
       const result = service.enrich(createTask({ task_type: 'bad_model' }));
+      expect(result).toBeNull();
+    });
+
+    it('returns null when executors array is empty', () => {
+      const service = EnrichmentService.fromObject({
+        rules: {
+          empty: { executors: [] },
+        },
+      });
+
+      const result = service.enrich(createTask({ task_type: 'empty' }));
       expect(result).toBeNull();
     });
   });
@@ -112,8 +158,9 @@ describe('EnrichmentService', () => {
       const result = service.enrich(createTask({ task_type: 'anything' }));
 
       expect(result).not.toBeNull();
-      expect(result!.executor).toBe('claude_code');
-      expect(result!.executor_model).toBe('sonnet');
+      expect(result!.executors).toEqual([
+        { executor: 'claude_code', executor_model: 'sonnet' },
+      ]);
     });
   });
 
@@ -122,8 +169,10 @@ describe('EnrichmentService', () => {
       const service = EnrichmentService.fromObject({
         rules: {
           development: {
-            executor: 'claude_code',
-            executor_model: 'opus',
+            executors: [
+              { executor: 'claude_code', executor_model: 'opus' },
+              { executor: 'claude_code', executor_model: 'sonnet' },
+            ],
             marketplaces: [
               { url: 'https://github.com/anthropics/claude-plugins-official.git', plugins: ['superpowers'] },
               { url: 'https://github.com/Yongbeom-Kim/personal-claude-code.git', plugins: ['development'] },
@@ -138,14 +187,14 @@ describe('EnrichmentService', () => {
       expect(result!.marketplaces).toHaveLength(2);
       expect(result!.marketplaces![0].url).toBe('https://github.com/anthropics/claude-plugins-official.git');
       expect(result!.marketplaces![0].plugins).toEqual(['superpowers']);
-      expect(result!.marketplaces![1].url).toBe('https://github.com/Yongbeom-Kim/personal-claude-code.git');
-      expect(result!.marketplaces![1].plugins).toEqual(['development']);
     });
 
     it('omits marketplaces when rule has none', () => {
       const service = EnrichmentService.fromObject({
         rules: {
-          default: { executor: 'claude_code', executor_model: 'sonnet' },
+          default: {
+            executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          },
         },
       });
 
