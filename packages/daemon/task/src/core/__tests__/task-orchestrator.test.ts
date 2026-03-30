@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { Job, TaskResultSubmission } from '@local-agent/shared';
+import { Job, JobAttempt, TaskResultSubmission } from '@local-agent/shared';
 import { ExecutionEnvironment } from '../../services/job-environment';
 
 const mockEnv: ExecutionEnvironment = {
@@ -52,8 +52,7 @@ function createJob(overrides?: Partial<Job>): Job {
     task_id: 'test-123',
     task_type: 'generic',
     payload: 'What is 2+2?',
-    executor: 'claude_code',
-    executor_model: 'opus',
+    executors: [{ executor: 'claude_code', executor_model: 'opus' }],
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
     ...overrides,
@@ -79,28 +78,55 @@ describe('TaskOrchestrator', () => {
     const job = createJob();
     await orchestrator.handle(job);
 
+    const expectedAttempt: JobAttempt = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      task_type: 'generic',
+      payload: 'What is 2+2?',
+      executor: 'claude_code',
+      executor_model: 'opus',
+      submitted_at: '2026-03-26T00:00:00.000Z',
+      enriched_at: '2026-03-26T00:00:01.000Z',
+    };
+
     expect(mockSetup).toHaveBeenCalledWith(job);
-    expect(mockClaudeExecute).toHaveBeenCalledWith(job, mockEnv);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(expectedAttempt, mockEnv);
     expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
   });
 
   it('returns TaskResultSubmission from Claude executor for claude_code jobs', async () => {
-    const job = createJob({ executor: 'claude_code' });
+    const job = createJob({
+      executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+    });
     const result = await orchestrator.handle(job);
 
     expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
     expect(TTADKExecutor).not.toHaveBeenCalled();
-    expect(mockClaudeExecute).toHaveBeenCalledWith(job, mockEnv);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executor: 'claude_code',
+        executor_model: 'opus',
+      }),
+      mockEnv,
+    );
     expect(result).toEqual(mockResultSubmission);
   });
 
   it('returns TaskResultSubmission from TTADK executor for ttadk jobs', async () => {
-    const job = createJob({ executor: 'ttadk' });
+    const job = createJob({
+      executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+    });
     const result = await orchestrator.handle(job);
 
     expect(TTADKExecutor).toHaveBeenCalledTimes(1);
     expect(ClaudeCliExecutor).not.toHaveBeenCalled();
-    expect(mockTTADKExecute).toHaveBeenCalledWith(job, mockEnv);
+    expect(mockTTADKExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executor: 'ttadk',
+        executor_model: 'gpt-5.4',
+      }),
+      mockEnv,
+    );
     expect(result).toEqual(mockResultSubmission);
   });
 
@@ -127,11 +153,128 @@ describe('TaskOrchestrator', () => {
   });
 
   it('returns failure for unknown executor', async () => {
-    const job = createJob({ executor: 'invalid' as never });
+    const job = createJob({
+      executors: [{ executor: 'invalid' as never, executor_model: 'test' }],
+    });
     const result = await orchestrator.handle(job);
 
     expect(result.status).toBe('failure');
-    expect(result.stderr).toContain('Unknown job executor: invalid');
+    expect(result.stderr).toContain('Unknown executor: invalid');
     expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
+  });
+
+  it('falls back to second executor when first fails', async () => {
+    const failResult: TaskResultSubmission = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      status: 'failure',
+      exit_code: 1,
+      stdout: '',
+      stderr: 'model unavailable',
+    };
+    const successResult: TaskResultSubmission = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      status: 'success',
+      exit_code: 0,
+      stdout: 'fallback output',
+      stderr: '',
+    };
+
+    mockClaudeExecute.mockResolvedValueOnce(failResult);
+    mockTTADKExecute.mockResolvedValueOnce(successResult);
+
+    const job = createJob({
+      executors: [
+        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+      ],
+    });
+    const result = await orchestrator.handle(job);
+
+    expect(result.status).toBe('success');
+    expect(result.stdout).toBe('fallback output');
+    expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
+    expect(mockTTADKExecute).toHaveBeenCalledTimes(1);
+    expect(mockSetup).toHaveBeenCalledTimes(2);
+    expect(mockTeardown).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns last failure when all executors fail', async () => {
+    const failResult1: TaskResultSubmission = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      status: 'failure',
+      exit_code: 1,
+      stdout: '',
+      stderr: 'first failure',
+    };
+    const failResult2: TaskResultSubmission = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      status: 'failure',
+      exit_code: 1,
+      stdout: '',
+      stderr: 'second failure',
+    };
+
+    mockClaudeExecute.mockResolvedValueOnce(failResult1);
+    mockTTADKExecute.mockResolvedValueOnce(failResult2);
+
+    const job = createJob({
+      executors: [
+        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+      ],
+    });
+    const result = await orchestrator.handle(job);
+
+    expect(result.status).toBe('failure');
+    expect(result.stderr).toBe('second failure');
+  });
+
+  it('returns success immediately without trying remaining executors', async () => {
+    const job = createJob({
+      executors: [
+        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+      ],
+    });
+    const result = await orchestrator.handle(job);
+
+    expect(result.status).toBe('success');
+    expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
+    expect(mockTTADKExecute).not.toHaveBeenCalled();
+    expect(mockSetup).toHaveBeenCalledTimes(1);
+    expect(mockTeardown).toHaveBeenCalledTimes(1);
+  });
+
+  it('constructs correct JobAttempt for each executor preference', async () => {
+    const failResult: TaskResultSubmission = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      status: 'failure',
+      exit_code: 1,
+      stdout: '',
+      stderr: 'fail',
+    };
+    mockClaudeExecute.mockResolvedValueOnce(failResult);
+
+    const job = createJob({
+      executors: [
+        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+      ],
+    });
+    await orchestrator.handle(job);
+
+    expect(mockClaudeExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ executor: 'claude_code', executor_model: 'opus' }),
+      mockEnv,
+    );
+    expect(mockTTADKExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ executor: 'ttadk', executor_model: 'gpt-5.4' }),
+      mockEnv,
+    );
   });
 });
