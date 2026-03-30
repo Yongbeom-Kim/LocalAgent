@@ -15,6 +15,18 @@ export class TaskOrchestrator {
       'Processing job',
     );
 
+    if (job.executors.length === 0) {
+      logger.error({ job_id: job.job_id }, 'Job has empty executors array');
+      return {
+        job_id: job.job_id,
+        task_id: job.task_id,
+        status: 'failure',
+        exit_code: null,
+        stdout: '',
+        stderr: 'Job has no executor preferences',
+      };
+    }
+
     let lastResult: TaskResultSubmission | null = null;
 
     for (let i = 0; i < job.executors.length; i++) {

@@ -277,4 +277,14 @@ describe('TaskOrchestrator', () => {
       mockEnv,
     );
   });
+
+  it('returns failure for empty executors array', async () => {
+    const job = createJob({ executors: [] });
+    const result = await orchestrator.handle(job);
+
+    expect(result.status).toBe('failure');
+    expect(result.stderr).toContain('Job has no executor preferences');
+    expect(mockSetup).not.toHaveBeenCalled();
+    expect(mockTeardown).not.toHaveBeenCalled();
+  });
 });
