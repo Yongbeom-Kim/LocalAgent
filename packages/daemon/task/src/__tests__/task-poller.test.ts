@@ -47,8 +47,7 @@ function createJob(overrides?: Partial<Job>): Job {
     task_id: 'abc-123',
     task_type: 'generic',
     payload: 'hello',
-    executor: 'claude_code',
-    executor_model: 'opus',
+    executors: [{ executor: 'claude_code', executor_model: 'opus' }],
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
     ...overrides,
@@ -159,7 +158,7 @@ describe('TaskPoller', () => {
     });
 
     it('posts failure result and acks when executor is unknown', async () => {
-      const job = createJob({ executor: 'invalid' as never });
+      const job = createJob({ executors: [{ executor: 'invalid' as never, executor_model: 'opus' }] });
       mockFetch
         .mockResolvedValueOnce({
           status: 200,

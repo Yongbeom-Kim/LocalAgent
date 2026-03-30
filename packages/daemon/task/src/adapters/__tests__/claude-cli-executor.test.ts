@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
-import { Job } from '@local-agent/shared';
+import { JobAttempt, TaskResultSubmission } from '@local-agent/shared';
 import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
@@ -12,7 +12,7 @@ import { execFile } from 'node:child_process';
 
 const mockExecFile = vi.mocked(execFile);
 
-function createJob(overrides?: Partial<Job>): Job {
+function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
   return {
     job_id: 'job-456',
     task_id: 'test-123',
@@ -50,7 +50,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob(), createEnv());
+    const result = await executor.execute(createJobAttempt(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -71,7 +71,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob(), createEnv());
+    const result = await executor.execute(createJobAttempt(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -92,7 +92,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob(), createEnv());
+    const result = await executor.execute(createJobAttempt(), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -102,7 +102,7 @@ describe('ClaudeCliExecutor', () => {
   });
 
   it('returns failure result when payload is empty', async () => {
-    const result = await executor.execute(createJob({ payload: '' }), createEnv());
+    const result = await executor.execute(createJobAttempt({ payload: '' }), createEnv());
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -118,7 +118,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    await executor.execute(createJob(), createEnv());
+    await executor.execute(createJobAttempt(), createEnv());
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'claude',
@@ -139,7 +139,7 @@ describe('ClaudeCliExecutor', () => {
       pluginDirs: ['/tmp/job/marketplaces/repo1/plugin-a', '/tmp/job/marketplaces/repo2/plugin-b'],
     });
 
-    await executor.execute(createJob(), env);
+    await executor.execute(createJobAttempt(), env);
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'claude',
@@ -163,7 +163,7 @@ describe('ClaudeCliExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const result = await executor.execute(createJob(), createEnv());
+    const result = await executor.execute(createJobAttempt(), createEnv());
 
     expect(Buffer.byteLength(result.stdout, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
     expect(Buffer.byteLength(result.stderr, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
