@@ -5,6 +5,7 @@ import {
   getExecutorModelOptions,
   type Job,
   type MarketplaceConfig,
+  isValidExecutorPreferences,
 } from '../types';
 
 describe('EXECUTOR_MODELS', () => {
@@ -73,8 +74,7 @@ describe('MarketplaceConfig', () => {
       task_id: 't1',
       task_type: 'test',
       payload: 'p',
-      executor: 'claude_code',
-      executor_model: 'sonnet',
+      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
       submitted_at: '2026-01-01T00:00:00Z',
       enriched_at: '2026-01-01T00:00:01Z',
       marketplaces: [{ url: 'https://github.com/example/repo.git', plugins: ['my-plugin'] }],
@@ -90,11 +90,52 @@ describe('MarketplaceConfig', () => {
       task_id: 't1',
       task_type: 'test',
       payload: 'p',
-      executor: 'claude_code',
-      executor_model: 'sonnet',
+      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
       submitted_at: '2026-01-01T00:00:00Z',
       enriched_at: '2026-01-01T00:00:01Z',
     };
     expect(job.marketplaces).toBeUndefined();
+  });
+});
+
+describe('isValidExecutorPreferences', () => {
+  it('returns true for valid non-empty array', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'claude_code', executor_model: 'sonnet' },
+      { executor: 'ttadk', executor_model: 'gpt-5.4' },
+    ])).toBe(true);
+  });
+
+  it('returns true for single-element array', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'claude_code', executor_model: 'opus' },
+    ])).toBe(true);
+  });
+
+  it('returns false for empty array', () => {
+    expect(isValidExecutorPreferences([])).toBe(false);
+  });
+
+  it('returns false for non-array', () => {
+    expect(isValidExecutorPreferences('claude_code')).toBe(false);
+    expect(isValidExecutorPreferences(null)).toBe(false);
+    expect(isValidExecutorPreferences(undefined)).toBe(false);
+  });
+
+  it('returns false when any pair has invalid executor', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'claude_code', executor_model: 'sonnet' },
+      { executor: 'nonexistent', executor_model: 'opus' },
+    ])).toBe(false);
+  });
+
+  it('returns false when any pair has invalid model for its executor', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'claude_code', executor_model: 'gpt-5.4' },
+    ])).toBe(false);
+  });
+
+  it('returns false for array with non-object elements', () => {
+    expect(isValidExecutorPreferences(['claude_code'])).toBe(false);
   });
 });

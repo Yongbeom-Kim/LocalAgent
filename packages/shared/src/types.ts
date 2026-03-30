@@ -28,6 +28,27 @@ export function getExecutorModelOptions(executor: TaskExecutorType): string {
   return EXECUTOR_MODELS[executor].join(', ');
 }
 
+export interface ExecutorPreference {
+  executor: TaskExecutorType;
+  executor_model: string;
+}
+
+export function isValidExecutorPreferences(
+  executors: unknown,
+): executors is ExecutorPreference[] {
+  if (!Array.isArray(executors) || executors.length === 0) return false;
+  return executors.every(
+    (e) =>
+      typeof e === 'object' &&
+      e !== null &&
+      isTaskExecutorType((e as Record<string, unknown>).executor) &&
+      isValidExecutorModel(
+        (e as Record<string, unknown>).executor as TaskExecutorType,
+        (e as Record<string, unknown>).executor_model,
+      ),
+  );
+}
+
 export interface TaskSubmission {
   task_type: string;
   payload: string;
@@ -49,13 +70,23 @@ export interface JobSubmission {
   task_id: string;
   task_type: string;
   payload: string;
-  executor: TaskExecutorType;
-  executor_model: string;
+  executors: ExecutorPreference[];
   submitted_at: string;
   marketplaces?: MarketplaceConfig[];
 }
 
 export interface Job {
+  job_id: string;
+  task_id: string;
+  task_type: string;
+  payload: string;
+  executors: ExecutorPreference[];
+  submitted_at: string;
+  enriched_at: string;
+  marketplaces?: MarketplaceConfig[];
+}
+
+export interface JobAttempt {
   job_id: string;
   task_id: string;
   task_type: string;
