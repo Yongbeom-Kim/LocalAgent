@@ -17,6 +17,10 @@ interface EnrichmentConfig {
   rules: Record<string, EnrichmentRule>;
 }
 
+export type EnrichmentResult =
+  | { type: 'enriched'; job: JobSubmission }
+  | { type: 'rejected'; reason: string };
+
 export class EnrichmentService {
   private constructor(private readonly rules: Record<string, EnrichmentRule>) {}
 
@@ -62,28 +66,40 @@ export class EnrichmentService {
     return new EnrichmentService(mergedRules);
   }
 
-  enrich(task: Task): JobSubmission | null {
-    const rule = this.rules[task.task_type] ?? this.rules['default'];
+  enrich(task: Task): EnrichmentResult {
+    const rule = this.rules[task.task_type];
 
     if (!rule) {
-      logger.error({ task_id: task.task_id, task_type: task.task_type }, 'No enrichment rule found and no default — rejecting task');
-      return null;
+      const validTypes = this.getValidTypes().join(', ');
+      return {
+        type: 'rejected',
+        reason: `Unknown task type "${task.task_type}". Available types: ${validTypes}`,
+      };
     }
 
     if (!rule.executors || rule.executors.length === 0) {
       logger.error({ task_id: task.task_id, task_type: task.task_type }, 'Enrichment rule has empty executors array — rejecting task');
-      return null;
+      return {
+        type: 'rejected',
+        reason: `Task type "${task.task_type}" has invalid configuration (empty executors).`,
+      };
     }
 
     const executors: ExecutorPreference[] = [];
     for (const entry of rule.executors) {
       if (!isTaskExecutorType(entry.executor)) {
         logger.error({ task_id: task.task_id, executor: entry.executor }, 'Invalid executor in enrichment rule — rejecting task');
-        return null;
+        return {
+          type: 'rejected',
+          reason: `Task type "${task.task_type}" has invalid configuration (bad executor).`,
+        };
       }
       if (!isValidExecutorModel(entry.executor as TaskExecutorType, entry.executor_model)) {
         logger.error({ task_id: task.task_id, executor: entry.executor, model: entry.executor_model }, 'Invalid executor_model in enrichment rule — rejecting task');
-        return null;
+        return {
+          type: 'rejected',
+          reason: `Task type "${task.task_type}" has invalid configuration (bad executor model).`,
+        };
       }
       executors.push({ executor: entry.executor as TaskExecutorType, executor_model: entry.executor_model });
     }
@@ -91,16 +107,23 @@ export class EnrichmentService {
     const systemPrompt = rule.system_prompt?.trim() || undefined;
 
     return {
-      task_id: task.task_id,
-      task_type: task.task_type,
-      payload: task.payload,
-      executors,
-      submitted_at: task.submitted_at,
-      ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
-      marketplaces: rule.marketplaces,
-      ...(task.task_source ? { task_source: task.task_source } : {}),
-      ...(rule.setup_hook !== undefined ? { setup_hook: rule.setup_hook } : {}),
-      ...(rule.setup_hook_timeout_ms !== undefined ? { setup_hook_timeout_ms: rule.setup_hook_timeout_ms } : {}),
+      type: 'enriched',
+      job: {
+        task_id: task.task_id,
+        task_type: task.task_type,
+        payload: task.payload,
+        executors,
+        submitted_at: task.submitted_at,
+        ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
+        marketplaces: rule.marketplaces,
+        ...(task.task_source ? { task_source: task.task_source } : {}),
+        ...(rule.setup_hook !== undefined ? { setup_hook: rule.setup_hook } : {}),
+        ...(rule.setup_hook_timeout_ms !== undefined ? { setup_hook_timeout_ms: rule.setup_hook_timeout_ms } : {}),
+      },
     };
+  }
+
+  getValidTypes(): string[] {
+    return Object.keys(this.rules);
   }
 }

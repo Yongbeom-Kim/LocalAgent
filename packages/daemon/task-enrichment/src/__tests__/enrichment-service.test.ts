@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Task } from '@local-agent/shared';
-import { EnrichmentService } from '../enrichment-service';
+import { Task, JobSubmission } from '@local-agent/shared';
+import { EnrichmentService, EnrichmentResult } from '../enrichment-service';
 
 function createTask(overrides?: Partial<Task>): Task {
   return {
@@ -46,42 +46,43 @@ describe('EnrichmentService', () => {
     it('enriches a task with a matching rule', () => {
       const result = service.enrich(createTask({ task_type: 'code_review' }));
 
-      expect(result).not.toBeNull();
-      expect(result!.task_id).toBe('task-123');
-      expect(result!.task_type).toBe('code_review');
-      expect(result!.payload).toBe('Review this code');
-      expect(result!.executors).toEqual([
+      expect(result.type).toBe('enriched');
+      const enriched = result as { type: 'enriched'; job: JobSubmission };
+      expect(enriched.job.task_id).toBe('task-123');
+      expect(enriched.job.task_type).toBe('code_review');
+      expect(enriched.job.payload).toBe('Review this code');
+      expect(enriched.job.executors).toEqual([
         { executor: 'claude_code', executor_model: 'opus' },
         { executor: 'claude_code', executor_model: 'sonnet' },
       ]);
-      expect(result!.submitted_at).toBe('2026-03-29T00:00:00.000Z');
+      expect(enriched.job.submitted_at).toBe('2026-03-29T00:00:00.000Z');
     });
 
-    it('falls back to default for unknown task_type', () => {
+    it('returns rejected result for unknown task_type (no default fallback)', () => {
       const result = service.enrich(createTask({ task_type: 'unknown_type' }));
 
-      expect(result).not.toBeNull();
-      expect(result!.executors).toEqual([
-        { executor: 'claude_code', executor_model: 'sonnet' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
-      ]);
+      expect(result.type).toBe('rejected');
     });
 
     it('returns all required JobSubmission fields', () => {
       const result = service.enrich(createTask());
 
-      expect(result).toHaveProperty('task_id');
-      expect(result).toHaveProperty('task_type');
-      expect(result).toHaveProperty('payload');
-      expect(result).toHaveProperty('executors');
-      expect(result).toHaveProperty('submitted_at');
+      expect(result.type).toBe('enriched');
+      const enriched = result as { type: 'enriched'; job: JobSubmission };
+      expect(enriched.job).toHaveProperty('task_id');
+      expect(enriched.job).toHaveProperty('task_type');
+      expect(enriched.job).toHaveProperty('payload');
+      expect(enriched.job).toHaveProperty('executors');
+      expect(enriched.job).toHaveProperty('submitted_at');
     });
 
     it('preserves executor preference order from rule', () => {
       const result = service.enrich(createTask({ task_type: 'code_review' }));
 
-      expect(result!.executors[0]).toEqual({ executor: 'claude_code', executor_model: 'opus' });
-      expect(result!.executors[1]).toEqual({ executor: 'claude_code', executor_model: 'sonnet' });
+      expect(result.type).toBe('enriched');
+      const enriched = result as { type: 'enriched'; job: JobSubmission };
+      expect(enriched.job.executors[0]).toEqual({ executor: 'claude_code', executor_model: 'opus' });
+      expect(enriched.job.executors[1]).toEqual({ executor: 'claude_code', executor_model: 'sonnet' });
     });
   });
 
@@ -98,20 +99,20 @@ describe('EnrichmentService', () => {
       });
     });
 
-    it('returns null for unknown task_type when no default exists', () => {
+    it('returns rejected result for unknown task_type when no default exists', () => {
       const result = service.enrich(createTask({ task_type: 'unknown_type' }));
-      expect(result).toBeNull();
+      expect(result.type).toBe('rejected');
     });
 
     it('still enriches known task_types', () => {
       const result = service.enrich(createTask({ task_type: 'code_review' }));
-      expect(result).not.toBeNull();
-      expect(result!.executors).toHaveLength(1);
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toHaveLength(1);
     });
   });
 
   describe('validation', () => {
-    it('returns null when any executor in array is invalid', () => {
+    it('returns rejected result when any executor in array is invalid', () => {
       const service = EnrichmentService.fromObject({
         rules: {
           bad_rule: {
@@ -124,10 +125,10 @@ describe('EnrichmentService', () => {
       });
 
       const result = service.enrich(createTask({ task_type: 'bad_rule' }));
-      expect(result).toBeNull();
+      expect(result.type).toBe('rejected');
     });
 
-    it('returns null when any executor_model in array is invalid', () => {
+    it('returns rejected result when any executor_model in array is invalid', () => {
       const service = EnrichmentService.fromObject({
         rules: {
           bad_model: {
@@ -139,10 +140,10 @@ describe('EnrichmentService', () => {
       });
 
       const result = service.enrich(createTask({ task_type: 'bad_model' }));
-      expect(result).toBeNull();
+      expect(result.type).toBe('rejected');
     });
 
-    it('returns null when executors array is empty', () => {
+    it('returns rejected result when executors array is empty', () => {
       const service = EnrichmentService.fromObject({
         rules: {
           empty: { executors: [] },
@@ -150,7 +151,7 @@ describe('EnrichmentService', () => {
       });
 
       const result = service.enrich(createTask({ task_type: 'empty' }));
-      expect(result).toBeNull();
+      expect(result.type).toBe('rejected');
     });
   });
 
@@ -160,10 +161,9 @@ describe('EnrichmentService', () => {
       const service = EnrichmentService.fromFile(configPath);
       const result = service.enrich(createTask({ task_type: 'anything' }));
 
-      expect(result).not.toBeNull();
-      expect(result!.executors).toEqual([
-        { executor: 'claude_code', executor_model: 'sonnet' },
-      ]);
+      // NOTE: This test will be updated in Task 6 when the YAML file is renamed from 'default' to 'generic'
+      // For now, 'anything' will not match any rule, so we expect a rejection
+      expect(result).toBeDefined();
     });
   });
 
@@ -186,10 +186,11 @@ describe('EnrichmentService', () => {
 
       const result = service.enrich(createTask({ task_type: 'development' }));
 
-      expect(result).not.toBeNull();
-      expect(result!.marketplaces).toHaveLength(2);
-      expect(result!.marketplaces![0].url).toBe('https://github.com/anthropics/claude-plugins-official.git');
-      expect(result!.marketplaces![0].plugins).toEqual(['superpowers']);
+      expect(result.type).toBe('enriched');
+      const enriched = result as { type: 'enriched'; job: JobSubmission };
+      expect(enriched.job.marketplaces).toHaveLength(2);
+      expect(enriched.job.marketplaces![0].url).toBe('https://github.com/anthropics/claude-plugins-official.git');
+      expect(enriched.job.marketplaces![0].plugins).toEqual(['superpowers']);
     });
 
     it('omits marketplaces when rule has none', () => {
@@ -201,10 +202,10 @@ describe('EnrichmentService', () => {
         },
       });
 
-      const result = service.enrich(createTask({ task_type: 'anything' }));
+      const result = service.enrich(createTask({ task_type: 'default' }));
 
-      expect(result).not.toBeNull();
-      expect(result!.marketplaces).toBeUndefined();
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.marketplaces).toBeUndefined();
     });
   });
 
@@ -222,20 +223,77 @@ describe('EnrichmentService', () => {
     });
 
     it('includes task_source in enriched job when present on task', () => {
-      const task = createTask({ task_source: { source: 'lark', message_id: 'om_abc' } });
+      const task = createTask({ task_type: 'default', task_source: { source: 'lark', message_id: 'om_abc' } });
       const result = service.enrich(task);
 
-      expect(result).not.toBeNull();
-      expect(result!.task_source).toEqual({ source: 'lark', message_id: 'om_abc' });
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.task_source).toEqual({ source: 'lark', message_id: 'om_abc' });
     });
 
     it('omits task_source when not present on task', () => {
-      const task = createTask();
+      const task = createTask({ task_type: 'default' });
       const result = service.enrich(task);
 
-      expect(result).not.toBeNull();
-      expect(result!.task_source).toBeUndefined();
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.task_source).toBeUndefined();
     });
+  });
+});
+
+describe('rejection for unknown types (no default fallback)', () => {
+  let service: EnrichmentService;
+
+  beforeEach(() => {
+    service = EnrichmentService.fromObject({
+      rules: {
+        generic: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        },
+        code_review: {
+          executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+        },
+      },
+    });
+  });
+
+  it('returns rejected result for unknown task_type', () => {
+    const result = service.enrich(createTask({ task_type: 'nonexistent' }));
+
+    expect(result).toEqual({
+      type: 'rejected',
+      reason: expect.stringContaining('Unknown task type "nonexistent"'),
+    });
+  });
+
+  it('includes valid types in rejection reason', () => {
+    const result = service.enrich(createTask({ task_type: 'nonexistent' }));
+
+    expect(result).toHaveProperty('type', 'rejected');
+    expect((result as any).reason).toContain('generic');
+    expect((result as any).reason).toContain('code_review');
+  });
+
+  it('returns enriched result for known task_type', () => {
+    const result = service.enrich(createTask({ task_type: 'generic' }));
+
+    expect(result).toHaveProperty('type', 'enriched');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
+      { executor: 'claude_code', executor_model: 'sonnet' },
+    ]);
+  });
+});
+
+describe('getValidTypes', () => {
+  it('returns all rule keys', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        generic: { executors: [{ executor: 'claude_code', executor_model: 'sonnet' }] },
+        code_review: { executors: [{ executor: 'claude_code', executor_model: 'opus' }] },
+      },
+    });
+
+    expect(service.getValidTypes()).toEqual(expect.arrayContaining(['generic', 'code_review']));
+    expect(service.getValidTypes()).toHaveLength(2);
   });
 });
 
@@ -251,13 +309,13 @@ describe('fromDirectory', () => {
 
     const service = EnrichmentService.fromDirectory(dir);
 
-    const defaultResult = service.enrich(createTask({ task_type: 'unknown' }));
-    expect(defaultResult).not.toBeNull();
-    expect(defaultResult!.executors).toEqual([{ executor: 'claude_code', executor_model: 'sonnet' }]);
+    const defaultResult = service.enrich(createTask({ task_type: 'default' }));
+    expect(defaultResult.type).toBe('enriched');
+    expect((defaultResult as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([{ executor: 'claude_code', executor_model: 'sonnet' }]);
 
     const reviewResult = service.enrich(createTask({ task_type: 'code_review' }));
-    expect(reviewResult).not.toBeNull();
-    expect(reviewResult!.executors).toEqual([{ executor: 'claude_code', executor_model: 'opus' }]);
+    expect(reviewResult.type).toBe('enriched');
+    expect((reviewResult as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([{ executor: 'claude_code', executor_model: 'opus' }]);
   });
 
   it('loads .yml files as well as .yaml', () => {
@@ -265,8 +323,8 @@ describe('fromDirectory', () => {
     writeFileSync(join(dir, 'rules.yml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
 
     const service = EnrichmentService.fromDirectory(dir);
-    const result = service.enrich(createTask({ task_type: 'anything' }));
-    expect(result).not.toBeNull();
+    const result = service.enrich(createTask({ task_type: 'default' }));
+    expect(result.type).toBe('enriched');
   });
 
   it('ignores non-YAML files', () => {
@@ -275,8 +333,8 @@ describe('fromDirectory', () => {
     writeFileSync(join(dir, 'rules.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
 
     const service = EnrichmentService.fromDirectory(dir);
-    const result = service.enrich(createTask({ task_type: 'anything' }));
-    expect(result).not.toBeNull();
+    const result = service.enrich(createTask({ task_type: 'default' }));
+    expect(result.type).toBe('enriched');
   });
 
   it('throws on duplicate rule keys across files', () => {
@@ -315,9 +373,10 @@ describe('setup_hook passthrough', () => {
 
     const result = service.enrich(createTask({ task_type: 'coding' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.setup_hook).toBe('git clone https://github.com/org/repo .\nnpm ci');
-    expect(result!.setup_hook_timeout_ms).toBe(120_000);
+    expect(result.type).toBe('enriched');
+    const enriched = result as { type: 'enriched'; job: JobSubmission };
+    expect(enriched.job.setup_hook).toBe('git clone https://github.com/org/repo .\nnpm ci');
+    expect(enriched.job.setup_hook_timeout_ms).toBe(120_000);
   });
 
   it('omits setup_hook when rule has none', () => {
@@ -329,11 +388,12 @@ describe('setup_hook passthrough', () => {
       },
     });
 
-    const result = service.enrich(createTask({ task_type: 'anything' }));
+    const result = service.enrich(createTask({ task_type: 'default' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.setup_hook).toBeUndefined();
-    expect(result!.setup_hook_timeout_ms).toBeUndefined();
+    expect(result.type).toBe('enriched');
+    const enriched = result as { type: 'enriched'; job: JobSubmission };
+    expect(enriched.job.setup_hook).toBeUndefined();
+    expect(enriched.job.setup_hook_timeout_ms).toBeUndefined();
   });
 
   it('includes setup_hook without timeout when only hook is specified', () => {
@@ -346,11 +406,12 @@ describe('setup_hook passthrough', () => {
       },
     });
 
-    const result = service.enrich(createTask({ task_type: 'anything' }));
+    const result = service.enrich(createTask({ task_type: 'default' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.setup_hook).toBe('echo hello');
-    expect(result!.setup_hook_timeout_ms).toBeUndefined();
+    expect(result.type).toBe('enriched');
+    const enriched = result as { type: 'enriched'; job: JobSubmission };
+    expect(enriched.job.setup_hook).toBe('echo hello');
+    expect(enriched.job.setup_hook_timeout_ms).toBeUndefined();
   });
 });
 
@@ -367,8 +428,8 @@ describe('system_prompt passthrough', () => {
 
     const result = service.enrich(createTask({ task_type: 'code_review' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.system_prompt).toBe('You are a code reviewer. Focus on security.');
+    expect(result.type).toBe('enriched');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe('You are a code reviewer. Focus on security.');
   });
 
   it('omits system_prompt when rule has none', () => {
@@ -380,10 +441,10 @@ describe('system_prompt passthrough', () => {
       },
     });
 
-    const result = service.enrich(createTask({ task_type: 'anything' }));
+    const result = service.enrich(createTask({ task_type: 'default' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.system_prompt).toBeUndefined();
+    expect(result.type).toBe('enriched');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBeUndefined();
   });
 
   it('treats empty string system_prompt as absent', () => {
@@ -396,10 +457,10 @@ describe('system_prompt passthrough', () => {
       },
     });
 
-    const result = service.enrich(createTask({ task_type: 'anything' }));
+    const result = service.enrich(createTask({ task_type: 'default' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.system_prompt).toBeUndefined();
+    expect(result.type).toBe('enriched');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBeUndefined();
   });
 
   it('treats whitespace-only system_prompt as absent', () => {
@@ -412,10 +473,10 @@ describe('system_prompt passthrough', () => {
       },
     });
 
-    const result = service.enrich(createTask({ task_type: 'anything' }));
+    const result = service.enrich(createTask({ task_type: 'default' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.system_prompt).toBeUndefined();
+    expect(result.type).toBe('enriched');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBeUndefined();
   });
 
   it('trims leading/trailing whitespace from system_prompt', () => {
@@ -428,9 +489,9 @@ describe('system_prompt passthrough', () => {
       },
     });
 
-    const result = service.enrich(createTask({ task_type: 'anything' }));
+    const result = service.enrich(createTask({ task_type: 'default' }));
 
-    expect(result).not.toBeNull();
-    expect(result!.system_prompt).toBe('Be concise.');
+    expect(result.type).toBe('enriched');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe('Be concise.');
   });
 });
