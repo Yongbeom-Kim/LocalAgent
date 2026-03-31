@@ -59,6 +59,7 @@ export class TaskOrchestrator {
           executor_model: pref.executor_model,
           submitted_at: job.submitted_at,
           enriched_at: job.enriched_at,
+          system_prompt: job.system_prompt,
           marketplaces: job.marketplaces,
         };
 
