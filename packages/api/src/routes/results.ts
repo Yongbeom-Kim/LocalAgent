@@ -8,7 +8,7 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { job_id, task_id, status, exit_code, stdout, stderr, task_source } = req.body;
+      const { job_id, task_id, status, exit_code, stdout, stderr, task_source, task_type } = req.body;
 
       if (typeof job_id !== 'string' || !job_id) {
         res.status(400).json({ error: 'job_id is required and must be a string' });
@@ -26,11 +26,16 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'task_source must be a valid source object' });
         return;
       }
+      if (task_type !== undefined && typeof task_type !== 'string') {
+        res.status(400).json({ error: 'task_type must be a string if provided' });
+        return;
+      }
 
       const result: TaskResult = {
         result_id: uuidv4(),
         job_id,
         task_id,
+        task_type: typeof task_type === 'string' ? task_type : 'generic',
         status: status as TaskResult['status'],
         exit_code: typeof exit_code === 'number' ? exit_code : null,
         stdout: typeof stdout === 'string' ? stdout : '',
