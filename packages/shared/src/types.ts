@@ -74,6 +74,7 @@ export interface JobSubmission {
   payload: string;
   executors: ExecutorPreference[];
   submitted_at: string;
+  system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
   setup_hook?: string;
@@ -88,6 +89,7 @@ export interface Job {
   executors: ExecutorPreference[];
   submitted_at: string;
   enriched_at: string;
+  system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
   setup_hook?: string;
@@ -103,6 +105,7 @@ export interface JobAttempt {
   executor_model: string;
   submitted_at: string;
   enriched_at: string;
+  system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
 }
 
