@@ -6,9 +6,9 @@ import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
 const mockEnrich = vi.fn();
 
 vi.mock('../enrichment-service', () => ({
-  EnrichmentService: vi.fn().mockImplementation(() => ({
-    enrich: mockEnrich,
-  })),
+  EnrichmentService: vi.fn().mockImplementation(function () {
+    this.enrich = mockEnrich;
+  }),
 }));
 
 const mockFetch = vi.fn();
@@ -92,7 +92,7 @@ describe('EnrichmentPoller', () => {
     expect(mockEnrich).not.toHaveBeenCalled();
   });
 
-  it('acks task and does not post job when enrichment is rejected', async () => {
+  it('publishes failed result and acks task when enrichment rejects (no task_source)', async () => {
     const task = createTask();
     const rejectedResult: EnrichmentResult = { type: 'rejected', reason: 'Unknown task type "code_review"' };
     mockEnrich.mockReturnValue(rejectedResult);
