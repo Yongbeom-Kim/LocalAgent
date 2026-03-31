@@ -73,6 +73,9 @@ export class ThreadContextFetcher {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ app_id: this.appId, app_secret: this.appSecret }),
     });
+    if (!res.ok) {
+      throw new Error(`Lark token request failed with HTTP status ${res.status}`);
+    }
     const data = (await res.json()) as { tenant_access_token: string; code: number };
     if (data.code !== 0) {
       throw new Error(`Lark token request failed with code ${data.code}`);

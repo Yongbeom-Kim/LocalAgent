@@ -267,4 +267,15 @@ describe('ThreadContextFetcher', () => {
     const result = await fetcher.fetchThreadContext('om_msg1');
     expect(result).toBeNull();
   });
+
+  it('returns null when token request returns non-OK HTTP status', async () => {
+    mockFetch.mockResolvedValue({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({}),
+    });
+
+    const result = await fetcher.fetchThreadContext('om_msg1');
+    expect(result).toBeNull();
+  });
 });
