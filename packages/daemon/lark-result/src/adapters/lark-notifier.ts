@@ -100,5 +100,63 @@ export class LarkNotifier {
     if (msgData.code !== 0) {
       throw new Error(`Lark message send failed with code ${msgData.code}`);
     }
+
+    // Clean up reactions after successful thread reply
+    if (result.task_source?.source === 'lark') {
+      await this.removeAllReactions(result.task_source.message_id, tokenData.tenant_access_token);
+    }
+  }
+
+  /**
+   * Remove all reactions on a message. Best-effort — errors are logged and swallowed.
+   *
+   * We attempt to delete every reaction on the message rather than filtering by
+   * bot identity. Reactions not owned by the bot will fail with a permission
+   * error from the Lark API, which is expected and harmless. This avoids the
+   * need to fetch the bot's open_id and keeps the logic simple.
+   */
+  private async removeAllReactions(messageId: string, token: string): Promise<void> {
+    try {
+      const listRes = await fetch(LARK_REACTIONS_URL(messageId), {
+        method: 'GET',
+        headers: { 'Authorization': `Bearer ${token}` },
+      });
+
+      const listData = await listRes.json() as {
+        code: number;
+        data?: { items?: { reaction_id: string }[] };
+      };
+
+      if (listData.code !== 0) {
+        logger.warn({ messageId, code: listData.code }, 'Failed to list reactions');
+        return;
+      }
+
+      const items = listData.data?.items ?? [];
+      if (items.length === 0) return;
+
+      for (const item of items) {
+        try {
+          const delRes = await fetch(LARK_DELETE_REACTION_URL(messageId, item.reaction_id), {
+            method: 'DELETE',
+            headers: { 'Authorization': `Bearer ${token}` },
+          });
+          const delData = await delRes.json() as { code: number };
+          if (delData.code !== 0) {
+            logger.debug(
+              { messageId, reactionId: item.reaction_id, code: delData.code },
+              'Failed to delete reaction (may not be owned by bot)',
+            );
+          }
+        } catch (err) {
+          logger.warn(
+            { messageId, reactionId: item.reaction_id, err },
+            'Error deleting reaction',
+          );
+        }
+      }
+    } catch (err) {
+      logger.warn({ messageId, err }, 'Failed to remove reactions (best-effort)');
+    }
   }
 }

@@ -119,6 +119,10 @@ describe('LarkNotifier', () => {
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       });
 
     const result = createResult({
@@ -126,7 +130,7 @@ describe('LarkNotifier', () => {
     });
     await notifier.notify(result);
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(3);
     // Should call reply API, not send API
     expect(mockFetch).toHaveBeenNthCalledWith(2,
       'https://open.larksuite.com/open-apis/im/v1/messages/om_original_msg/reply',
