@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Task, JobSubmission } from '@local-agent/shared';
 import { EnrichmentService } from '../enrichment-service';
+import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
 
 const mockEnrich = vi.fn();
 
@@ -134,5 +135,84 @@ describe('EnrichmentPoller', () => {
   it('handles fetch errors gracefully', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
     await expect(poller.pollOnce()).resolves.toBeUndefined();
+  });
+});
+
+describe('EnrichmentPoller with ThreadContextFetcher', () => {
+  let poller: EnrichmentPoller;
+  let mockThreadFetcher: { fetchThreadContext: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    const service = new EnrichmentService() as any;
+    mockThreadFetcher = { fetchThreadContext: vi.fn() };
+    poller = new EnrichmentPoller(
+      'http://localhost:3000',
+      service,
+      mockThreadFetcher as unknown as ThreadContextFetcher,
+    );
+  });
+
+  afterEach(() => {
+    poller.stop();
+  });
+
+  it('prepends thread context to payload when task has lark source and thread exists', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'now fix the tests',
+    });
+    const jobSubmission = createJobSubmission({ payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests' });
+    mockEnrich.mockReturnValue(jobSubmission);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue('user: fix CI');
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockThreadFetcher.fetchThreadContext).toHaveBeenCalledWith('om_msg1');
+    expect(mockEnrich).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests',
+      }),
+    );
+  });
+
+  it('does not modify payload when task has no task_source', async () => {
+    const task = createTask({ payload: 'hello' });
+    const jobSubmission = createJobSubmission({ payload: 'hello' });
+    mockEnrich.mockReturnValue(jobSubmission);
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }));
+  });
+
+  it('does not modify payload when fetchThreadContext returns null', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'hello',
+    });
+    const jobSubmission = createJobSubmission({ payload: 'hello' });
+    mockEnrich.mockReturnValue(jobSubmission);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }));
   });
 });

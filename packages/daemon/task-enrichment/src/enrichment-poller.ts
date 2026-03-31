@@ -1,5 +1,6 @@
 import { Task, createLogger } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
+import type { ThreadContextFetcher } from './adapters/thread-context-fetcher';
 
 const logger = createLogger('enrichment-daemon:poller');
 
@@ -10,6 +11,7 @@ export class EnrichmentPoller {
   constructor(
     private readonly apiUrl: string,
     private readonly enrichmentService: EnrichmentService,
+    private readonly threadContextFetcher?: ThreadContextFetcher,
   ) {}
 
   async pollOnce(): Promise<void> {
@@ -28,6 +30,14 @@ export class EnrichmentPoller {
 
       const task = (await res.json()) as Task;
       logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
+
+      if (this.threadContextFetcher && task.task_source?.source === 'lark') {
+        const threadContext = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id);
+        if (threadContext) {
+          task.payload = `--- Thread Context ---\n${threadContext}\n--- Current Message ---\n${task.payload}`;
+          logger.info({ task_id: task.task_id }, 'Prepended thread context to payload');
+        }
+      }
 
       const jobSubmission = this.enrichmentService.enrich(task);
 
