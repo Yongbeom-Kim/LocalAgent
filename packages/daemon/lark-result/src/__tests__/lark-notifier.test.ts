@@ -165,4 +165,170 @@ describe('LarkNotifier', () => {
       expect.objectContaining({ method: 'POST' }),
     );
   });
+
+  describe('reaction cleanup', () => {
+    it('removes all reactions after successful thread reply', async () => {
+      mockFetch
+        // 1. Token fetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        })
+        // 2. Thread reply
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        })
+        // 3. List reactions
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            code: 0,
+            data: {
+              items: [
+                { reaction_id: 'react-1' },
+                { reaction_id: 'react-2' },
+              ],
+            },
+          }),
+        })
+        // 4. Delete reaction 1
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        })
+        // 5. Delete reaction 2
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        });
+
+      const result = createResult({
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      });
+      await notifier.notify(result);
+
+      expect(mockFetch).toHaveBeenCalledTimes(5);
+      // Verify list reactions call
+      expect(mockFetch).toHaveBeenNthCalledWith(3,
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions?user_id_type=open_id',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            'Authorization': 'Bearer token-abc',
+          }),
+        }),
+      );
+      // Verify delete calls
+      expect(mockFetch).toHaveBeenNthCalledWith(4,
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-1',
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+      expect(mockFetch).toHaveBeenNthCalledWith(5,
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-2',
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+    });
+
+    it('does not attempt reaction cleanup on DM fallback', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        });
+
+      await notifier.notify(createResult()); // no task_source
+      expect(mockFetch).toHaveBeenCalledTimes(2); // only token + DM send
+    });
+
+    it('skips deletion when reaction list is empty', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0, data: { items: [] } }),
+        });
+
+      const result = createResult({
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      });
+      await notifier.notify(result);
+
+      expect(mockFetch).toHaveBeenCalledTimes(3); // token + reply + list reactions (no deletes)
+    });
+
+    it('continues notification when reaction list API fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        })
+        .mockRejectedValueOnce(new Error('Network error'));
+
+      const result = createResult({
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      });
+      // Should not throw — reaction cleanup is best-effort
+      await expect(notifier.notify(result)).resolves.toBeUndefined();
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+    });
+
+    it('continues deleting remaining reactions when one DELETE fails', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            code: 0,
+            data: {
+              items: [
+                { reaction_id: 'react-1' },
+                { reaction_id: 'react-2' },
+              ],
+            },
+          }),
+        })
+        // Delete react-1 fails
+        .mockRejectedValueOnce(new Error('Network error'))
+        // Delete react-2 succeeds
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        });
+
+      const result = createResult({
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      });
+      await expect(notifier.notify(result)).resolves.toBeUndefined();
+
+      // Should still attempt to delete react-2 after react-1 fails
+      expect(mockFetch).toHaveBeenCalledTimes(5);
+      expect(mockFetch).toHaveBeenNthCalledWith(5,
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-2',
+        expect.objectContaining({ method: 'DELETE' }),
+      );
+    });
+  });
 });
