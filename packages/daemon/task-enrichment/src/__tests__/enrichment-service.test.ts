@@ -353,3 +353,84 @@ describe('setup_hook passthrough', () => {
     expect(result!.setup_hook_timeout_ms).toBeUndefined();
   });
 });
+
+describe('system_prompt passthrough', () => {
+  it('includes system_prompt in enriched job when rule has one', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        code_review: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          system_prompt: 'You are a code reviewer. Focus on security.',
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'code_review' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.system_prompt).toBe('You are a code reviewer. Focus on security.');
+  });
+
+  it('omits system_prompt when rule has none', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        default: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.system_prompt).toBeUndefined();
+  });
+
+  it('treats empty string system_prompt as absent', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        default: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          system_prompt: '',
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.system_prompt).toBeUndefined();
+  });
+
+  it('treats whitespace-only system_prompt as absent', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        default: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          system_prompt: '   \n  ',
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.system_prompt).toBeUndefined();
+  });
+
+  it('trims leading/trailing whitespace from system_prompt', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        default: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          system_prompt: '  Be concise.  ',
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.system_prompt).toBe('Be concise.');
+  });
+});
