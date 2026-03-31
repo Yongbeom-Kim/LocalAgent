@@ -98,6 +98,24 @@ export interface JobAttempt {
   marketplaces?: MarketplaceConfig[];
 }
 
+// --- Task Source ---
+
+export interface LarkTaskSource {
+  source: 'lark';
+  message_id: string;
+}
+
+export type TaskSource = LarkTaskSource;
+
+export function isValidTaskSource(value: unknown): value is TaskSource {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  if (obj.source === 'lark') {
+    return typeof obj.message_id === 'string' && obj.message_id.length > 0;
+  }
+  return false;
+}
+
 export const RESULT_STATUSES = ['success', 'failure'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
