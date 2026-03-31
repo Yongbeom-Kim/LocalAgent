@@ -21,15 +21,19 @@ layout {
         }
         // Bottom row: notification daemons + scratch terminal
         pane split_direction="vertical" size="50%" {
-            pane name="Lark" size="33%" {
+            pane name="Lark Result" size="25%" {
                 command "npm"
                 args "run" "dev" "--prefix" "packages/daemon/lark-result"
             }
-            pane name="Telegram" size="33%" {
+            pane name="Lark Listener" size="25%" {
+                command "npm"
+                args "run" "dev" "--prefix" "packages/daemon/lark-listener"
+            }
+            pane name="Telegram" size="25%" {
                 command "npm"
                 args "run" "dev" "--prefix" "packages/daemon/telegram-result"
             }
-            pane name="Shell" size="34%" focus=true
+            pane name="Shell" size="25%" focus=true
         }
     }
 }

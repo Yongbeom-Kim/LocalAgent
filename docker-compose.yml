@@ -106,3 +106,20 @@ services:
     profiles:
       - telegram-result-daemon
       - full
+
+  lark-listener-daemon:
+    build:
+      context: .
+      dockerfile: packages/daemon/lark-listener/Dockerfile
+    environment:
+      API_URL: http://api:3000
+      LOG_LEVEL: info
+      LARK_APP_ID: ${LARK_APP_ID}
+      LARK_APP_SECRET: ${LARK_APP_SECRET}
+    depends_on:
+      api:
+        condition: service_started
+    profiles:
+      - lark-listener-daemon
+      - full
+    restart: unless-stopped
