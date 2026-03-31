@@ -42,6 +42,7 @@ describe('MessageHandler', () => {
     await handler.handle(makeEvent());
 
     expect(submitter.submit).toHaveBeenCalledWith(
+      'generic',
       'fix the CI pipeline',
       { source: 'lark', message_id: 'om_msg1' },
     );
@@ -66,9 +67,11 @@ describe('MessageHandler', () => {
       }),
     );
 
-    const payload = submitter.submit.mock.calls[0][0];
-    const taskSource = submitter.submit.mock.calls[0][1];
+    const taskType = submitter.submit.mock.calls[0][0];
+    const payload = submitter.submit.mock.calls[0][1];
+    const taskSource = submitter.submit.mock.calls[0][2];
     const parsed = JSON.parse(payload);
+    expect(taskType).toBe('generic');
     expect(parsed.type).toBe('image');
     expect(parsed.key).toBe('img_v3_abc');
     expect(taskSource).toEqual({ source: 'lark', message_id: 'om_msg1' });
@@ -82,8 +85,10 @@ describe('MessageHandler', () => {
       }),
     );
 
-    const payload = submitter.submit.mock.calls[0][0];
+    const taskType = submitter.submit.mock.calls[0][0];
+    const payload = submitter.submit.mock.calls[0][1];
     const parsed = JSON.parse(payload);
+    expect(taskType).toBe('generic');
     expect(parsed.type).toBe('file');
     expect(parsed.key).toBe('file_v3_xyz');
     expect(parsed.name).toBe('report.pdf');
@@ -98,8 +103,10 @@ describe('MessageHandler', () => {
       }),
     );
 
-    const payload = submitter.submit.mock.calls[0][0];
+    const taskType = submitter.submit.mock.calls[0][0];
+    const payload = submitter.submit.mock.calls[0][1];
     const parsed = JSON.parse(payload);
+    expect(taskType).toBe('generic');
     expect(parsed.type).toBe('post');
     expect(parsed.content).toEqual(postContent);
   });
@@ -112,8 +119,10 @@ describe('MessageHandler', () => {
       }),
     );
 
-    const payload = submitter.submit.mock.calls[0][0];
+    const taskType = submitter.submit.mock.calls[0][0];
+    const payload = submitter.submit.mock.calls[0][1];
     const parsed = JSON.parse(payload);
+    expect(taskType).toBe('generic');
     expect(parsed.type).toBe('sticker');
   });
 
@@ -134,7 +143,9 @@ describe('MessageHandler', () => {
 
     // Should still attempt to submit with fallback
     expect(submitter.submit).toHaveBeenCalled();
-    const payload = submitter.submit.mock.calls[0][0];
+    const taskType = submitter.submit.mock.calls[0][0];
+    const payload = submitter.submit.mock.calls[0][1];
+    expect(taskType).toBe('generic');
     expect(payload).toBe('not json');
   });
 });
