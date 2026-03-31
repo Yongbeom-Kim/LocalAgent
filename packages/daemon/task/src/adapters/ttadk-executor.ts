@@ -25,6 +25,7 @@ export class TTADKExecutor implements TaskExecutor {
       '--bare',
       '--dangerously-skip-permissions',
       ...env.pluginDirs.flatMap(dir => ['--plugin-dir', dir]),
+      ...(job.system_prompt ? ['--append-system-prompt', job.system_prompt] : []),
       '-p', job.payload,
     ].join(' ');
 
