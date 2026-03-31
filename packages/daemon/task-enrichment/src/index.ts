@@ -1,4 +1,3 @@
-import { resolve } from 'node:path';
 import { createLogger } from '@local-agent/shared';
 import { loadEnrichmentDaemonConfig } from './config';
 import { EnrichmentService } from './enrichment-service';
@@ -11,9 +10,7 @@ function main() {
   const config = loadEnrichmentDaemonConfig();
   logger.info({ config }, 'Starting enrichment daemon');
 
-  // TODO: Task 3 will replace this with fromDirectory()
-  const configPath = resolve(config.enrichmentConfigDir, 'enrichment.yaml');
-  const enrichmentService = EnrichmentService.fromFile(configPath);
+  const enrichmentService = EnrichmentService.fromDirectory(config.enrichmentConfigDir);
   logger.info({ configDir: config.enrichmentConfigDir }, 'Loaded enrichment config');
 
   let threadContextFetcher: ThreadContextFetcher | undefined;
