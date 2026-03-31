@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/task-daemon.js",
-    "dev": "nodemon --watch src --watch ../../shared/src src/task-daemon.ts",
+    "dev": "nodemon --config ../../../nodemon.json --watch src --watch ../../shared/src src/task-daemon.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "clean": "rimraf dist"
