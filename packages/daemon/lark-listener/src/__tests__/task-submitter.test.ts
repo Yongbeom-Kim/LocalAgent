@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -12,6 +12,10 @@ describe('TaskSubmitter', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     submitter = new TaskSubmitter('http://localhost:3000');
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('posts TaskSubmission and returns task_id on success', async () => {

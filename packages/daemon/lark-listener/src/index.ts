@@ -43,6 +43,7 @@ async function main() {
 
   const shutdown = () => {
     logger.info('Shutting down lark-listener daemon...');
+    wsClient.close();
     dedup.destroy();
     process.exit(0);
   };

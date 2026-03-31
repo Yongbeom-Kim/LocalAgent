@@ -18,6 +18,7 @@
 - (No external MCP servers configured for use in this workflow — using built-in Claude Code tools)
 
 # Configured but not used
+- ide (executeCode): Jupyter kernel code execution — excluded from this project's workflow by user choice
 - Playwright: Configured in Claude settings, but excluded from this project's workflow by user choice
 - 4_5v_mcp: Image analysis via AI vision models — excluded from this project's workflow by user choice
 - web_reader: Fetch and convert URLs to LLM-friendly input — excluded from this project's workflow by user choice

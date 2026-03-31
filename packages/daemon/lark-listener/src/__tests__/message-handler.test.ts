@@ -117,8 +117,9 @@ describe('MessageHandler', () => {
 
     await handler.handle(makeEvent());
 
-    // React is still called (we tried, task submission just failed)
+    // React is still called even though task submission failed
     expect(dedup.add).toHaveBeenCalledWith('om_msg1');
+    expect(reactor.react).toHaveBeenCalledWith('om_msg1');
   });
 
   it('handles malformed content JSON gracefully', async () => {
