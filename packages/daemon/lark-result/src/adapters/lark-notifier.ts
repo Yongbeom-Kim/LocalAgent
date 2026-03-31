@@ -1,10 +1,12 @@
-import { TaskResult, createLogger } from '@local-agent/shared';
+import { TaskResult, createLogger, type TaskSource } from '@local-agent/shared';
 import { DEFAULT_LARK_MAX_RETRIES } from '../constants';
 
 const logger = createLogger('lark-daemon:notifier');
 
 const LARK_TOKEN_URL = 'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
 const LARK_MESSAGE_URL = 'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id';
+const LARK_REPLY_URL = (messageId: string) =>
+  `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reply`;
 const MAX_SNIPPET_CHARS = 2000;
 const MAX_RETRIES = DEFAULT_LARK_MAX_RETRIES;
 
@@ -57,18 +59,38 @@ export class LarkNotifier {
       snippet ? `Output:\n${snippet}` : 'No output',
     ].join('\n');
 
-    const msgRes = await fetch(LARK_MESSAGE_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${tokenData.tenant_access_token}`,
-      },
-      body: JSON.stringify({
-        receive_id: this.recipientId,
-        msg_type: 'text',
-        content: JSON.stringify({ text }),
-      }),
-    });
+    let msgRes: Response;
+
+    if (result.task_source?.source === 'lark') {
+      // Reply in thread to the original Lark message
+      msgRes = await fetch(LARK_REPLY_URL(result.task_source.message_id), {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenData.tenant_access_token}`,
+        },
+        body: JSON.stringify({
+          msg_type: 'text',
+          content: JSON.stringify({ text }),
+          reply_in_thread: true,
+        }),
+      });
+    } else {
+      // Fallback: send DM to fixed recipient
+      msgRes = await fetch(LARK_MESSAGE_URL, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${tokenData.tenant_access_token}`,
+        },
+        body: JSON.stringify({
+          receive_id: this.recipientId,
+          msg_type: 'text',
+          content: JSON.stringify({ text }),
+        }),
+      });
+    }
+
     const msgData = await msgRes.json() as { code: number };
 
     if (msgData.code !== 0) {

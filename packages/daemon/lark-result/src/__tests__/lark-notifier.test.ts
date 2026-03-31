@@ -109,4 +109,60 @@ describe('LarkNotifier', () => {
     await notifier.notify(createResult());
     expect(mockFetch).toHaveBeenCalledTimes(3);
   });
+
+  it('replies in thread when task_source is lark', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    const result = createResult({
+      task_source: { source: 'lark', message_id: 'om_original_msg' },
+    });
+    await notifier.notify(result);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    // Should call reply API, not send API
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_original_msg/reply',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer token-abc',
+        },
+      }),
+    );
+    // Verify reply_in_thread is set
+    const sendCall = mockFetch.mock.calls[1];
+    const body = JSON.parse(sendCall[1].body);
+    expect(body.reply_in_thread).toBe(true);
+    expect(body.msg_type).toBe('text');
+  });
+
+  it('sends DM when task_source is not present (fallback)', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    await notifier.notify(createResult()); // no task_source
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    // Should call send API (existing DM behavior)
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id',
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
 });
