@@ -135,6 +135,7 @@ export const MAX_RESULT_OUTPUT_BYTES = 100 * 1024; // 100KB
 export interface TaskResultSubmission {
   job_id: string;
   task_id: string;
+  task_type: string;
   status: ResultStatus;
   exit_code: number | null;
   stdout: string;
