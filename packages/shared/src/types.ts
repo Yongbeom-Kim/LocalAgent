@@ -76,6 +76,8 @@ export interface JobSubmission {
   submitted_at: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
+  setup_hook?: string;
+  setup_hook_timeout_ms?: number;
 }
 
 export interface Job {
@@ -88,6 +90,8 @@ export interface Job {
   enriched_at: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
+  setup_hook?: string;
+  setup_hook_timeout_ms?: number;
 }
 
 export interface JobAttempt {
