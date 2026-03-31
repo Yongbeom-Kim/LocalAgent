@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { Task } from '@local-agent/shared';
 import { EnrichmentService } from '../enrichment-service';
 
@@ -233,5 +236,67 @@ describe('EnrichmentService', () => {
       expect(result).not.toBeNull();
       expect(result!.task_source).toBeUndefined();
     });
+  });
+});
+
+describe('fromDirectory', () => {
+  function makeTempDir(): string {
+    return mkdtempSync(join(tmpdir(), 'enrichment-config-'));
+  }
+
+  it('loads and merges rules from multiple YAML files', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, 'a.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
+    writeFileSync(join(dir, 'b.yaml'), `rules:\n  code_review:\n    executors:\n      - executor: claude_code\n        executor_model: opus\n`);
+
+    const service = EnrichmentService.fromDirectory(dir);
+
+    const defaultResult = service.enrich(createTask({ task_type: 'unknown' }));
+    expect(defaultResult).not.toBeNull();
+    expect(defaultResult!.executors).toEqual([{ executor: 'claude_code', executor_model: 'sonnet' }]);
+
+    const reviewResult = service.enrich(createTask({ task_type: 'code_review' }));
+    expect(reviewResult).not.toBeNull();
+    expect(reviewResult!.executors).toEqual([{ executor: 'claude_code', executor_model: 'opus' }]);
+  });
+
+  it('loads .yml files as well as .yaml', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, 'rules.yml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
+
+    const service = EnrichmentService.fromDirectory(dir);
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+    expect(result).not.toBeNull();
+  });
+
+  it('ignores non-YAML files', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, 'readme.md'), '# Not a config');
+    writeFileSync(join(dir, 'rules.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
+
+    const service = EnrichmentService.fromDirectory(dir);
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+    expect(result).not.toBeNull();
+  });
+
+  it('throws on duplicate rule keys across files', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, 'a.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
+    writeFileSync(join(dir, 'b.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: opus\n`);
+
+    expect(() => EnrichmentService.fromDirectory(dir)).toThrow(/Duplicate rule key 'default'/);
+  });
+
+  it('throws when directory has no YAML files', () => {
+    const dir = makeTempDir();
+
+    expect(() => EnrichmentService.fromDirectory(dir)).toThrow(/No YAML files found/);
+  });
+
+  it('throws when a YAML file has no rules key', () => {
+    const dir = makeTempDir();
+    writeFileSync(join(dir, 'bad.yaml'), `something_else:\n  key: value\n`);
+
+    expect(() => EnrichmentService.fromDirectory(dir)).toThrow(/missing or invalid 'rules'/);
   });
 });

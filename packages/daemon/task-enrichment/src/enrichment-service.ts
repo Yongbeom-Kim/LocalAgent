@@ -1,4 +1,5 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { Task, JobSubmission, isTaskExecutorType, isValidExecutorModel, TaskExecutorType, ExecutorPreference, createLogger } from '@local-agent/shared';
 
@@ -24,6 +25,38 @@ export class EnrichmentService {
 
   static fromObject(config: EnrichmentConfig): EnrichmentService {
     return new EnrichmentService(config.rules);
+  }
+
+  static fromDirectory(dirPath: string): EnrichmentService {
+    const files = readdirSync(dirPath)
+      .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'))
+      .map(f => join(dirPath, f));
+
+    if (files.length === 0) {
+      throw new Error(`No YAML files found in config directory: ${dirPath}`);
+    }
+
+    const mergedRules: Record<string, EnrichmentRule> = {};
+
+    for (const file of files) {
+      const content = readFileSync(file, 'utf-8');
+      const config = yaml.load(content) as EnrichmentConfig;
+
+      if (!config?.rules || typeof config.rules !== 'object') {
+        throw new Error(`Invalid config file (missing or invalid 'rules'): ${file}`);
+      }
+
+      for (const [key, rule] of Object.entries(config.rules)) {
+        if (mergedRules[key]) {
+          throw new Error(
+            `Duplicate rule key '${key}' found in ${file} — already defined in another config file`
+          );
+        }
+        mergedRules[key] = rule;
+      }
+    }
+
+    return new EnrichmentService(mergedRules);
   }
 
   enrich(task: Task): JobSubmission | null {
