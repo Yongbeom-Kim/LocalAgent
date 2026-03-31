@@ -39,3 +39,4 @@ export {
   DEFAULT_TELEGRAM_QUEUE_NAME,
 } from './constants';
 export { truncate } from './truncate';
+export { extractLarkMessageContent } from './lark-content';
