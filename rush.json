@@ -35,6 +35,10 @@
     {
       "packageName": "@local-agent/cli",
       "projectFolder": "packages/cli"
+    },
+    {
+      "packageName": "@local-agent/lark-listener-daemon",
+      "projectFolder": "packages/daemon/lark-listener"
     }
   ]
 }
