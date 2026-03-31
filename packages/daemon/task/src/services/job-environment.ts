@@ -2,7 +2,8 @@ import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Job, createLogger } from '@local-agent/shared';
+import { Job, DEFAULT_SETUP_HOOK_TIMEOUT_MS, createLogger } from '@local-agent/shared';
+import { SetupHookRunner } from './setup-hook-runner';
 
 const logger = createLogger('task-daemon:job-environment');
 
@@ -12,7 +13,10 @@ export interface ExecutionEnvironment {
 }
 
 export class JobEnvironment {
-  constructor(private readonly debug: boolean) {}
+  constructor(
+    private readonly debug: boolean,
+    private readonly hookRunner: SetupHookRunner = new SetupHookRunner(),
+  ) {}
 
   async setup(job: Job): Promise<ExecutionEnvironment> {
     const workDir = join(tmpdir(), `localagent-job-${job.job_id}`);
@@ -43,6 +47,21 @@ export class JobEnvironment {
             pluginDirs.push(pluginPath);
           }
         }
+      }
+
+      if (job.setup_hook) {
+        const timeoutMs = job.setup_hook_timeout_ms ?? DEFAULT_SETUP_HOOK_TIMEOUT_MS;
+        await this.hookRunner.run(
+          job.setup_hook,
+          workDir,
+          {
+            job_id: job.job_id,
+            task_id: job.task_id,
+            task_type: job.task_type,
+            payload: job.payload,
+          },
+          timeoutMs,
+        );
       }
     } catch (error) {
       if (!this.debug) {
