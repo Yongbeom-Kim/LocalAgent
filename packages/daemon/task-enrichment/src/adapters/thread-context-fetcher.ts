@@ -41,15 +41,15 @@ export class ThreadContextFetcher {
   private async doFetch(messageId: string): Promise<string | null> {
     // Step 1: Get token and check if message is in a thread
     const token = await this.getToken();
-    const rootId = await this.getRootId(messageId, token);
+    const threadId = await this.getThreadId(messageId, token);
 
-    if (!rootId) {
+    if (!threadId) {
       return null;
     }
 
     // Step 2: Get fresh token and fetch thread messages
     const token2 = await this.getToken();
-    const messages = await this.fetchAllThreadMessages(rootId, token2);
+    const messages = await this.fetchAllThreadMessages(threadId, token2);
 
     // Step 3: Format, excluding the current message
     const filtered = messages.filter((m) => m.message_id !== messageId);
@@ -83,33 +83,38 @@ export class ThreadContextFetcher {
     return data.tenant_access_token;
   }
 
-  private async getRootId(messageId: string, token: string): Promise<string | null> {
+  private async getThreadId(messageId: string, token: string): Promise<string | null> {
     const res = await fetch(LARK_MESSAGE_URL(messageId), {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
     });
     const data = (await res.json()) as {
       code: number;
-      data: { items: Array<{ message_id: string; root_id?: string }> };
+      data: { items: Array<{ message_id: string; root_id?: string; thread_id?: string }> };
     };
     if (data.code !== 0) {
       throw new Error(`Lark getMessage failed with code ${data.code}`);
     }
     const msg = data.data.items[0];
+    // Not in a thread if no root_id or message is the thread root itself
     if (!msg?.root_id || msg.root_id === messageId) {
       return null;
     }
-    return msg.root_id;
+    // thread_id (format: omt_xxx) is the correct container_id for listing thread messages
+    if (!msg.thread_id) {
+      throw new Error(`Message ${messageId} has root_id but no thread_id`);
+    }
+    return msg.thread_id;
   }
 
-  private async fetchAllThreadMessages(rootId: string, token: string): Promise<LarkMessage[]> {
+  private async fetchAllThreadMessages(threadId: string, token: string): Promise<LarkMessage[]> {
     const allMessages: LarkMessage[] = [];
     let pageToken: string | undefined;
 
     do {
       const url = new URL(LARK_LIST_MESSAGES_URL);
       url.searchParams.set('container_id_type', 'thread');
-      url.searchParams.set('container_id', rootId);
+      url.searchParams.set('container_id', threadId);
       url.searchParams.set('sort_type', 'ByCreateTimeAsc');
       if (pageToken) {
         url.searchParams.set('page_token', pageToken);

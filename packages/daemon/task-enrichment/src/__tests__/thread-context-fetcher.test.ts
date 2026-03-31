@@ -26,6 +26,7 @@ function mockMessageResponse(overrides: Record<string, unknown> = {}) {
             {
               message_id: 'om_new_msg',
               root_id: 'om_root_msg',
+              thread_id: 'omt_root_thread',
               parent_id: 'om_root_msg',
               sender: { sender_type: 'user' },
               msg_type: 'text',
