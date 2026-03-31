@@ -1,6 +1,9 @@
 export {
   TaskSubmission,
   Task,
+  type TaskSource,
+  type LarkTaskSource,
+  isValidTaskSource,
   type MarketplaceConfig,
   type JobSubmission,
   type Job,

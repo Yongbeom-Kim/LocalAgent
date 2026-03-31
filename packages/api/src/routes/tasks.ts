@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { Task } from '@local-agent/shared';
+import { Task, isValidTaskSource } from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
@@ -8,7 +8,7 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_type, payload } = req.body;
+      const { task_type, payload, task_source } = req.body;
 
       if (typeof task_type !== 'string' || !task_type) {
         res.status(400).json({ error: 'task_type is required and must be a string' });
@@ -19,11 +19,17 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         return;
       }
 
+      if (task_source !== undefined && !isValidTaskSource(task_source)) {
+        res.status(400).json({ error: 'task_source must be a valid source object' });
+        return;
+      }
+
       const task: Task = {
         task_id: uuidv4(),
         task_type,
         payload,
         submitted_at: new Date().toISOString(),
+        ...(task_source ? { task_source } : {}),
       };
       const buffered = rabbitmq.publish(task);
 
