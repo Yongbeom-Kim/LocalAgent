@@ -63,11 +63,9 @@ describe('ClaudeCliExecutor', () => {
   it('returns failure result when claude exits with non-zero code', async () => {
     const error = Object.assign(new Error('Process exited with code 1'), {
       code: 1,
-      stdout: 'partial output',
-      stderr: 'something went wrong',
     });
     mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(error, '', '');
+      (callback as ExecFileCallback)(error, 'partial output', 'something went wrong');
       return {} as ChildProcess;
     });
 
@@ -122,7 +120,7 @@ describe('ClaudeCliExecutor', () => {
 
     expect(mockExecFile).toHaveBeenCalledWith(
       'claude',
-      ['--bare', '--dangerously-skip-permissions', '--model', 'opus', '-p', 'What is 2+2?'],
+      ['--dangerously-skip-permissions', '--model', 'opus', '-p', 'What is 2+2?'],
       { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
       expect.any(Function),
     );
@@ -144,7 +142,6 @@ describe('ClaudeCliExecutor', () => {
     expect(mockExecFile).toHaveBeenCalledWith(
       'claude',
       [
-        '--bare',
         '--dangerously-skip-permissions',
         '--model', 'opus',
         '--plugin-dir', '/tmp/job/marketplaces/repo1/plugin-a',

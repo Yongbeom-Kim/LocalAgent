@@ -22,7 +22,6 @@ export class ClaudeCliExecutor implements TaskExecutor {
     }
 
     const args = [
-      '--bare',
       '--dangerously-skip-permissions',
       '--model', job.executor_model,
       ...env.pluginDirs.flatMap(dir => ['--plugin-dir', dir]),
@@ -36,9 +35,9 @@ export class ClaudeCliExecutor implements TaskExecutor {
         { maxBuffer: 50 * 1024 * 1024, cwd: env.workDir },
         (error, stdout, stderr) => {
           if (error) {
-            const execErr = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
+            const execErr = error as NodeJS.ErrnoException;
             logger.error(
-              { job_id: job.job_id, task_id: job.task_id, exit_code: execErr.code, stdout: execErr.stdout, stderr: execErr.stderr },
+              { job_id: job.job_id, task_id: job.task_id, exit_code: execErr.code, stdout, stderr },
               'Claude Code failed',
             );
 
@@ -47,8 +46,8 @@ export class ClaudeCliExecutor implements TaskExecutor {
               task_id: job.task_id,
               status: 'failure',
               exit_code: typeof execErr.code === 'number' ? execErr.code : null,
-              stdout: truncate(execErr.stdout ?? '', MAX_RESULT_OUTPUT_BYTES),
-              stderr: truncate(execErr.stderr ?? '', MAX_RESULT_OUTPUT_BYTES),
+              stdout: truncate(stdout ?? '', MAX_RESULT_OUTPUT_BYTES),
+              stderr: truncate(stderr ?? '', MAX_RESULT_OUTPUT_BYTES),
             });
           } else {
             logger.info({ job_id: job.job_id, task_id: job.task_id, stdout, stderr }, 'Claude Code completed');
