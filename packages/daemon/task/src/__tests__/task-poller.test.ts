@@ -191,5 +191,52 @@ describe('TaskPoller', () => {
       mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
       await expect(poller.pollOnce()).resolves.toBeUndefined();
     });
+
+    it('forwards task_source from job to result submission', async () => {
+      const taskSource = { source: 'lark' as const, message_id: 'om_abc123' };
+      const job = createJob({ task_source: taskSource });
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(resultPostBody.task_source).toEqual(taskSource);
+    });
+
+    it('omits task_source from result when job has none', async () => {
+      const job = createJob(); // no task_source
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(resultPostBody.task_source).toBeUndefined();
+    });
   });
 });

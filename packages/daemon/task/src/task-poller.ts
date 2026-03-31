@@ -37,12 +37,18 @@ export class TaskPoller {
         return;
       }
 
+      // Attach task_source from job to result for downstream routing
+      const resultWithSource: TaskResultSubmission = {
+        ...result,
+        ...(job.task_source ? { task_source: job.task_source } : {}),
+      };
+
       // Publish result to API (best-effort)
       try {
         const resultRes = await fetch(`${this.apiUrl}/results`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(result),
+          body: JSON.stringify(resultWithSource),
         });
         if (resultRes.status !== 201) {
           logger.warn({ job_id: job.job_id, status: resultRes.status }, 'Result publish failed');
