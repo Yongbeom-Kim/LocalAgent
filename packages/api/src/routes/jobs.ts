@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { Job, isValidExecutorPreferences, ExecutorPreference } from '@local-agent/shared';
+import { Job, isValidExecutorPreferences, ExecutorPreference, isValidTaskSource } from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createJobRoutes(rabbitmq: RabbitMQService): Router {
@@ -8,7 +8,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_id, task_type, payload, executors, submitted_at, marketplaces } = req.body;
+      const { task_id, task_type, payload, executors, submitted_at, marketplaces, task_source } = req.body;
 
       if (typeof task_id !== 'string' || !task_id) {
         res.status(400).json({ error: 'task_id is required and must be a string' });
@@ -32,6 +32,10 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'submitted_at is required and must be a string' });
         return;
       }
+      if (task_source !== undefined && !isValidTaskSource(task_source)) {
+        res.status(400).json({ error: 'task_source must be a valid source object' });
+        return;
+      }
 
       const job: Job = {
         job_id: uuidv4(),
@@ -42,6 +46,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         submitted_at,
         enriched_at: new Date().toISOString(),
         ...(marketplaces ? { marketplaces } : {}),
+        ...(task_source ? { task_source } : {}),
       };
       const buffered = rabbitmq.publishJob(job);
 
