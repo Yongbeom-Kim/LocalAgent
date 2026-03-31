@@ -1,4 +1,4 @@
-import { createLogger, type TaskSource } from '@local-agent/shared';
+import { createLogger, type TaskSource, extractLarkMessageContent } from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
 import type { DedupMap } from './services/dedup';
@@ -71,12 +71,7 @@ export class MessageHandler {
   }
 
   private extractText(content: string): string {
-    try {
-      const parsed = JSON.parse(content);
-      return parsed.text ?? content;
-    } catch {
-      return content;
-    }
+    return extractLarkMessageContent('text', content);
   }
 
   private buildStructuredPayload(
