@@ -204,4 +204,34 @@ describe('EnrichmentService', () => {
       expect(result!.marketplaces).toBeUndefined();
     });
   });
+
+  describe('task_source passthrough', () => {
+    let service: EnrichmentService;
+
+    beforeEach(() => {
+      service = EnrichmentService.fromObject({
+        rules: {
+          default: {
+            executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          },
+        },
+      });
+    });
+
+    it('includes task_source in enriched job when present on task', () => {
+      const task = createTask({ task_source: { source: 'lark', message_id: 'om_abc' } });
+      const result = service.enrich(task);
+
+      expect(result).not.toBeNull();
+      expect(result!.task_source).toEqual({ source: 'lark', message_id: 'om_abc' });
+    });
+
+    it('omits task_source when not present on task', () => {
+      const task = createTask();
+      const result = service.enrich(task);
+
+      expect(result).not.toBeNull();
+      expect(result!.task_source).toBeUndefined();
+    });
+  });
 });

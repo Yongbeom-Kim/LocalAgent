@@ -59,6 +59,7 @@ export class EnrichmentService {
       executors,
       submitted_at: task.submitted_at,
       marketplaces: rule.marketplaces,
+      ...(task.task_source ? { task_source: task.task_source } : {}),
     };
   }
 }
