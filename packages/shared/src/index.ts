@@ -37,6 +37,7 @@ export {
   DEFAULT_LARK_QUEUE_NAME,
   DEFAULT_JOBS_QUEUE_NAME,
   DEFAULT_TELEGRAM_QUEUE_NAME,
+  DEFAULT_SETUP_HOOK_TIMEOUT_MS,
 } from './constants';
 export { truncate } from './truncate';
 export { extractLarkMessageContent } from './lark-content';
