@@ -103,14 +103,75 @@ describe('EnrichmentPoller', () => {
         json: () => Promise.resolve(task),
       })
       .mockResolvedValueOnce({
+        status: 201,
+        json: () => Promise.resolve({ result_id: 'res-1' }),
+      })
+      .mockResolvedValueOnce({
         status: 200,
         json: () => Promise.resolve({ acknowledged: true }),
       });
 
     await poller.pollOnce();
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/tasks/task-123/ack', {
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Unknown task type "code_review"',
+        stderr: '',
+      }),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
+  });
+
+  it('publishes failed result and acks task when enrichment rejects', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockEnrich.mockReturnValue({
+      type: 'rejected',
+      reason: 'Unknown task type "bad". Available types: generic, code_review',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve(task),
+      })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: () => Promise.resolve({ result_id: 'res-1' }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ acknowledged: true }),
+      });
+
+    await poller.pollOnce();
+
+    // Verify POST /results with failure
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Unknown task type "bad". Available types: generic, code_review',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+    // Verify task is acked
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
     });
   });

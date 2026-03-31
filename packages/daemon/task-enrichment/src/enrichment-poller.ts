@@ -42,7 +42,8 @@ export class EnrichmentPoller {
       const enrichmentResult = this.enrichmentService.enrich(task);
 
       if (enrichmentResult.type === 'rejected') {
-        logger.warn({ task_id: task.task_id, task_type: task.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected — acking task');
+        logger.warn({ task_id: task.task_id, task_type: task.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected task');
+        await this.publishRejection(task, enrichmentResult.reason);
         await this.ackTask(task.task_id);
         return;
       }
@@ -65,6 +66,34 @@ export class EnrichmentPoller {
       await this.ackTask(task.task_id);
     } catch (err) {
       logger.error({ err }, 'Enrichment poll error');
+    }
+  }
+
+  private async publishRejection(task: Task, reason: string): Promise<void> {
+    try {
+      const body = {
+        job_id: task.task_id,
+        task_id: task.task_id,
+        status: 'failure' as const,
+        exit_code: null,
+        stdout: reason,
+        stderr: '',
+        ...(task.task_source ? { task_source: task.task_source } : {}),
+      };
+
+      const res = await fetch(`${this.apiUrl}/results`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+
+      if (res.status !== 201) {
+        logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for rejection');
+      } else {
+        logger.info({ task_id: task.task_id }, 'Published rejection result');
+      }
+    } catch (err) {
+      logger.error({ task_id: task.task_id, err }, 'Failed to publish rejection result');
     }
   }
 
