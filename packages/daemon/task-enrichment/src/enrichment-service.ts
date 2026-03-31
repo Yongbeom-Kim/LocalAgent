@@ -7,6 +7,7 @@ const logger = createLogger('enrichment-daemon:service');
 
 interface EnrichmentRule {
   executors: Array<{ executor: string; executor_model: string }>;
+  system_prompt?: string;
   marketplaces?: Array<{ url: string; plugins: string[] }>;
   setup_hook?: string;
   setup_hook_timeout_ms?: number;
@@ -87,12 +88,15 @@ export class EnrichmentService {
       executors.push({ executor: entry.executor as TaskExecutorType, executor_model: entry.executor_model });
     }
 
+    const systemPrompt = rule.system_prompt?.trim() || undefined;
+
     return {
       task_id: task.task_id,
       task_type: task.task_type,
       payload: task.payload,
       executors,
       submitted_at: task.submitted_at,
+      ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
       marketplaces: rule.marketplaces,
       ...(task.task_source ? { task_source: task.task_source } : {}),
       ...(rule.setup_hook !== undefined ? { setup_hook: rule.setup_hook } : {}),
