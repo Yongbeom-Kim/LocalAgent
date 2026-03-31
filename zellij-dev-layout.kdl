@@ -1,0 +1,35 @@
+layout {
+    tab split_direction="horizontal" name="LocalAgent Dev" focus=true {
+        // Top row: infrastructure + core services
+        pane split_direction="vertical" size="50%" {
+            pane name="RabbitMQ" size="25%" {
+                command "docker"
+                args "compose" "up" "rabbitmq"
+            }
+            pane name="API" size="25%" {
+                command "npm"
+                args "run" "dev" "--prefix" "packages/api"
+            }
+            pane name="Enrichment" size="25%" {
+                command "npm"
+                args "run" "dev" "--prefix" "packages/daemon/task-enrichment"
+            }
+            pane name="Task Daemon" size="25%" {
+                command "npm"
+                args "run" "dev" "--prefix" "packages/daemon/task"
+            }
+        }
+        // Bottom row: notification daemons + scratch terminal
+        pane split_direction="vertical" size="50%" {
+            pane name="Lark" size="33%" {
+                command "npm"
+                args "run" "dev" "--prefix" "packages/daemon/lark-result"
+            }
+            pane name="Telegram" size="33%" {
+                command "npm"
+                args "run" "dev" "--prefix" "packages/daemon/telegram-result"
+            }
+            pane name="Shell" size="34%" focus=true
+        }
+    }
+}

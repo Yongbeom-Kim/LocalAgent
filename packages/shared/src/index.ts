@@ -21,7 +21,7 @@ export {
   RESULT_STATUSES,
   MAX_RESULT_OUTPUT_BYTES,
 } from './types';
-export { loadApiConfig, loadDaemonConfig, ApiConfig, DaemonConfig } from './config';
+export { loadApiConfig, loadDaemonConfig, loadEnvFromRoot, ApiConfig, DaemonConfig } from './config';
 export { createLogger } from './logger';
 export {
   DEFAULT_QUEUE_NAME,

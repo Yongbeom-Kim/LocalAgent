@@ -1,4 +1,6 @@
 import dotenv from 'dotenv';
+import { existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
 import {
   DEFAULT_PORT,
   DEFAULT_RABBITMQ_URL,
@@ -8,7 +10,23 @@ import {
   DEFAULT_POLL_INTERVAL_MS,
 } from './constants';
 
-dotenv.config();
+/**
+ * Walk up from cwd to find the monorepo root (directory containing rush.json)
+ * and load .env from there. Falls back to default dotenv.config() if not found.
+ */
+export function loadEnvFromRoot(): void {
+  let dir = process.cwd();
+  while (dir !== dirname(dir)) {
+    if (existsSync(resolve(dir, 'rush.json'))) {
+      dotenv.config({ path: resolve(dir, '.env') });
+      return;
+    }
+    dir = dirname(dir);
+  }
+  dotenv.config();
+}
+
+loadEnvFromRoot();
 
 export interface ApiConfig {
   port: number;

@@ -1,11 +1,11 @@
-import dotenv from 'dotenv';
 import {
   DEFAULT_API_URL,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_LOG_LEVEL,
+  loadEnvFromRoot,
 } from '@local-agent/shared';
 
-dotenv.config();
+loadEnvFromRoot();
 
 export interface LarkDaemonConfig {
   apiUrl: string;

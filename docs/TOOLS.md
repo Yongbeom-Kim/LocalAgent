@@ -9,10 +9,10 @@
 - (No external MCP servers configured for use in this workflow — using built-in Claude Code tools)
 
 # Phase: testing-and-verification
-- (No external MCP servers configured for use in this workflow — using built-in Claude Code tools)
+- ide (getDiagnostics): Check for type errors and lint issues in the project
 
 # Phase: e2e-verification
-- (No external MCP servers configured for use in this workflow — using built-in Claude Code tools)
+- claude-in-chrome: Browser automation for end-to-end testing of web interfaces
 
 # Phase: code-review
 - (No external MCP servers configured for use in this workflow — using built-in Claude Code tools)
@@ -21,3 +21,5 @@
 - Playwright: Configured in Claude settings, but excluded from this project's workflow by user choice
 - 4_5v_mcp: Image analysis via AI vision models — excluded from this project's workflow by user choice
 - web_reader: Fetch and convert URLs to LLM-friendly input — excluded from this project's workflow by user choice
+- claude_ai_Gmail: Gmail integration — excluded from this project's workflow
+- claude_ai_Google_Calendar: Google Calendar integration — excluded from this project's workflow
