@@ -52,6 +52,7 @@ export function isValidExecutorPreferences(
 export interface TaskSubmission {
   task_type: string;
   payload: string;
+  task_source?: TaskSource;
 }
 
 export interface Task {
@@ -59,6 +60,7 @@ export interface Task {
   task_type: string;
   payload: string;
   submitted_at: string;
+  task_source?: TaskSource;
 }
 
 export interface MarketplaceConfig {
@@ -73,6 +75,7 @@ export interface JobSubmission {
   executors: ExecutorPreference[];
   submitted_at: string;
   marketplaces?: MarketplaceConfig[];
+  task_source?: TaskSource;
 }
 
 export interface Job {
@@ -84,6 +87,7 @@ export interface Job {
   submitted_at: string;
   enriched_at: string;
   marketplaces?: MarketplaceConfig[];
+  task_source?: TaskSource;
 }
 
 export interface JobAttempt {
@@ -128,6 +132,7 @@ export interface TaskResultSubmission {
   exit_code: number | null;
   stdout: string;
   stderr: string;
+  task_source?: TaskSource;
 }
 
 export interface TaskResult extends TaskResultSubmission {
