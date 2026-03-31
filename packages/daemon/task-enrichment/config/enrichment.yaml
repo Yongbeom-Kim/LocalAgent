@@ -1,5 +1,6 @@
 rules:
-  default:
+  # Default type for plain messages (no /task prefix)
+  generic:
     executors:
       - executor: claude_code
         executor_model: sonnet

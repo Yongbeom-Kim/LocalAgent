@@ -159,11 +159,9 @@ describe('EnrichmentService', () => {
     it('loads config from a YAML file', () => {
       const configPath = new URL('../../config/enrichment.yaml', import.meta.url).pathname;
       const service = EnrichmentService.fromFile(configPath);
-      const result = service.enrich(createTask({ task_type: 'anything' }));
+      const result = service.enrich(createTask({ task_type: 'generic' }));
 
-      // NOTE: This test will be updated in Task 6 when the YAML file is renamed from 'default' to 'generic'
-      // For now, 'anything' will not match any rule, so we expect a rejection
-      expect(result).toBeDefined();
+      expect(result.type).toBe('enriched');
     });
   });
 
