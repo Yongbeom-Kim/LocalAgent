@@ -22,6 +22,7 @@ vi.mock('../services/job-environment', () => ({
 const mockResultSubmission: TaskResultSubmission = {
   job_id: 'job-456',
   task_id: 'abc-123',
+  task_type: 'generic',
   status: 'success',
   exit_code: 0,
   stdout: 'result output',
@@ -214,6 +215,29 @@ describe('TaskPoller', () => {
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(resultPostBody.task_source).toEqual(taskSource);
+    });
+
+    it('forwards task_type from job to result submission', async () => {
+      const job = createJob({ task_type: 'deploy' });
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(resultPostBody.task_type).toBe('deploy');
     });
 
     it('omits task_source from result when job has none', async () => {

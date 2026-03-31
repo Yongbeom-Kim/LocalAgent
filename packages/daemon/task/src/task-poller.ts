@@ -37,9 +37,10 @@ export class TaskPoller {
         return;
       }
 
-      // Attach task_source from job to result for downstream routing
+      // Attach task_type and task_source from job to result for downstream routing
       const resultWithSource: TaskResultSubmission = {
         ...result,
+        task_type: job.task_type,
         ...(job.task_source ? { task_source: job.task_source } : {}),
       };
 
