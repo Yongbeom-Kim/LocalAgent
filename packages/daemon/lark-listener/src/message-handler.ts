@@ -45,7 +45,7 @@ export class MessageHandler {
     );
 
     const taskSource: TaskSource = { source: 'lark' as const, message_id: message.message_id };
-    const taskId = await this.submitter.submit(payload, taskSource);
+    const taskId = await this.submitter.submit('generic', payload, taskSource);
 
     if (taskId) {
       logger.info({ message_id, task_id: taskId }, 'Task enqueued');

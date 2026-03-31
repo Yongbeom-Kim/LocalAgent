@@ -26,7 +26,7 @@ describe('TaskSubmitter', () => {
         Promise.resolve({ task_id: 'task-abc', task_type: 'generic', payload: 'hello' }),
     });
 
-    const result = await submitter.submit('hello');
+    const result = await submitter.submit('generic', 'hello');
     expect(result).toBe('task-abc');
     expect(mockFetch).toHaveBeenCalledWith(
       'http://localhost:3000/tasks',
@@ -44,7 +44,7 @@ describe('TaskSubmitter', () => {
       .mockRejectedValueOnce(new Error('Network error'))
       .mockRejectedValueOnce(new Error('Network error'));
 
-    const promise = submitter.submit('hello');
+    const promise = submitter.submit('generic', 'hello');
 
     // Advance through retry delays: 1s, 2s, 4s
     await vi.advanceTimersByTimeAsync(1000);
@@ -65,7 +65,7 @@ describe('TaskSubmitter', () => {
         json: () => Promise.resolve({ task_id: 'task-xyz' }),
       });
 
-    const promise = submitter.submit('retry test');
+    const promise = submitter.submit('generic', 'retry test');
     await vi.advanceTimersByTimeAsync(1000);
     const result = await promise;
 
@@ -79,12 +79,26 @@ describe('TaskSubmitter', () => {
       .mockResolvedValueOnce({ ok: false, status: 500, json: () => Promise.resolve({}) })
       .mockResolvedValueOnce({ ok: false, status: 500, json: () => Promise.resolve({}) });
 
-    const promise = submitter.submit('fail');
+    const promise = submitter.submit('generic', 'fail');
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(4000);
     const result = await promise;
 
     expect(result).toBeNull();
+  });
+
+  it('sends the provided task_type in the request body', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ task_id: 'task-abc' }),
+    });
+
+    await submitter.submit('code_review', 'review this code');
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.task_type).toBe('code_review');
+    expect(body.payload).toBe('review this code');
   });
 });

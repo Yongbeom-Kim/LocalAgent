@@ -13,8 +13,8 @@ export class TaskSubmitter {
   /**
    * Submit a task to the API. Returns the task_id on success, null on failure.
    */
-  async submit(payload: string, taskSource?: TaskSource): Promise<string | null> {
-    const body: TaskSubmission = { task_type: 'generic', payload, task_source: taskSource };
+  async submit(taskType: string, payload: string, taskSource?: TaskSource): Promise<string | null> {
+    const body: TaskSubmission = { task_type: taskType, payload, task_source: taskSource };
 
     for (let attempt = 1; attempt <= DEFAULT_MAX_RETRIES; attempt++) {
       try {
