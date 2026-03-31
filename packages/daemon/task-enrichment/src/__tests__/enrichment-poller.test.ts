@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Task, JobSubmission } from '@local-agent/shared';
-import { EnrichmentService } from '../enrichment-service';
+import { EnrichmentService, EnrichmentResult } from '../enrichment-service';
 import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
 
 const mockEnrich = vi.fn();
@@ -55,7 +55,8 @@ describe('EnrichmentPoller', () => {
   it('fetches task, enriches, posts job, then acks task', async () => {
     const task = createTask();
     const jobSubmission = createJobSubmission();
-    mockEnrich.mockReturnValue(jobSubmission);
+    const enrichmentResult: EnrichmentResult = { type: 'enriched', job: jobSubmission };
+    mockEnrich.mockReturnValue(enrichmentResult);
 
     mockFetch
       .mockResolvedValueOnce({
@@ -91,9 +92,10 @@ describe('EnrichmentPoller', () => {
     expect(mockEnrich).not.toHaveBeenCalled();
   });
 
-  it('acks task and does not post job when enrichment fails (returns null)', async () => {
+  it('acks task and does not post job when enrichment is rejected', async () => {
     const task = createTask();
-    mockEnrich.mockReturnValue(null);
+    const rejectedResult: EnrichmentResult = { type: 'rejected', reason: 'Unknown task type "code_review"' };
+    mockEnrich.mockReturnValue(rejectedResult);
 
     mockFetch
       .mockResolvedValueOnce({
@@ -116,7 +118,7 @@ describe('EnrichmentPoller', () => {
   it('does not ack task when POST /jobs fails', async () => {
     const task = createTask();
     const jobSubmission = createJobSubmission();
-    mockEnrich.mockReturnValue(jobSubmission);
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
 
     mockFetch
       .mockResolvedValueOnce({
@@ -163,7 +165,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       payload: 'now fix the tests',
     });
     const jobSubmission = createJobSubmission({ payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests' });
-    mockEnrich.mockReturnValue(jobSubmission);
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue('user: fix CI');
 
     mockFetch
@@ -184,7 +186,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
   it('does not modify payload when task has no task_source', async () => {
     const task = createTask({ payload: 'hello' });
     const jobSubmission = createJobSubmission({ payload: 'hello' });
-    mockEnrich.mockReturnValue(jobSubmission);
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -203,7 +205,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       payload: 'hello',
     });
     const jobSubmission = createJobSubmission({ payload: 'hello' });
-    mockEnrich.mockReturnValue(jobSubmission);
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
 
     mockFetch

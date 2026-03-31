@@ -39,10 +39,10 @@ export class EnrichmentPoller {
         }
       }
 
-      const jobSubmission = this.enrichmentService.enrich(task);
+      const enrichmentResult = this.enrichmentService.enrich(task);
 
-      if (!jobSubmission) {
-        logger.warn({ task_id: task.task_id, task_type: task.task_type }, 'Enrichment failed — acking task');
+      if (enrichmentResult.type === 'rejected') {
+        logger.warn({ task_id: task.task_id, task_type: task.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected — acking task');
         await this.ackTask(task.task_id);
         return;
       }
@@ -51,7 +51,7 @@ export class EnrichmentPoller {
         const jobRes = await fetch(`${this.apiUrl}/jobs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(jobSubmission),
+          body: JSON.stringify(enrichmentResult.job),
         });
         if (jobRes.status !== 201) {
           logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed — not acking task');
