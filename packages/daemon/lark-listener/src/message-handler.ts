@@ -1,4 +1,4 @@
-import { createLogger } from '@local-agent/shared';
+import { createLogger, type TaskSource } from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
 import type { DedupMap } from './services/dedup';
@@ -44,7 +44,8 @@ export class MessageHandler {
       'Processing message',
     );
 
-    const taskId = await this.submitter.submit(payload);
+    const taskSource: TaskSource = { source: 'lark' as const, message_id: message.message_id };
+    const taskId = await this.submitter.submit(payload, taskSource);
 
     if (taskId) {
       logger.info({ message_id, task_id: taskId }, 'Task enqueued');

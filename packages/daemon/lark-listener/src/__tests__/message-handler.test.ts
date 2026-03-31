@@ -38,10 +38,13 @@ describe('MessageHandler', () => {
     );
   });
 
-  it('submits text message as plain string payload', async () => {
+  it('submits text message as plain string payload with task_source', async () => {
     await handler.handle(makeEvent());
 
-    expect(submitter.submit).toHaveBeenCalledWith('fix the CI pipeline');
+    expect(submitter.submit).toHaveBeenCalledWith(
+      'fix the CI pipeline',
+      { source: 'lark', message_id: 'om_msg1' },
+    );
     expect(reactor.react).toHaveBeenCalledWith('om_msg1');
     expect(dedup.add).toHaveBeenCalledWith('om_msg1');
   });
@@ -55,7 +58,7 @@ describe('MessageHandler', () => {
     expect(reactor.react).not.toHaveBeenCalled();
   });
 
-  it('submits image message as JSON payload', async () => {
+  it('submits image message with task_source', async () => {
     await handler.handle(
       makeEvent({
         message_type: 'image',
@@ -64,9 +67,11 @@ describe('MessageHandler', () => {
     );
 
     const payload = submitter.submit.mock.calls[0][0];
+    const taskSource = submitter.submit.mock.calls[0][1];
     const parsed = JSON.parse(payload);
     expect(parsed.type).toBe('image');
     expect(parsed.key).toBe('img_v3_abc');
+    expect(taskSource).toEqual({ source: 'lark', message_id: 'om_msg1' });
   });
 
   it('submits file message as JSON payload', async () => {

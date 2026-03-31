@@ -1,4 +1,4 @@
-import { createLogger, type TaskSubmission } from '@local-agent/shared';
+import { createLogger, type TaskSubmission, type TaskSource } from '@local-agent/shared';
 import { DEFAULT_MAX_RETRIES } from '../constants';
 
 const logger = createLogger('lark-listener:submitter');
@@ -13,8 +13,8 @@ export class TaskSubmitter {
   /**
    * Submit a task to the API. Returns the task_id on success, null on failure.
    */
-  async submit(payload: string): Promise<string | null> {
-    const body: TaskSubmission = { task_type: 'generic', payload };
+  async submit(payload: string, taskSource?: TaskSource): Promise<string | null> {
+    const body: TaskSubmission = { task_type: 'generic', payload, task_source: taskSource };
 
     for (let attempt = 1; attempt <= DEFAULT_MAX_RETRIES; attempt++) {
       try {
