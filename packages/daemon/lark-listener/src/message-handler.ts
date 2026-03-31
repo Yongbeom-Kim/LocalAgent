@@ -1,6 +1,7 @@
 import { createLogger, type TaskSource, extractLarkMessageContent } from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
+import type { LarkReplier } from './adapters/lark-replier';
 import type { DedupMap } from './services/dedup';
 
 const logger = createLogger('lark-listener:handler');
@@ -23,6 +24,7 @@ export class MessageHandler {
   constructor(
     private readonly submitter: TaskSubmitter,
     private readonly reactor: LarkReactor,
+    private readonly replier: LarkReplier,
     private readonly dedup: DedupMap,
   ) {}
 
@@ -44,16 +46,47 @@ export class MessageHandler {
       'Processing message',
     );
 
+    const { taskType, taskPayload, isCommand } = this.parseCommand(payload);
+
+    if (isCommand && taskType === null) {
+      // Bare /task with no arguments — reply with usage hint
+      await this.replier.reply(message_id, 'Usage: /task <type> <payload>');
+      return;
+    }
+
     const taskSource: TaskSource = { source: 'lark' as const, message_id: message.message_id };
-    const taskId = await this.submitter.submit('generic', payload, taskSource);
+    const taskId = await this.submitter.submit(taskType ?? 'generic', taskPayload, taskSource);
 
     if (taskId) {
-      logger.info({ message_id, task_id: taskId }, 'Task enqueued');
+      logger.info({ message_id, task_id: taskId, task_type: taskType }, 'Task enqueued');
     } else {
       logger.error({ message_id }, 'Failed to enqueue task');
     }
 
     await this.reactor.react(message_id);
+  }
+
+  private parseCommand(payload: string): { taskType: string | null; taskPayload: string; isCommand: boolean } {
+    // Must match exactly "/task" followed by space, newline, or end-of-string.
+    // This avoids false positives like "/taskforce" or "/tasklist".
+    if (!payload.startsWith('/task ') && !payload.startsWith('/task\n') && payload !== '/task') {
+      return { taskType: null, taskPayload: payload, isCommand: false };
+    }
+
+    const rest = payload.slice('/task'.length).trimStart();
+
+    if (rest === '') {
+      return { taskType: null, taskPayload: '', isCommand: true };
+    }
+
+    const spaceIndex = rest.indexOf(' ');
+    if (spaceIndex === -1) {
+      return { taskType: rest, taskPayload: '', isCommand: true };
+    }
+
+    const taskType = rest.substring(0, spaceIndex);
+    const taskPayload = rest.substring(spaceIndex + 1);
+    return { taskType, taskPayload, isCommand: true };
   }
 
   private buildPayload(messageType: string, content: string): string {

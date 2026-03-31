@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MessageHandler } from '../message-handler';
 import type { TaskSubmitter } from '../adapters/task-submitter';
 import type { LarkReactor } from '../adapters/lark-reactor';
+import type { LarkReplier } from '../adapters/lark-replier';
 import type { DedupMap } from '../services/dedup';
 
 function makeEvent(overrides: Record<string, unknown> = {}) {
@@ -25,15 +26,18 @@ describe('MessageHandler', () => {
   let handler: MessageHandler;
   let submitter: { submit: ReturnType<typeof vi.fn> };
   let reactor: { react: ReturnType<typeof vi.fn> };
+  let replier: { reply: ReturnType<typeof vi.fn> };
   let dedup: { has: ReturnType<typeof vi.fn>; add: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     submitter = { submit: vi.fn().mockResolvedValue('task-abc') };
     reactor = { react: vi.fn().mockResolvedValue(undefined) };
+    replier = { reply: vi.fn().mockResolvedValue(undefined) };
     dedup = { has: vi.fn().mockReturnValue(false), add: vi.fn() };
     handler = new MessageHandler(
       submitter as unknown as TaskSubmitter,
       reactor as unknown as LarkReactor,
+      replier as unknown as LarkReplier,
       dedup as unknown as DedupMap,
     );
   });
@@ -147,5 +151,94 @@ describe('MessageHandler', () => {
     const payload = submitter.submit.mock.calls[0][1];
     expect(taskType).toBe('generic');
     expect(payload).toBe('not json');
+  });
+
+  describe('/task command parsing', () => {
+    it('parses /task <type> <payload> and submits with correct task_type', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/task code_review fix the login bug' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'code_review',
+        'fix the login bug',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    });
+
+    it('parses /task <type> with no payload (empty payload)', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/task code_review' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'code_review',
+        '',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+    });
+
+    it('preserves multiline payload', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/task review fix this\nand that too' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'review',
+        'fix this\nand that too',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+    });
+
+    it('replies with usage hint for bare /task and does not submit', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/task' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(reactor.react).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith(
+        'om_msg1',
+        'Usage: /task <type> <payload>',
+      );
+    });
+
+    it('replies with usage hint for /task with only whitespace after', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/task   ' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith(
+        'om_msg1',
+        'Usage: /task <type> <payload>',
+      );
+    });
+
+    it('submits plain messages as task_type generic (no /task prefix)', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: 'just a regular message' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'generic',
+        'just a regular message',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+    });
+
+    it('does not treat /taskforce as a /task command (must have word boundary)', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/taskforce deploy' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'generic',
+        '/taskforce deploy',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+    });
   });
 });
