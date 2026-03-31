@@ -7,6 +7,7 @@ describe('loadEnrichmentDaemonConfig', () => {
     expect(config.apiUrl).toBe('http://localhost:3000');
     expect(config.pollIntervalMs).toBe(5000);
     expect(config.logLevel).toBe('info');
+    expect(config.enrichmentConfigDir).toMatch(/config$/);
     expect(config.larkAppId).toBeUndefined();
     expect(config.larkAppSecret).toBeUndefined();
   });
@@ -18,10 +19,12 @@ describe('loadEnrichmentDaemonConfig', () => {
       LOG_LEVEL: 'debug',
       LARK_APP_ID: 'app123',
       LARK_APP_SECRET: 'secret456',
+      ENRICHMENT_CONFIG_DIR: '/custom/config/dir',
     });
     expect(config.apiUrl).toBe('http://other:4000');
     expect(config.pollIntervalMs).toBe(2000);
     expect(config.logLevel).toBe('debug');
+    expect(config.enrichmentConfigDir).toBe('/custom/config/dir');
     expect(config.larkAppId).toBe('app123');
     expect(config.larkAppSecret).toBe('secret456');
   });
