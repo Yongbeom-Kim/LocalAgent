@@ -66,4 +66,39 @@ describe('POST /jobs', () => {
       .send({ ...validJobSubmission(), task_source: { source: 'lark' } });
     expect(res.status).toBe(400);
   });
+
+  it('returns 201 with system_prompt when provided', async () => {
+    const app = buildApp();
+    const systemPrompt = 'You are a code reviewer. Focus on security.';
+    const res = await request(app)
+      .post('/jobs')
+      .send({ ...validJobSubmission(), system_prompt: systemPrompt });
+    expect(res.status).toBe(201);
+    expect(res.body.system_prompt).toBe(systemPrompt);
+    expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
+      expect.objectContaining({ system_prompt: systemPrompt }),
+    );
+  });
+
+  it('returns 201 without system_prompt when not provided', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send(validJobSubmission());
+    expect(res.status).toBe(201);
+    expect(res.body.system_prompt).toBeUndefined();
+  });
+
+  it('returns 201 with setup_hook and setup_hook_timeout_ms when provided', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send({ ...validJobSubmission(), setup_hook: 'npm ci', setup_hook_timeout_ms: 60000 });
+    expect(res.status).toBe(201);
+    expect(res.body.setup_hook).toBe('npm ci');
+    expect(res.body.setup_hook_timeout_ms).toBe(60000);
+    expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
+      expect.objectContaining({ setup_hook: 'npm ci', setup_hook_timeout_ms: 60000 }),
+    );
+  });
 });
