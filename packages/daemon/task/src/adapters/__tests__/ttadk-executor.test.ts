@@ -162,4 +162,42 @@ describe('TTADKExecutor', () => {
     expect(Buffer.byteLength(result.stdout, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
     expect(Buffer.byteLength(result.stderr, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
   });
+
+  it('includes --append-system-prompt when system_prompt is provided', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, '', '');
+      return {} as ChildProcess;
+    });
+
+    const job = createJobAttempt({
+      system_prompt: 'You are a helpful assistant that speaks like a pirate.',
+    });
+
+    await executor.execute(job, createEnv());
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'ttadk',
+      [
+        'code', '-t', 'claude', '-m', 'gpt-5.4',
+        '-a', '--bare --dangerously-skip-permissions --append-system-prompt You are a helpful assistant that speaks like a pirate. -p What is 2+2?',
+      ],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
+      expect.any(Function),
+    );
+  });
+
+  it('omits --append-system-prompt when system_prompt is not provided', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, '', '');
+      return {} as ChildProcess;
+    });
+
+    const job = createJobAttempt(); // no system_prompt
+
+    await executor.execute(job, createEnv());
+
+    const callArgs = mockExecFile.mock.calls[0][1] as string[];
+    const claudeArgs = callArgs[callArgs.length - 1]; // -a argument is last
+    expect(claudeArgs).not.toContain('--append-system-prompt');
+  });
 });
