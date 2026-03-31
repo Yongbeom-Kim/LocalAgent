@@ -4,6 +4,7 @@ import { loadLarkListenerConfig } from './config';
 import { MessageHandler } from './message-handler';
 import { TaskSubmitter } from './adapters/task-submitter';
 import { LarkReactor } from './adapters/lark-reactor';
+import { LarkReplier } from './adapters/lark-replier';
 import { DedupMap } from './services/dedup';
 
 async function main() {
@@ -19,8 +20,9 @@ async function main() {
 
   const submitter = new TaskSubmitter(config.apiUrl);
   const reactor = new LarkReactor(config.appId, config.appSecret);
+  const replier = new LarkReplier(config.appId, config.appSecret);
   const dedup = new DedupMap({ ttlMs: config.dedupTtlMs });
-  const handler = new MessageHandler(submitter, reactor, dedup);
+  const handler = new MessageHandler(submitter, reactor, replier, dedup);
 
   const eventDispatcher = new lark.EventDispatcher({}).register({
     'im.message.receive_v1': async (data: unknown) => {
