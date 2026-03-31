@@ -1,16 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { ChildProcess } from 'node:child_process';
+import { EventEmitter } from 'node:events';
+import { Writable, Readable } from 'node:stream';
 import { JobAttempt, TaskResultSubmission } from '@local-agent/shared';
 import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
-  execFile: vi.fn(),
+  spawn: vi.fn(),
 }));
 
 import { ClaudeCliExecutor } from '../claude-cli-executor';
-import { execFile } from 'node:child_process';
+import { spawn } from 'node:child_process';
 
-const mockExecFile = vi.mocked(execFile);
+const mockSpawn = vi.mocked(spawn);
 
 function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
   return {
@@ -34,7 +35,38 @@ function createEnv(overrides?: Partial<ExecutionEnvironment>): ExecutionEnvironm
   };
 }
 
-type ExecFileCallback = (error: Error | null, stdout: string, stderr: string) => void;
+interface MockChildProcess extends EventEmitter {
+  stdin: Writable;
+  stdout: Readable;
+  stderr: Readable;
+  stdinData: string;
+}
+
+function createMockChild(): MockChildProcess {
+  const child = new EventEmitter() as MockChildProcess;
+  let stdinData = '';
+  child.stdin = new Writable({
+    write(chunk, _encoding, callback) {
+      stdinData += chunk.toString();
+      callback();
+    },
+  });
+  Object.defineProperty(child, 'stdinData', { get: () => stdinData });
+  child.stdout = new Readable({ read() {} });
+  child.stderr = new Readable({ read() {} });
+  return child;
+}
+
+function emitOutput(child: MockChildProcess, stdout: string, stderr: string, exitCode: number | null) {
+  // Schedule on next tick so the executor's event listeners are fully wired up
+  process.nextTick(() => {
+    if (stdout) child.stdout.push(Buffer.from(stdout));
+    child.stdout.push(null);
+    if (stderr) child.stderr.push(Buffer.from(stderr));
+    child.stderr.push(null);
+    child.emit('close', exitCode);
+  });
+}
 
 describe('ClaudeCliExecutor', () => {
   let executor: ClaudeCliExecutor;
@@ -45,12 +77,13 @@ describe('ClaudeCliExecutor', () => {
   });
 
   it('returns success result with stdout and stderr on successful execution', async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(null, 'The answer is 4', 'some warning');
-      return {} as ChildProcess;
-    });
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
-    const result = await executor.execute(createJobAttempt(), createEnv());
+    const resultPromise = executor.execute(createJobAttempt(), createEnv());
+    emitOutput(child, 'The answer is 4', 'some warning', 0);
+
+    const result = await resultPromise;
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -61,15 +94,13 @@ describe('ClaudeCliExecutor', () => {
   });
 
   it('returns failure result when claude exits with non-zero code', async () => {
-    const error = Object.assign(new Error('Process exited with code 1'), {
-      code: 1,
-    });
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(error, 'partial output', 'something went wrong');
-      return {} as ChildProcess;
-    });
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
-    const result = await executor.execute(createJobAttempt(), createEnv());
+    const resultPromise = executor.execute(createJobAttempt(), createEnv());
+    emitOutput(child, 'partial output', 'something went wrong', 1);
+
+    const result = await resultPromise;
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
@@ -79,24 +110,20 @@ describe('ClaudeCliExecutor', () => {
     expect(result.stderr).toBe('something went wrong');
   });
 
-  it('returns failure result with null exit_code when claude binary is not found', async () => {
-    const error = Object.assign(new Error('spawn claude ENOENT'), {
-      code: 'ENOENT',
-      stdout: '',
-      stderr: '',
-    });
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(error, '', '');
-      return {} as ChildProcess;
-    });
+  it('returns failure result when spawn emits an error', async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
-    const result = await executor.execute(createJobAttempt(), createEnv());
+    const resultPromise = executor.execute(createJobAttempt(), createEnv());
+    child.emit('error', new Error('spawn claude ENOENT'));
+
+    const result = await resultPromise;
 
     expect(result.job_id).toBe('job-456');
     expect(result.task_id).toBe('test-123');
     expect(result.status).toBe('failure');
     expect(result.exit_code).toBeNull();
-    expect(result.stderr).toBe('');
+    expect(result.stderr).toBe('spawn claude ENOENT');
   });
 
   it('returns failure result when payload is empty', async () => {
@@ -107,101 +134,117 @@ describe('ClaudeCliExecutor', () => {
     expect(result.status).toBe('failure');
     expect(result.exit_code).toBeNull();
     expect(result.stderr).toBe('Job payload is missing or empty');
-    expect(mockExecFile).not.toHaveBeenCalled();
+    expect(mockSpawn).not.toHaveBeenCalled();
   });
 
-  it('spawns claude with --dangerously-skip-permissions and cwd from environment', async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(null, '', '');
-      return {} as ChildProcess;
-    });
+  it('spawns claude with correct args and pipes payload via stdin', async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
-    await executor.execute(createJobAttempt(), createEnv());
+    const resultPromise = executor.execute(createJobAttempt(), createEnv());
+    emitOutput(child, '', '', 0);
+    await resultPromise;
 
-    expect(mockExecFile).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       'claude',
-      ['--dangerously-skip-permissions', '--model', 'opus', '-p', 'What is 2+2?'],
-      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
-      expect.any(Function),
+      ['--dangerously-skip-permissions', '--model', 'opus', '-p', '-'],
+      { cwd: '/tmp/localagent-job-test' },
     );
+    expect(child.stdinData).toBe('What is 2+2?');
   });
 
   it('includes --plugin-dir flags for each plugin directory', async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(null, '', '');
-      return {} as ChildProcess;
-    });
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
     const env = createEnv({
       workDir: '/tmp/job',
       pluginDirs: ['/tmp/job/marketplaces/repo1/plugin-a', '/tmp/job/marketplaces/repo2/plugin-b'],
     });
 
-    await executor.execute(createJobAttempt(), env);
+    const resultPromise = executor.execute(createJobAttempt(), env);
+    emitOutput(child, '', '', 0);
+    await resultPromise;
 
-    expect(mockExecFile).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       'claude',
       [
         '--dangerously-skip-permissions',
         '--model', 'opus',
         '--plugin-dir', '/tmp/job/marketplaces/repo1/plugin-a',
         '--plugin-dir', '/tmp/job/marketplaces/repo2/plugin-b',
-        '-p', 'What is 2+2?',
+        '-p', '-',
       ],
-      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/job' },
-      expect.any(Function),
+      { cwd: '/tmp/job' },
     );
   });
 
   it('includes --append-system-prompt when system_prompt is provided', async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(null, '', '');
-      return {} as ChildProcess;
-    });
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
     const job = createJobAttempt({
       system_prompt: 'You are a helpful assistant that speaks like a pirate.',
     });
 
-    await executor.execute(job, createEnv());
+    const resultPromise = executor.execute(job, createEnv());
+    emitOutput(child, '', '', 0);
+    await resultPromise;
 
-    expect(mockExecFile).toHaveBeenCalledWith(
+    expect(mockSpawn).toHaveBeenCalledWith(
       'claude',
       [
         '--dangerously-skip-permissions',
         '--model', 'opus',
         '--append-system-prompt', 'You are a helpful assistant that speaks like a pirate.',
-        '-p', 'What is 2+2?',
+        '-p', '-',
       ],
-      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
-      expect.any(Function),
+      { cwd: '/tmp/localagent-job-test' },
     );
   });
 
   it('omits --append-system-prompt when system_prompt is not provided', async () => {
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(null, '', '');
-      return {} as ChildProcess;
-    });
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
     const job = createJobAttempt(); // no system_prompt
 
-    await executor.execute(job, createEnv());
+    const resultPromise = executor.execute(job, createEnv());
+    emitOutput(child, '', '', 0);
+    await resultPromise;
 
-    const callArgs = mockExecFile.mock.calls[0][1] as string[];
+    const callArgs = mockSpawn.mock.calls[0][1] as string[];
     expect(callArgs).not.toContain('--append-system-prompt');
   });
 
   it('truncates stdout and stderr to MAX_RESULT_OUTPUT_BYTES', async () => {
-    const largeOutput = 'x'.repeat(200 * 1024);
-    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
-      (callback as ExecFileCallback)(null, largeOutput, largeOutput);
-      return {} as ChildProcess;
-    });
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
 
-    const result = await executor.execute(createJobAttempt(), createEnv());
+    const largeOutput = 'x'.repeat(200 * 1024);
+
+    const resultPromise = executor.execute(createJobAttempt(), createEnv());
+    emitOutput(child, largeOutput, largeOutput, 0);
+
+    const result = await resultPromise;
 
     expect(Buffer.byteLength(result.stdout, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
     expect(Buffer.byteLength(result.stderr, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
+  });
+
+  it('handles payloads starting with dashes (thread context)', async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
+
+    const payload = '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\ncan you repeat this?';
+    const job = createJobAttempt({ payload });
+
+    const resultPromise = executor.execute(job, createEnv());
+    emitOutput(child, 'Done', '', 0);
+
+    const result = await resultPromise;
+
+    expect(result.status).toBe('success');
+    expect(child.stdinData).toBe(payload);
   });
 });
