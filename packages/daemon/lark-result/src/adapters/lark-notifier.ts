@@ -7,6 +7,10 @@ const LARK_TOKEN_URL = 'https://open.larksuite.com/open-apis/auth/v3/tenant_acce
 const LARK_MESSAGE_URL = 'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id';
 const LARK_REPLY_URL = (messageId: string) =>
   `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reply`;
+const LARK_REACTIONS_URL = (messageId: string) =>
+  `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions?user_id_type=open_id`;
+const LARK_DELETE_REACTION_URL = (messageId: string, reactionId: string) =>
+  `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions/${reactionId}`;
 const MAX_SNIPPET_CHARS = 2000;
 const MAX_RETRIES = DEFAULT_LARK_MAX_RETRIES;
 
