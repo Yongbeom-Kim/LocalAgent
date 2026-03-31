@@ -300,3 +300,56 @@ describe('fromDirectory', () => {
     expect(() => EnrichmentService.fromDirectory(dir)).toThrow(/missing or invalid 'rules'/);
   });
 });
+
+describe('setup_hook passthrough', () => {
+  it('includes setup_hook and setup_hook_timeout_ms in enriched job when present in rule', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        coding: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          setup_hook: 'git clone https://github.com/org/repo .\nnpm ci',
+          setup_hook_timeout_ms: 120_000,
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'coding' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.setup_hook).toBe('git clone https://github.com/org/repo .\nnpm ci');
+    expect(result!.setup_hook_timeout_ms).toBe(120_000);
+  });
+
+  it('omits setup_hook when rule has none', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        default: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.setup_hook).toBeUndefined();
+    expect(result!.setup_hook_timeout_ms).toBeUndefined();
+  });
+
+  it('includes setup_hook without timeout when only hook is specified', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        default: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          setup_hook: 'echo hello',
+        },
+      },
+    });
+
+    const result = service.enrich(createTask({ task_type: 'anything' }));
+
+    expect(result).not.toBeNull();
+    expect(result!.setup_hook).toBe('echo hello');
+    expect(result!.setup_hook_timeout_ms).toBeUndefined();
+  });
+});

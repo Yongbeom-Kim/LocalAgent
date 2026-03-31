@@ -8,6 +8,8 @@ const logger = createLogger('enrichment-daemon:service');
 interface EnrichmentRule {
   executors: Array<{ executor: string; executor_model: string }>;
   marketplaces?: Array<{ url: string; plugins: string[] }>;
+  setup_hook?: string;
+  setup_hook_timeout_ms?: number;
 }
 
 interface EnrichmentConfig {
@@ -93,6 +95,8 @@ export class EnrichmentService {
       submitted_at: task.submitted_at,
       marketplaces: rule.marketplaces,
       ...(task.task_source ? { task_source: task.task_source } : {}),
+      ...(rule.setup_hook !== undefined ? { setup_hook: rule.setup_hook } : {}),
+      ...(rule.setup_hook_timeout_ms !== undefined ? { setup_hook_timeout_ms: rule.setup_hook_timeout_ms } : {}),
     };
   }
 }
