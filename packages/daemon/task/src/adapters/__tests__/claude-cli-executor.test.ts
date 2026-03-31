@@ -110,7 +110,7 @@ describe('ClaudeCliExecutor', () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
-  it('spawns claude with --bare flag and cwd from environment', async () => {
+  it('spawns claude with --dangerously-skip-permissions and cwd from environment', async () => {
     mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
       (callback as ExecFileCallback)(null, '', '');
       return {} as ChildProcess;
@@ -151,6 +151,45 @@ describe('ClaudeCliExecutor', () => {
       { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/job' },
       expect.any(Function),
     );
+  });
+
+  it('includes --append-system-prompt when system_prompt is provided', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, '', '');
+      return {} as ChildProcess;
+    });
+
+    const job = createJobAttempt({
+      system_prompt: 'You are a helpful assistant that speaks like a pirate.',
+    });
+
+    await executor.execute(job, createEnv());
+
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'claude',
+      [
+        '--dangerously-skip-permissions',
+        '--model', 'opus',
+        '--append-system-prompt', 'You are a helpful assistant that speaks like a pirate.',
+        '-p', 'What is 2+2?',
+      ],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
+      expect.any(Function),
+    );
+  });
+
+  it('omits --append-system-prompt when system_prompt is not provided', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, '', '');
+      return {} as ChildProcess;
+    });
+
+    const job = createJobAttempt(); // no system_prompt
+
+    await executor.execute(job, createEnv());
+
+    const callArgs = mockExecFile.mock.calls[0][1] as string[];
+    expect(callArgs).not.toContain('--append-system-prompt');
   });
 
   it('truncates stdout and stderr to MAX_RESULT_OUTPUT_BYTES', async () => {

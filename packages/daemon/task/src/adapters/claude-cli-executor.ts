@@ -25,6 +25,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
       '--dangerously-skip-permissions',
       '--model', job.executor_model,
       ...env.pluginDirs.flatMap(dir => ['--plugin-dir', dir]),
+      ...(job.system_prompt ? ['--append-system-prompt', job.system_prompt] : []),
       '-p', job.payload,
     ];
 
