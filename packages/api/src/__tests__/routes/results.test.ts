@@ -89,6 +89,37 @@ describe('POST /results', () => {
     const res = await request(app).post('/results').send(validSubmission());
     expect(res.status).toBe(503);
   });
+
+  it('returns 201 with task_source when provided', async () => {
+    const app = buildApp();
+    const taskSource = { source: 'lark', message_id: 'om_abc123' };
+    const res = await request(app)
+      .post('/results')
+      .send({ ...validSubmission(), task_source: taskSource });
+    expect(res.status).toBe(201);
+    expect(res.body.task_source).toEqual(taskSource);
+    expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
+      'results',
+      expect.objectContaining({ task_source: taskSource }),
+    );
+  });
+
+  it('returns 201 without task_source when not provided', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send(validSubmission());
+    expect(res.status).toBe(201);
+    expect(res.body.task_source).toBeUndefined();
+  });
+
+  it('returns 400 when task_source has invalid shape', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({ ...validSubmission(), task_source: { source: 'unknown' } });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('GET /results/next/:queueName', () => {
