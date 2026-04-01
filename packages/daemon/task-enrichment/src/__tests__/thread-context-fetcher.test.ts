@@ -146,7 +146,7 @@ describe('ThreadContextFetcher', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result).toBe('user: fix the CI pipeline\nassistant: Job abc — success');
+    expect(result!.threadContext).toBe('user: fix the CI pipeline\nassistant: Job abc — success');
   });
 
   it('excludes the current message from thread context', async () => {
@@ -172,8 +172,8 @@ describe('ThreadContextFetcher', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result).toBe('user: original question');
-    expect(result).not.toContain('follow up');
+    expect(result!.threadContext).toBe('user: original question');
+    expect(result!.threadContext).not.toContain('follow up');
   });
 
   it('labels non-user senders as assistant', async () => {
@@ -193,7 +193,7 @@ describe('ThreadContextFetcher', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result).toBe('assistant: bot message');
+    expect(result!.threadContext).toBe('assistant: bot message');
   });
 
   it('handles pagination (multiple pages)', async () => {
@@ -227,7 +227,7 @@ describe('ThreadContextFetcher', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result).toBe('user: page 1 message\nassistant: page 2 message');
+    expect(result!.threadContext).toBe('user: page 1 message\nassistant: page 2 message');
   });
 
   it('handles non-text message types in thread', async () => {
@@ -247,7 +247,7 @@ describe('ThreadContextFetcher', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result).toBe('user: [Image: img_v3_abc]');
+    expect(result!.threadContext).toBe('user: [Image: img_v3_abc]');
   });
 
   it('returns null on API failure after retries', async () => {
@@ -278,5 +278,268 @@ describe('ThreadContextFetcher', () => {
 
     const result = await fetcher.fetchThreadContext('om_msg1');
     expect(result).toBeNull();
+  });
+});
+
+describe('task_type extraction from thread messages', () => {
+  let fetcher: ThreadContextFetcher;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetcher = new ThreadContextFetcher(APP_ID, APP_SECRET);
+  });
+
+  it('extracts task_type from first bot message with valid tag', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'deploy the app' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'task_type: deploy\nJob abc — success' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'check status' }) },
+          },
+        ]),
+      );
+
+    const validTypes = new Set(['deploy', 'code_review', 'default']);
+    const result = await fetcher.fetchThreadContext('om_new_msg', validTypes);
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedTaskType).toBe('deploy');
+  });
+
+  it('skips bot messages with invalid task_type and uses next valid one', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot1',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'task_type: nonexistent\nJob 1 — success' }) },
+          },
+          {
+            message_id: 'om_bot2',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'task_type: deploy\nJob 2 — success' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const validTypes = new Set(['deploy', 'default']);
+    const result = await fetcher.fetchThreadContext('om_new_msg', validTypes);
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedTaskType).toBe('deploy');
+  });
+
+  it('returns null inheritedTaskType when no bot message has valid tag', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'Job abc — success' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const validTypes = new Set(['deploy', 'default']);
+    const result = await fetcher.fetchThreadContext('om_new_msg', validTypes);
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedTaskType).toBeNull();
+    expect(result!.threadContext).toBe('user: hello\nassistant: Job abc — success');
+  });
+
+  it('does not extract task_type when validTaskTypes is not provided', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'task_type: deploy\nJob abc — success' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedTaskType).toBeNull();
+  });
+
+  it('ignores task_type tags in user messages', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'task_type: deploy' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const validTypes = new Set(['deploy', 'default']);
+    const result = await fetcher.fetchThreadContext('om_new_msg', validTypes);
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedTaskType).toBeNull();
+  });
+});
+
+describe('task_type line stripping from thread context', () => {
+  let fetcher: ThreadContextFetcher;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetcher = new ThreadContextFetcher(APP_ID, APP_SECRET);
+  });
+
+  it('strips task_type line from bot message in thread context', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'task_type: deploy\nJob abc — success' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const validTypes = new Set(['deploy']);
+    const result = await fetcher.fetchThreadContext('om_new_msg', validTypes);
+
+    expect(result).not.toBeNull();
+    expect(result!.threadContext).toBe('user: hello\nassistant: Job abc — success');
+    expect(result!.threadContext).not.toContain('task_type:');
+  });
+
+  it('strips task_type line even when validTaskTypes is not provided', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'task_type: deploy\nJob abc — success' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+
+    expect(result).not.toBeNull();
+    expect(result!.threadContext).not.toContain('task_type:');
   });
 });

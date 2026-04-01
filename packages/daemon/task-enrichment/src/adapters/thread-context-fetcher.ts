@@ -10,6 +10,13 @@ const LARK_LIST_MESSAGES_URL = 'https://open.larksuite.com/open-apis/im/v1/messa
 const MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 1000;
 
+const TASK_TYPE_REGEX = /^task_type: ([a-zA-Z0-9_-]+)$/m;
+
+export interface ThreadContextResult {
+  threadContext: string | null;
+  inheritedTaskType: string | null;
+}
+
 interface LarkMessage {
   message_id: string;
   sender: { sender_type: string };
@@ -23,10 +30,10 @@ export class ThreadContextFetcher {
     private readonly appSecret: string,
   ) {}
 
-  async fetchThreadContext(messageId: string): Promise<string | null> {
+  async fetchThreadContext(messageId: string, validTaskTypes?: Set<string>): Promise<ThreadContextResult | null> {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
-        return await this.doFetch(messageId);
+        return await this.doFetch(messageId, validTaskTypes);
       } catch (err) {
         logger.warn({ messageId, attempt, err }, 'Thread context fetch attempt failed');
         if (attempt < MAX_RETRIES) {
@@ -38,7 +45,7 @@ export class ThreadContextFetcher {
     return null;
   }
 
-  private async doFetch(messageId: string): Promise<string | null> {
+  private async doFetch(messageId: string, validTaskTypes?: Set<string>): Promise<ThreadContextResult | null> {
     // Step 1: Get token and check if message is in a thread
     const token = await this.getToken();
     const threadId = await this.getThreadId(messageId, token);
@@ -51,20 +58,37 @@ export class ThreadContextFetcher {
     const token2 = await this.getToken();
     const messages = await this.fetchAllThreadMessages(threadId, token2);
 
-    // Step 3: Format, excluding the current message
+    // Step 3: Extract task_type from first valid bot message
+    let inheritedTaskType: string | null = null;
+    if (validTaskTypes && validTaskTypes.size > 0) {
+      for (const m of messages) {
+        if (m.sender.sender_type === 'user') continue;
+        const content = extractLarkMessageContent(m.msg_type, m.body.content);
+        const match = content.match(TASK_TYPE_REGEX);
+        if (match && validTaskTypes.has(match[1])) {
+          inheritedTaskType = match[1];
+          break;
+        }
+      }
+    }
+
+    // Step 4: Format, excluding the current message, stripping task_type lines
     const filtered = messages.filter((m) => m.message_id !== messageId);
 
     if (filtered.length === 0) {
-      return null;
+      return { threadContext: null, inheritedTaskType };
     }
 
-    return filtered
+    const threadContext = filtered
       .map((m) => {
         const role = m.sender.sender_type === 'user' ? 'user' : 'assistant';
-        const content = extractLarkMessageContent(m.msg_type, m.body.content);
+        let content = extractLarkMessageContent(m.msg_type, m.body.content);
+        content = content.replace(/^task_type: [a-zA-Z0-9_-]+\n?/m, '');
         return `${role}: ${content}`;
       })
       .join('\n');
+
+    return { threadContext: threadContext || null, inheritedTaskType };
   }
 
   private async getToken(): Promise<string> {
