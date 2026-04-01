@@ -8,6 +8,7 @@ import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:orchestrator');
+const NEW_INSTANCE_MAX_RETRIES = 3;
 const EMPTY_EXECUTION_ENVIRONMENT: ExecutionEnvironment = {
   workDir: '',
   pluginDirs: [],
@@ -64,6 +65,32 @@ export class TaskOrchestrator {
       }
     }
 
+    const isNewInstance = job.task_type === 'new_instance' || job.skipContinue;
+    const maxAttempts = isNewInstance ? NEW_INSTANCE_MAX_RETRIES : 1;
+
+    let lastResult: TaskResultSubmission | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (attempt > 1) {
+        logger.warn({ job_id: job.job_id, attempt }, 'Retrying new_instance execution');
+      }
+
+      lastResult = await this.runExecutors(job, env);
+
+      if (lastResult.status === 'success') {
+        return lastResult;
+      }
+
+      if (attempt < maxAttempts) {
+        logger.warn({ job_id: job.job_id, attempt }, 'new_instance attempt failed, will retry');
+      }
+    }
+
+    logger.error({ job_id: job.job_id }, 'All executor preferences exhausted');
+    return lastResult!;
+  }
+
+  private async runExecutors(job: Job, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
     let lastResult: TaskResultSubmission | null = null;
 
     for (let i = 0; i < job.executors.length; i++) {
@@ -85,6 +112,7 @@ export class TaskOrchestrator {
           enriched_at: job.enriched_at,
           system_prompt: job.system_prompt,
           marketplaces: job.marketplaces,
+          skipContinue: job.skipContinue,
         };
 
         lastResult = await executor.execute(attempt, env);
@@ -120,7 +148,6 @@ export class TaskOrchestrator {
       }
     }
 
-    logger.error({ job_id: job.job_id }, 'All executor preferences exhausted');
     return lastResult!;
   }
 

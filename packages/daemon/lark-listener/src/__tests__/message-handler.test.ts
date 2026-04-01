@@ -296,6 +296,46 @@ describe('MessageHandler', () => {
       expect(replier.reply).not.toHaveBeenCalled();
     });
 
+    it('submits bare /new as new_instance with empty payload', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/new' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'new_instance',
+        '',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    });
+
+    it('replies with usage hint for /new with args and does not submit', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/new something' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(reactor.react).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith(
+        'om_msg1',
+        'Usage: /task <type> <payload> or /end (in a thread)',
+      );
+    });
+
+    it('does not treat /newfoo as a /new command', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/newfoo' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'generic',
+        '/newfoo',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+    });
+
     it('submits plain messages as task_type generic (no /task prefix)', async () => {
       await handler.handle(makeEvent({
         content: JSON.stringify({ text: 'just a regular message' }),

@@ -71,6 +71,14 @@ export class MessageHandler {
       return { taskType: 'gc', taskPayload: '', isCommand: true };
     }
 
+    if (payload === '/new') {
+      return { taskType: 'new_instance', taskPayload: '', isCommand: true };
+    }
+
+    if (payload.startsWith('/new ') || payload.startsWith('/new\n')) {
+      return { taskType: null, taskPayload: '', isCommand: true };
+    }
+
     if (payload === '/end') {
       return { taskType: 'cleanup', taskPayload: '', isCommand: true };
     }

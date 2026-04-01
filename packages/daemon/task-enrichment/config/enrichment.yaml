@@ -4,3 +4,8 @@ rules:
     executors:
       - executor: claude_code
         executor_model: sonnet
+
+  new_instance:
+    executors:
+      - executor: claude_code
+        executor_model: sonnet

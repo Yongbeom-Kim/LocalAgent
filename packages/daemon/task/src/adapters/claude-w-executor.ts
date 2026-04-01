@@ -22,7 +22,7 @@ export class ClaudeWExecutor implements TaskExecutor {
       };
     }
 
-    if (env.isExistingWorkspace) {
+    if (env.isExistingWorkspace && !job.skipContinue) {
       const continueResult = await this.spawnClaudeW(job, env, {
         mode: 'continue',
         input: job.payload,
