@@ -122,6 +122,7 @@ describe('EnrichmentPoller', () => {
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
+        task_type: 'code_review',
         status: 'failure',
         exit_code: null,
         stdout: 'Unknown task type "code_review"',
@@ -165,6 +166,7 @@ describe('EnrichmentPoller', () => {
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
+        task_type: 'code_review',
         status: 'failure',
         exit_code: null,
         stdout: 'Unknown task type "bad". Available types: generic, code_review',

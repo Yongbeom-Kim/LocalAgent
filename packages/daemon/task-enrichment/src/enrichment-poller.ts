@@ -81,6 +81,7 @@ export class EnrichmentPoller {
       const body = {
         job_id: task.task_id,
         task_id: task.task_id,
+        task_type: task.task_type,
         status: 'failure' as const,
         exit_code: null,
         stdout: reason,

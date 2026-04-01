@@ -11,6 +11,7 @@ const MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 1000;
 
 const TASK_TYPE_REGEX = /^task_type: ([a-zA-Z0-9_-]+)$/m;
+const TASK_TYPE_LINE_REGEX = /^task_type: [a-zA-Z0-9_-]+\n?/m;
 
 export interface ThreadContextResult {
   threadContext: string | null;
@@ -83,7 +84,7 @@ export class ThreadContextFetcher {
       .map((m) => {
         const role = m.sender.sender_type === 'user' ? 'user' : 'assistant';
         let content = extractLarkMessageContent(m.msg_type, m.body.content);
-        content = content.replace(/^task_type: [a-zA-Z0-9_-]+\n?/m, '');
+        content = content.replace(TASK_TYPE_LINE_REGEX, '');
         return `${role}: ${content}`;
       })
       .join('\n');

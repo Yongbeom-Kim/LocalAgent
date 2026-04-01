@@ -20,6 +20,7 @@ vi.mock('../../services/job-environment', () => ({
 const mockResultSubmission: TaskResultSubmission = {
   job_id: 'job-456',
   task_id: 'test-123',
+  task_type: 'generic',
   status: 'success',
   exit_code: 0,
   stdout: 'output',
@@ -167,6 +168,7 @@ describe('TaskOrchestrator', () => {
     const failResult: TaskResultSubmission = {
       job_id: 'job-456',
       task_id: 'test-123',
+      task_type: 'generic',
       status: 'failure',
       exit_code: 1,
       stdout: '',
@@ -175,6 +177,7 @@ describe('TaskOrchestrator', () => {
     const successResult: TaskResultSubmission = {
       job_id: 'job-456',
       task_id: 'test-123',
+      task_type: 'generic',
       status: 'success',
       exit_code: 0,
       stdout: 'fallback output',
@@ -204,6 +207,7 @@ describe('TaskOrchestrator', () => {
     const failResult1: TaskResultSubmission = {
       job_id: 'job-456',
       task_id: 'test-123',
+      task_type: 'generic',
       status: 'failure',
       exit_code: 1,
       stdout: '',
@@ -212,6 +216,7 @@ describe('TaskOrchestrator', () => {
     const failResult2: TaskResultSubmission = {
       job_id: 'job-456',
       task_id: 'test-123',
+      task_type: 'generic',
       status: 'failure',
       exit_code: 1,
       stdout: '',
@@ -253,6 +258,7 @@ describe('TaskOrchestrator', () => {
     const failResult: TaskResultSubmission = {
       job_id: 'job-456',
       task_id: 'test-123',
+      task_type: 'generic',
       status: 'failure',
       exit_code: 1,
       stdout: '',
