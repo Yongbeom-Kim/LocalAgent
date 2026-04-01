@@ -8,7 +8,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_id, task_type, payload, executors, submitted_at, session_id, system_prompt, marketplaces, task_source, setup_hook, setup_hook_timeout_ms } = req.body;
+      const { task_id, task_type, payload, history, executors, submitted_at, session_id, system_prompt, marketplaces, task_source, setup_hook, setup_hook_timeout_ms } = req.body;
 
       if (typeof task_id !== 'string' || !task_id) {
         res.status(400).json({ error: 'task_id is required and must be a string' });
@@ -46,6 +46,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         task_id,
         task_type,
         payload,
+        ...(history ? { history } : {}),
         executors,
         submitted_at,
         session_id,

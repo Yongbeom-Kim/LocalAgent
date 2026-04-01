@@ -23,6 +23,7 @@ function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
     executor_model: 'opus',
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
+    session_id: 'session-1',
     ...overrides,
   };
 }
@@ -31,6 +32,7 @@ function createEnv(overrides?: Partial<ExecutionEnvironment>): ExecutionEnvironm
   return {
     workDir: '/tmp/localagent-job-test',
     pluginDirs: [],
+    isExistingWorkspace: false,
     ...overrides,
   };
 }
@@ -207,7 +209,7 @@ describe('ClaudeCliExecutor', () => {
     const child = createMockChild();
     mockSpawn.mockReturnValue(child as any);
 
-    const job = createJobAttempt(); // no system_prompt
+    const job = createJobAttempt();
 
     const resultPromise = executor.execute(job, createEnv());
     emitOutput(child, '', '', 0);
@@ -246,5 +248,118 @@ describe('ClaudeCliExecutor', () => {
 
     expect(result.status).toBe('success');
     expect(child.stdinData).toBe(payload);
+  });
+
+  it('uses fresh session with history and payload for new workspaces', async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
+
+    const job = createJobAttempt({
+      history: 'user: previous context',
+      payload: 'current payload',
+    });
+
+    const resultPromise = executor.execute(job, createEnv({ isExistingWorkspace: false }));
+    emitOutput(child, 'Done', '', 0);
+    await resultPromise;
+
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'claude',
+      ['--dangerously-skip-permissions', '--model', 'opus', '-p', '-'],
+      { cwd: '/tmp/localagent-job-test' },
+    );
+    expect(child.stdinData).toBe('--- Thread Context ---\nuser: previous context\n--- Current Message ---\ncurrent payload');
+  });
+
+  it('tries --continue first for existing workspaces and returns on success', async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
+
+    const resultPromise = executor.execute(createJobAttempt(), createEnv({ isExistingWorkspace: true }));
+    emitOutput(child, 'continued', '', 0);
+
+    const result = await resultPromise;
+
+    expect(result.status).toBe('success');
+    expect(result.stdout).toBe('continued');
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn).toHaveBeenCalledWith(
+      'claude',
+      ['--dangerously-skip-permissions', '--model', 'opus', '--continue', '-p', '-'],
+      { cwd: '/tmp/localagent-job-test' },
+    );
+    expect(child.stdinData).toBe('What is 2+2?');
+  });
+
+  it('falls back to fresh session with history and payload when continue fails', async () => {
+    const continueChild = createMockChild();
+    const freshChild = createMockChild();
+    mockSpawn.mockReturnValueOnce(continueChild as any).mockReturnValueOnce(freshChild as any);
+
+    const job = createJobAttempt({
+      history: 'assistant: previous answer',
+      payload: 'new question',
+    });
+
+    const resultPromise = executor.execute(job, createEnv({ isExistingWorkspace: true }));
+    emitOutput(continueChild, 'partial', 'continue failed', 1);
+    await new Promise(resolve => process.nextTick(resolve));
+    emitOutput(freshChild, 'fresh result', '', 0);
+
+    const result = await resultPromise;
+
+    expect(result.status).toBe('success');
+    expect(result.stdout).toBe('fresh result');
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+    expect(mockSpawn.mock.calls[0][1]).toEqual([
+      '--dangerously-skip-permissions',
+      '--model', 'opus',
+      '--continue',
+      '-p', '-',
+    ]);
+    expect(mockSpawn.mock.calls[1][1]).toEqual([
+      '--dangerously-skip-permissions',
+      '--model', 'opus',
+      '-p', '-',
+    ]);
+    expect(continueChild.stdinData).toBe('new question');
+    expect(freshChild.stdinData).toBe('--- Thread Context ---\nassistant: previous answer\n--- Current Message ---\nnew question');
+  });
+
+  it('falls back to fresh session with payload only when continue fails without history', async () => {
+    const continueChild = createMockChild();
+    const freshChild = createMockChild();
+    mockSpawn.mockReturnValueOnce(continueChild as any).mockReturnValueOnce(freshChild as any);
+
+    const job = createJobAttempt({ payload: 'payload only' });
+
+    const resultPromise = executor.execute(job, createEnv({ isExistingWorkspace: true }));
+    emitOutput(continueChild, '', 'continue failed', 1);
+    await new Promise(resolve => process.nextTick(resolve));
+    emitOutput(freshChild, 'fresh result', '', 0);
+
+    const result = await resultPromise;
+
+    expect(result.status).toBe('success');
+    expect(mockSpawn).toHaveBeenCalledTimes(2);
+    expect(continueChild.stdinData).toBe('payload only');
+    expect(freshChild.stdinData).toBe('payload only');
+  });
+
+  it('uses fresh session without --continue for new workspaces without history', async () => {
+    const child = createMockChild();
+    mockSpawn.mockReturnValue(child as any);
+
+    const resultPromise = executor.execute(createJobAttempt({ payload: 'fresh payload' }), createEnv({ isExistingWorkspace: false }));
+    emitOutput(child, 'fresh result', '', 0);
+    await resultPromise;
+
+    expect(mockSpawn).toHaveBeenCalledTimes(1);
+    expect(mockSpawn.mock.calls[0][1]).toEqual([
+      '--dangerously-skip-permissions',
+      '--model', 'opus',
+      '-p', '-',
+    ]);
+    expect(child.stdinData).toBe('fresh payload');
   });
 });

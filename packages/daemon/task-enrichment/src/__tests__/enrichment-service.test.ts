@@ -210,6 +210,41 @@ describe('EnrichmentService', () => {
     });
   });
 
+  describe('history passthrough', () => {
+    let service: EnrichmentService;
+
+    beforeEach(() => {
+      service = EnrichmentService.fromObject({
+        rules: {
+          default: {
+            executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          },
+        },
+      });
+    });
+
+    it('includes history in enriched job when provided', () => {
+      const result = service.enrich(createTask({ task_type: 'default' }), TEST_SESSION_ID, 'Earlier thread context');
+
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.history).toBe('Earlier thread context');
+    });
+
+    it('omits history when not provided', () => {
+      const result = service.enrich(createTask({ task_type: 'default' }), TEST_SESSION_ID);
+
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.history).toBeUndefined();
+    });
+
+    it('omits history when undefined is passed explicitly', () => {
+      const result = service.enrich(createTask({ task_type: 'default' }), TEST_SESSION_ID, undefined);
+
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.history).toBeUndefined();
+    });
+  });
+
   describe('task_source passthrough', () => {
     let service: EnrichmentService;
 

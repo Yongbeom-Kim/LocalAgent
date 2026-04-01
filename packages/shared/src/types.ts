@@ -72,6 +72,7 @@ export interface JobSubmission {
   task_id: string;
   task_type: string;
   payload: string;
+  history?: string;
   executors: ExecutorPreference[];
   submitted_at: string;
   session_id: string;
@@ -87,6 +88,7 @@ export interface Job {
   task_id: string;
   task_type: string;
   payload: string;
+  history?: string;
   executors: ExecutorPreference[];
   submitted_at: string;
   enriched_at: string;
@@ -103,6 +105,7 @@ export interface JobAttempt {
   task_id: string;
   task_type: string;
   payload: string;
+  history?: string;
   executor: TaskExecutorType;
   executor_model: string;
   submitted_at: string;

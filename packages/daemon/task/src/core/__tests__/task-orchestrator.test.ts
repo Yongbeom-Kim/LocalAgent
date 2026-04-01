@@ -5,6 +5,7 @@ import { ExecutionEnvironment } from '../../services/job-environment';
 const mockEnv: ExecutionEnvironment = {
   workDir: '/tmp/localagent-job-test',
   pluginDirs: [],
+  isExistingWorkspace: false,
 };
 
 const mockSetup = vi.fn().mockResolvedValue(mockEnv);
@@ -295,6 +296,18 @@ describe('TaskOrchestrator', () => {
     );
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockTeardown).not.toHaveBeenCalled();
+  });
+
+  it('passes history through to JobAttempt when provided', async () => {
+    const history = 'Prior task context';
+    const job = createJob({ history });
+
+    await orchestrator.handle(job);
+
+    expect(mockClaudeExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ history }),
+      mockEnv,
+    );
   });
 
   it('returns failure for empty executors array', async () => {

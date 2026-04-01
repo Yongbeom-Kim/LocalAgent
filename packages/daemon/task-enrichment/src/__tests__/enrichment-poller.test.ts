@@ -90,7 +90,7 @@ describe('EnrichmentPoller', () => {
     await poller.pollOnce();
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next');
-    expect(mockEnrich).toHaveBeenCalledWith(task, 'generated-session-id');
+    expect(mockEnrich).toHaveBeenCalledWith(task, 'generated-session-id', undefined);
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -239,12 +239,13 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     poller.stop();
   });
 
-  it('prepends thread context to payload when task has lark source and thread exists', async () => {
+  it('passes thread history separately when task has lark source and thread exists', async () => {
     const task = createTask({
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'now fix the tests',
     });
-    const jobSubmission = createJobSubmission({ payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests' });
+    const originalPayload = task.payload;
+    const jobSubmission = createJobSubmission({ payload: originalPayload });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({ threadContext: 'user: fix CI', inheritedTaskType: null, inheritedSessionId: null });
 
@@ -256,11 +257,13 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockThreadFetcher.fetchThreadContext).toHaveBeenCalledWith('om_msg1', expect.any(Set));
+    expect(task.payload).toBe(originalPayload);
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({
-        payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests',
+        payload: originalPayload,
       }),
       'generated-session-id',
+      'user: fix CI',
     );
   });
 
@@ -278,7 +281,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
     expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
-    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id');
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
   it('generates new session_id when thread has no inherited session_id', async () => {
@@ -302,7 +305,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
-    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id');
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
   it('inherits session_id from thread when available', async () => {
@@ -326,7 +329,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockGenerateSessionId).not.toHaveBeenCalled();
-    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'inherited-session-id');
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'inherited-session-id', undefined);
   });
 
   it('generates new session_id when thread fetch returns null', async () => {
@@ -346,18 +349,43 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
-    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id');
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
-  it('inherits generic task_type from thread and keeps thread context prepending', async () => {
+  it('passes undefined history when thread has no context', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'hello',
+    });
+    const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: null,
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(task.payload).toBe('hello');
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
+  });
+
+  it('inherits generic task_type from thread and passes thread history separately', async () => {
     const task = createTask({
       task_type: 'generic',
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'follow up',
     });
+    const originalPayload = task.payload;
     const jobSubmission = createJobSubmission({
       task_type: 'deploy',
-      payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+      payload: originalPayload,
     });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
@@ -373,24 +401,27 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
+    expect(task.payload).toBe(originalPayload);
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({
         task_type: 'deploy',
-        payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+        payload: originalPayload,
       }),
       'generated-session-id',
+      'user: deploy the app\nassistant: Job abc — success',
     );
   });
 
-  it('accepts matching explicit task_type in thread', async () => {
+  it('accepts matching explicit task_type in thread and passes thread history separately', async () => {
     const task = createTask({
       task_type: 'deploy',
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'follow up',
     });
+    const originalPayload = task.payload;
     const jobSubmission = createJobSubmission({
       task_type: 'deploy',
-      payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+      payload: originalPayload,
     });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
@@ -406,12 +437,14 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
+    expect(task.payload).toBe(originalPayload);
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({
         task_type: 'deploy',
-        payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+        payload: originalPayload,
       }),
       'generated-session-id',
+      'user: deploy the app\nassistant: Job abc — success',
     );
   });
 
@@ -477,8 +510,9 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockEnrich).toHaveBeenCalledWith(
-      expect.objectContaining({ task_type: 'generic' }),
+      expect.objectContaining({ task_type: 'generic', payload: 'hello' }),
       'generated-session-id',
+      'user: hello\nassistant: Job abc — success',
     );
   });
 });

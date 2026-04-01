@@ -66,7 +66,7 @@ export class EnrichmentService {
     return new EnrichmentService(mergedRules);
   }
 
-  enrich(task: Task, sessionId: string): EnrichmentResult {
+  enrich(task: Task, sessionId: string, history?: string): EnrichmentResult {
     const rule = this.rules[task.task_type];
 
     if (!rule) {
@@ -116,6 +116,7 @@ export class EnrichmentService {
         task_type: task.task_type,
         session_id: sessionId,
         payload: task.payload,
+        ...(history ? { history } : {}),
         executors,
         submitted_at: task.submitted_at,
         system_prompt: systemPrompt,

@@ -22,12 +22,48 @@ export class TTADKExecutor implements TaskExecutor {
       };
     }
 
+    if (env.isExistingWorkspace) {
+      const continueResult = await this.execTTADK(job, env, {
+        mode: 'continue',
+        input: job.payload,
+      });
+
+      if (continueResult.status === 'success') {
+        return continueResult;
+      }
+
+      logger.warn(
+        { job_id: job.job_id, task_id: job.task_id, exit_code: continueResult.exit_code, stderr: continueResult.stderr },
+        'TTADK continue failed, falling back to fresh session',
+      );
+    }
+
+    return this.execTTADK(job, env, {
+      mode: 'fresh',
+      input: this.buildFreshInput(job),
+    });
+  }
+
+  private buildFreshInput(job: JobAttempt): string {
+    if (!job.history) {
+      return job.payload;
+    }
+
+    return `--- Thread Context ---\n${job.history}\n--- Current Message ---\n${job.payload}`;
+  }
+
+  private execTTADK(
+    job: JobAttempt,
+    env: ExecutionEnvironment,
+    options: { mode: 'continue' | 'fresh'; input: string },
+  ): Promise<TaskResultSubmission> {
     const claudeArgs = [
       '--bare',
       '--dangerously-skip-permissions',
       ...env.pluginDirs.flatMap(dir => ['--plugin-dir', dir]),
       ...(job.system_prompt ? ['--append-system-prompt', job.system_prompt] : []),
-      '-p', job.payload,
+      ...(options.mode === 'continue' ? ['--continue'] : []),
+      '-p', options.input,
     ].join(' ');
 
     const args = ['code', '-t', 'claude', '-m', job.executor_model, '-a', claudeArgs];
@@ -41,7 +77,7 @@ export class TTADKExecutor implements TaskExecutor {
           if (error) {
             const execErr = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
             logger.error(
-              { job_id: job.job_id, task_id: job.task_id, exit_code: execErr.code, stdout: execErr.stdout, stderr: execErr.stderr },
+              { job_id: job.job_id, task_id: job.task_id, mode: options.mode, exit_code: execErr.code, stdout: execErr.stdout, stderr: execErr.stderr },
               'TTADK failed',
             );
 
@@ -55,7 +91,7 @@ export class TTADKExecutor implements TaskExecutor {
               stderr: truncate(execErr.stderr ?? '', MAX_RESULT_OUTPUT_BYTES),
             });
           } else {
-            logger.info({ job_id: job.job_id, task_id: job.task_id, stdout, stderr }, 'TTADK completed');
+            logger.info({ job_id: job.job_id, task_id: job.task_id, mode: options.mode, stdout, stderr }, 'TTADK completed');
 
             resolve({
               job_id: job.job_id,

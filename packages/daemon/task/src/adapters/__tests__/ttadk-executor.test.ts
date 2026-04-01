@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChildProcess } from 'node:child_process';
-import { JobAttempt, TaskResultSubmission } from '@local-agent/shared';
+import { JobAttempt } from '@local-agent/shared';
 import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
@@ -18,6 +18,7 @@ function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
     task_id: 'test-456',
     task_type: 'generic',
     payload: 'What is 2+2?',
+    session_id: 'session-1',
     executor: 'ttadk',
     executor_model: 'gpt-5.4',
     submitted_at: '2026-03-26T00:00:00.000Z',
@@ -30,6 +31,7 @@ function createEnv(overrides?: Partial<ExecutionEnvironment>): ExecutionEnvironm
   return {
     workDir: '/tmp/localagent-job-test',
     pluginDirs: [],
+    isExistingWorkspace: false,
     ...overrides,
   };
 }
@@ -192,12 +194,139 @@ describe('TTADKExecutor', () => {
       return {} as ChildProcess;
     });
 
-    const job = createJobAttempt(); // no system_prompt
+    const job = createJobAttempt();
 
     await executor.execute(job, createEnv());
 
     const callArgs = mockExecFile.mock.calls[0][1] as string[];
-    const claudeArgs = callArgs[callArgs.length - 1]; // -a argument is last
+    const claudeArgs = callArgs[callArgs.length - 1];
     expect(claudeArgs).not.toContain('--append-system-prompt');
+  });
+
+  it('uses fresh session with history and payload for new workspaces', async () => {
+    mockExecFile.mockImplementation((_cmd, _args, _opts, callback) => {
+      (callback as ExecFileCallback)(null, 'Done', '');
+      return {} as ChildProcess;
+    });
+
+    await executor.execute(
+      createJobAttempt({
+        history: 'user: previous context',
+        payload: 'current payload',
+      }),
+      createEnv({ isExistingWorkspace: false }),
+    );
+
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'ttadk',
+      [
+        'code', '-t', 'claude', '-m', 'gpt-5.4',
+        '-a', '--bare --dangerously-skip-permissions -p --- Thread Context ---\nuser: previous context\n--- Current Message ---\ncurrent payload',
+      ],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
+      expect.any(Function),
+    );
+  });
+
+  it('tries --continue first for existing workspaces and returns on success', async () => {
+    mockExecFile
+      .mockImplementationOnce((_cmd, _args, _opts, callback) => {
+        (callback as ExecFileCallback)(null, 'continued', '');
+        return {} as ChildProcess;
+      });
+
+    const result = await executor.execute(createJobAttempt(), createEnv({ isExistingWorkspace: true }));
+
+    expect(result.status).toBe('success');
+    expect(result.stdout).toBe('continued');
+    expect(mockExecFile).toHaveBeenCalledTimes(1);
+    expect(mockExecFile).toHaveBeenCalledWith(
+      'ttadk',
+      ['code', '-t', 'claude', '-m', 'gpt-5.4', '-a', '--bare --dangerously-skip-permissions --continue -p What is 2+2?'],
+      { maxBuffer: 50 * 1024 * 1024, cwd: '/tmp/localagent-job-test' },
+      expect.any(Function),
+    );
+  });
+
+  it('falls back to fresh session with history and payload when continue fails', async () => {
+    const continueError = Object.assign(new Error('continue failed'), {
+      code: 1,
+      stdout: 'partial',
+      stderr: 'continue failed',
+    });
+
+    mockExecFile
+      .mockImplementationOnce((_cmd, _args, _opts, callback) => {
+        (callback as ExecFileCallback)(continueError, '', '');
+        return {} as ChildProcess;
+      })
+      .mockImplementationOnce((_cmd, _args, _opts, callback) => {
+        (callback as ExecFileCallback)(null, 'fresh result', '');
+        return {} as ChildProcess;
+      });
+
+    const result = await executor.execute(
+      createJobAttempt({
+        history: 'assistant: previous answer',
+        payload: 'new question',
+      }),
+      createEnv({ isExistingWorkspace: true }),
+    );
+
+    expect(result.status).toBe('success');
+    expect(result.stdout).toBe('fresh result');
+    expect(mockExecFile).toHaveBeenCalledTimes(2);
+    expect(mockExecFile.mock.calls[0][1]).toEqual([
+      'code',
+      '-t', 'claude',
+      '-m', 'gpt-5.4',
+      '-a', '--bare --dangerously-skip-permissions --continue -p new question',
+    ]);
+    expect(mockExecFile.mock.calls[1][1]).toEqual([
+      'code',
+      '-t', 'claude',
+      '-m', 'gpt-5.4',
+      '-a', '--bare --dangerously-skip-permissions -p --- Thread Context ---\nassistant: previous answer\n--- Current Message ---\nnew question',
+    ]);
+  });
+
+  it('falls back to fresh session with payload only when continue fails without history', async () => {
+    const continueError = Object.assign(new Error('continue failed'), {
+      code: 1,
+      stdout: '',
+      stderr: 'continue failed',
+    });
+
+    mockExecFile
+      .mockImplementationOnce((_cmd, _args, _opts, callback) => {
+        (callback as ExecFileCallback)(continueError, '', '');
+        return {} as ChildProcess;
+      })
+      .mockImplementationOnce((_cmd, _args, _opts, callback) => {
+        (callback as ExecFileCallback)(null, 'fresh result', '');
+        return {} as ChildProcess;
+      });
+
+    const result = await executor.execute(
+      createJobAttempt({ payload: 'payload only', history: undefined }),
+      createEnv({ isExistingWorkspace: true }),
+    );
+
+    expect(result.status).toBe('success');
+    expect(result.stdout).toBe('fresh result');
+    expect(mockExecFile).toHaveBeenCalledTimes(2);
+    expect(mockExecFile.mock.calls[0][1]).toEqual([
+      'code',
+      '-t', 'claude',
+      '-m', 'gpt-5.4',
+      '-a', '--bare --dangerously-skip-permissions --continue -p payload only',
+    ]);
+    expect(mockExecFile.mock.calls[1][1]).toEqual([
+      'code',
+      '-t', 'claude',
+      '-m', 'gpt-5.4',
+      '-a', '--bare --dangerously-skip-permissions -p payload only',
+    ]);
   });
 });

@@ -58,6 +58,7 @@ export class TaskOrchestrator {
           session_id: job.session_id,
           task_type: job.task_type,
           payload: job.payload,
+          history: job.history,
           executor: pref.executor,
           executor_model: pref.executor_model,
           submitted_at: job.submitted_at,

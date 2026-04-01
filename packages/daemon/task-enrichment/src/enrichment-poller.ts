@@ -56,10 +56,6 @@ export class EnrichmentPoller {
               return;
             }
           }
-          if (threadResult.threadContext) {
-            task.payload = `--- Thread Context ---\n${threadResult.threadContext}\n--- Current Message ---\n${task.payload}`;
-            logger.info({ task_id: task.task_id }, 'Prepended thread context to payload');
-          }
         }
       }
 
@@ -70,7 +66,8 @@ export class EnrichmentPoller {
         logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated new session_id for enrichment');
       }
 
-      const enrichmentResult = this.enrichmentService.enrich(task, sessionId);
+      const threadHistory = threadResult?.threadContext ?? undefined;
+      const enrichmentResult = this.enrichmentService.enrich(task, sessionId, threadHistory);
 
       if (enrichmentResult.type === 'rejected') {
         logger.warn({ task_id: task.task_id, task_type: task.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected task');

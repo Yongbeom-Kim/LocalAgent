@@ -86,6 +86,7 @@ describe('JobEnvironment', () => {
       createdDirs.push(env.workDir);
 
       expect(env.workDir).toBe('/var/tmp/local-agent/session/session-test-001');
+      expect(env.isExistingWorkspace).toBe(false);
       expect(existsSync(env.workDir)).toBe(true);
     });
 
@@ -145,6 +146,13 @@ describe('JobEnvironment', () => {
       ]);
     });
 
+    it('returns isExistingWorkspace false for a fresh workspace setup', async () => {
+      const env = await jobEnv.setup(createJob({ session_id: 'session-fresh-flag-001' }));
+      createdDirs.push(env.workDir);
+
+      expect(env.isExistingWorkspace).toBe(false);
+    });
+
     it('reuses an existing session workspace and skips clone and hook execution', async () => {
       const job = createJob({
         setup_hook: 'npm ci',
@@ -165,6 +173,7 @@ describe('JobEnvironment', () => {
       expect(env).toEqual({
         workDir,
         pluginDirs: [pluginDir],
+        isExistingWorkspace: true,
       });
       expect(mockExecFileSync).not.toHaveBeenCalled();
       expect(mockRunner.run).not.toHaveBeenCalled();

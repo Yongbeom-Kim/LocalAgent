@@ -51,6 +51,31 @@ describe('POST /jobs', () => {
     expect(res.status).toBe(400);
   });
 
+  it('returns 201 with history when provided', async () => {
+    const app = buildApp();
+    const history = 'Previous conversation context';
+    const res = await request(app)
+      .post('/jobs')
+      .send({ ...validJobSubmission(), history });
+    expect(res.status).toBe(201);
+    expect(res.body.history).toBe(history);
+    expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
+      expect.objectContaining({ history }),
+    );
+  });
+
+  it('returns 201 without history when not provided', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send(validJobSubmission());
+    expect(res.status).toBe(201);
+    expect(res.body.history).toBeUndefined();
+    expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
+      expect.not.objectContaining({ history: expect.anything() }),
+    );
+  });
+
   it('returns 201 with task_source when provided', async () => {
     const app = buildApp();
     const taskSource = { source: 'lark', message_id: 'om_abc123' };

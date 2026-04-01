@@ -22,11 +22,47 @@ export class ClaudeCliExecutor implements TaskExecutor {
       };
     }
 
+    if (env.isExistingWorkspace) {
+      const continueResult = await this.spawnClaude(job, env, {
+        mode: 'continue',
+        input: job.payload,
+      });
+
+      if (continueResult.status === 'success') {
+        return continueResult;
+      }
+
+      logger.warn(
+        { job_id: job.job_id, task_id: job.task_id, exit_code: continueResult.exit_code, stderr: continueResult.stderr },
+        'Claude Code continue failed, falling back to fresh session',
+      );
+    }
+
+    return this.spawnClaude(job, env, {
+      mode: 'fresh',
+      input: this.buildFreshInput(job),
+    });
+  }
+
+  private buildFreshInput(job: JobAttempt): string {
+    if (!job.history) {
+      return job.payload;
+    }
+
+    return `--- Thread Context ---\n${job.history}\n--- Current Message ---\n${job.payload}`;
+  }
+
+  private spawnClaude(
+    job: JobAttempt,
+    env: ExecutionEnvironment,
+    options: { mode: 'continue' | 'fresh'; input: string },
+  ): Promise<TaskResultSubmission> {
     const args = [
       '--dangerously-skip-permissions',
       '--model', job.executor_model,
       ...env.pluginDirs.flatMap(dir => ['--plugin-dir', dir]),
       ...(job.system_prompt ? ['--append-system-prompt', job.system_prompt] : []),
+      ...(options.mode === 'continue' ? ['--continue'] : []),
       '-p', '-',
     ];
 
@@ -39,7 +75,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
       child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
       child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
 
-      child.stdin.write(job.payload);
+      child.stdin.write(options.input);
       child.stdin.end();
 
       child.on('close', (code) => {
@@ -48,7 +84,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
 
         if (code !== 0) {
           logger.error(
-            { job_id: job.job_id, task_id: job.task_id, exit_code: code, stdout, stderr },
+            { job_id: job.job_id, task_id: job.task_id, mode: options.mode, exit_code: code },
             'Claude Code failed',
           );
 
@@ -62,7 +98,10 @@ export class ClaudeCliExecutor implements TaskExecutor {
             stderr: truncate(stderr, MAX_RESULT_OUTPUT_BYTES),
           });
         } else {
-          logger.info({ job_id: job.job_id, task_id: job.task_id, stdout, stderr }, 'Claude Code completed');
+          logger.info(
+            { job_id: job.job_id, task_id: job.task_id, mode: options.mode },
+            'Claude Code completed',
+          );
 
           resolve({
             job_id: job.job_id,
@@ -78,7 +117,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
 
       child.on('error', (err) => {
         logger.error(
-          { job_id: job.job_id, task_id: job.task_id, error: err.message },
+          { job_id: job.job_id, task_id: job.task_id, mode: options.mode, error: err.message },
           'Failed to spawn Claude Code',
         );
 

@@ -9,6 +9,7 @@ const logger = createLogger('task-daemon:job-environment');
 export interface ExecutionEnvironment {
   workDir: string;
   pluginDirs: string[];
+  isExistingWorkspace: boolean;
 }
 
 export class JobEnvironment {
@@ -23,7 +24,7 @@ export class JobEnvironment {
     if (existsSync(workDir)) {
       const pluginDirs = this.collectPluginDirs(job, workDir);
       logger.info({ job_id: job.job_id, session_id: job.session_id, workDir, pluginDirs }, 'Reusing session workspace');
-      return { workDir, pluginDirs };
+      return { workDir, pluginDirs, isExistingWorkspace: true };
     }
 
     mkdirSync(workDir, { recursive: true });
@@ -64,7 +65,7 @@ export class JobEnvironment {
       }
 
       logger.info({ job_id: job.job_id, session_id: job.session_id, workDir, pluginDirs }, 'Job environment ready');
-      return { workDir, pluginDirs };
+      return { workDir, pluginDirs, isExistingWorkspace: false };
     } catch (error) {
       if (!this.debug) {
         rmSync(workDir, { recursive: true, force: true });
