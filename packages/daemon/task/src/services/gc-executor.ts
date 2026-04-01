@@ -7,10 +7,13 @@ import {
   SESSION_DIR_TTL_DAYS,
   createLogger,
 } from '@local-agent/shared';
+import { SessionLockManager } from './session-lock';
 
 const logger = createLogger('task-daemon:gc-executor');
 
 export class GcExecutor {
+  private readonly sessionLock = new SessionLockManager();
+
   execute(job: Job): TaskResultSubmission {
     if (!existsSync(SESSION_BASE_DIR)) {
       return {
@@ -36,6 +39,13 @@ export class GcExecutor {
       try {
         const stats = statSync(dirPath);
         if (!stats.isDirectory()) {
+          continue;
+        }
+
+        // Skip actively-locked sessions (safety net)
+        if (this.sessionLock.isLockedByLiveProcess(entry)) {
+          logger.info({ job_id: job.job_id, dirPath }, 'Skipping locked session directory');
+          retained += 1;
           continue;
         }
 

@@ -90,6 +90,15 @@ export class RabbitMQService {
     return true;
   }
 
+  nackJob(jobId: string): boolean {
+    if (!this.channel) return false;
+    const delivery = this.jobsDeliveryMap.get(jobId);
+    if (!delivery) return false;
+    this.channel.nack(delivery as any, false, true); // allUpTo=false, requeue=true
+    this.jobsDeliveryMap.delete(jobId);
+    return true;
+  }
+
   async getNext(): Promise<Task | null> {
     if (!this.channel) throw new Error('Not connected');
     const msg = await this.channel.get(this.queueName, { noAck: false });

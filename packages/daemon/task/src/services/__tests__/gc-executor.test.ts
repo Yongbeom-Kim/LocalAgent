@@ -125,4 +125,55 @@ describe('GcExecutor', () => {
     expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 0.');
   });
 
+  describe('lock-aware GC', () => {
+    it('skips a stale session directory that has a live PID lock file', () => {
+      const sessionDir = makeDir('locked-session');
+
+      // Write a lock file with the current (live) PID
+      const lockInfo = {
+        pid: process.pid,
+        job_id: 'job-live-001',
+        locked_at: new Date().toISOString(),
+      };
+      writeFileSync(join(sessionDir, '.lock'), JSON.stringify(lockInfo, null, 2));
+
+      // Set age after writing the lock file so directory mtime is old
+      setDirAge(sessionDir, TEST_SESSION_DIR_TTL_DAYS + 1);
+
+      const result = executor.execute(createJob());
+
+      // Locked session should be retained, not removed
+      expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 1.');
+    });
+
+    it('removes a stale session directory with a dead PID lock file', () => {
+      const sessionDir = makeDir('stale-locked-session');
+
+      // Write a lock file with a PID that does not exist
+      const lockInfo = {
+        pid: 999999,
+        job_id: 'job-dead-001',
+        locked_at: new Date().toISOString(),
+      };
+      writeFileSync(join(sessionDir, '.lock'), JSON.stringify(lockInfo, null, 2));
+
+      // Set age after writing the lock file so directory mtime is old
+      setDirAge(sessionDir, TEST_SESSION_DIR_TTL_DAYS + 1);
+
+      const result = executor.execute(createJob());
+
+      // Stale lock (dead PID) should not protect the directory
+      expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
+    });
+
+    it('removes a stale session directory with no lock file (normal age-based behavior unchanged)', () => {
+      const sessionDir = makeDir('no-lock-session');
+      setDirAge(sessionDir, TEST_SESSION_DIR_TTL_DAYS + 1);
+
+      const result = executor.execute(createJob());
+
+      expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
+    });
+  });
+
 });

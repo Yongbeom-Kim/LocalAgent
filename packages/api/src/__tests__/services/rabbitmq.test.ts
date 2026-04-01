@@ -242,6 +242,42 @@ describe('RabbitMQService', () => {
     });
   });
 
+  describe('nackJob', () => {
+    it('calls channel.nack with requeue=true and removes from delivery map', async () => {
+      await service.connect();
+      const content = JSON.stringify({
+        job_id: 'job-789',
+        task_id: 'task-123',
+        task_type: 'generic',
+        payload: 'hello',
+        executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        submitted_at: '2026-03-31T00:00:00.000Z',
+        session_id: 'session-abc',
+        enriched_at: '2026-03-31T00:00:01.000Z',
+      });
+      const msg = {
+        content: Buffer.from(content),
+        fields: { deliveryTag: 55 },
+      };
+      channel.get.mockResolvedValue(msg);
+      const job = await service.getNextJob();
+      expect(job).not.toBeNull();
+      const nacked = service.nackJob(job!.job_id);
+      expect(nacked).toBe(true);
+      expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
+      // After nack, calling again should return false (removed from map)
+      const nackedAgain = service.nackJob(job!.job_id);
+      expect(nackedAgain).toBe(false);
+    });
+
+    it('returns false for unknown job ID', async () => {
+      await service.connect();
+      const result = service.nackJob('no-such-job');
+      expect(result).toBe(false);
+      expect(channel.nack).not.toHaveBeenCalled();
+    });
+  });
+
   describe('ackFromQueue', () => {
     it('acknowledges result by result_id and queue name', async () => {
       await service.connect();

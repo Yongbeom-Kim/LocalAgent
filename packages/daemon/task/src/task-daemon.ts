@@ -1,7 +1,8 @@
-import { loadDaemonConfig, createLogger } from '@local-agent/shared';
+import { loadDaemonConfig, createLogger, DEFAULT_MAX_CONCURRENT_SESSIONS } from '@local-agent/shared';
 import { TaskPoller } from './task-poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
 import { JobEnvironment } from './services/job-environment';
+import { SessionLockManager } from './services/session-lock';
 
 async function main() {
   const config = loadDaemonConfig();
@@ -12,12 +13,17 @@ async function main() {
 
   const jobEnv = new JobEnvironment(debug);
   const orchestrator = new TaskOrchestrator(jobEnv);
-  const poller = new TaskPoller(config.apiUrl, orchestrator);
+  const sessionLock = new SessionLockManager();
+  const maxConcurrency = parseInt(process.env.MAX_CONCURRENT_SESSIONS ?? '', 10) || DEFAULT_MAX_CONCURRENT_SESSIONS;
+
+  logger.info({ maxConcurrency }, 'Concurrency limit');
+
+  const poller = new TaskPoller(config.apiUrl, orchestrator, sessionLock, maxConcurrency);
   poller.start(config.pollIntervalMs);
 
-  const shutdown = () => {
+  const shutdown = async () => {
     logger.info('Shutting down task-daemon...');
-    poller.stop();
+    await poller.drain();
     process.exit(0);
   };
 
