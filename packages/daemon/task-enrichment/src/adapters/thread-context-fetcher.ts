@@ -12,8 +12,9 @@ const INITIAL_BACKOFF_MS = 1000;
 
 const TASK_TYPE_REGEX = /^task_type: ([a-zA-Z0-9_-]+)$/m;
 const TASK_TYPE_LINE_REGEX = /^task_type: [a-zA-Z0-9_-]+\n?/m;
-const SESSION_ID_REGEX = /^session_id: ([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/m;
-const SESSION_ID_LINE_REGEX = /^session_id: [0-9a-f-]+\n?/m;
+const UUID_V7_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+const SESSION_ID_REGEX = new RegExp(`^session_id: (${UUID_V7_PATTERN})$`, 'm');
+const SESSION_ID_LINE_REGEX = new RegExp(`^session_id: ${UUID_V7_PATTERN}\\n?`, 'm');
 
 export interface ThreadContextResult {
   threadContext: string | null;

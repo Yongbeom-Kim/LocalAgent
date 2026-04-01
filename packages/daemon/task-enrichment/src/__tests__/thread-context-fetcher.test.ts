@@ -694,7 +694,7 @@ describe('session_id extraction and stripping from thread messages', () => {
     expect(result!.inheritedSessionId).toBeNull();
   });
 
-  it('strips session_id lines from thread context', async () => {
+  it('strips valid UUIDv7 session_id lines from thread context', async () => {
     mockFetch
       .mockResolvedValueOnce(mockTokenResponse())
       .mockResolvedValueOnce(mockMessageResponse())
@@ -732,5 +732,43 @@ describe('session_id extraction and stripping from thread messages', () => {
     expect(result).not.toBeNull();
     expect(result!.threadContext).toBe('user: hello\nassistant: Job abc — success');
     expect(result!.threadContext).not.toContain('session_id:');
+  });
+
+  it('preserves malformed session_id lines in thread context', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'session_id: 018f6b7e-1234-6abc-8def-1234567890ab\nJob abc — success',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+
+    expect(result).not.toBeNull();
+    expect(result!.threadContext).toContain('session_id: 018f6b7e-1234-6abc-8def-1234567890ab');
   });
 });
