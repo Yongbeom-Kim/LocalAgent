@@ -1,6 +1,6 @@
-import { Task, createLogger } from '@local-agent/shared';
+import { Task, createLogger, generateSessionId } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
-import type { ThreadContextFetcher } from './adapters/thread-context-fetcher';
+import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
 
 const logger = createLogger('enrichment-daemon:poller');
 
@@ -31,9 +31,11 @@ export class EnrichmentPoller {
       const task = (await res.json()) as Task;
       logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
 
+      let threadResult: ThreadContextResult | null | undefined;
+
       if (this.threadContextFetcher && task.task_source?.source === 'lark') {
         const validTaskTypes = this.enrichmentService.getValidTaskTypes();
-        const threadResult = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id, validTaskTypes);
+        threadResult = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id, validTaskTypes);
         if (threadResult) {
           if (task.task_type === 'generic' && threadResult.inheritedTaskType) {
             task.task_type = threadResult.inheritedTaskType;
@@ -46,7 +48,14 @@ export class EnrichmentPoller {
         }
       }
 
-      const enrichmentResult = this.enrichmentService.enrich(task);
+      const sessionId = threadResult?.inheritedSessionId ?? generateSessionId();
+      if (threadResult?.inheritedSessionId) {
+        logger.info({ task_id: task.task_id, inherited_session_id: sessionId }, 'Inherited session_id from thread root');
+      } else {
+        logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated new session_id for enrichment');
+      }
+
+      const enrichmentResult = this.enrichmentService.enrich(task, sessionId);
 
       if (enrichmentResult.type === 'rejected') {
         logger.warn({ task_id: task.task_id, task_type: task.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected task');

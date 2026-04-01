@@ -5,6 +5,17 @@ import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
 
 const mockEnrich = vi.fn();
 const mockGetValidTaskTypes = vi.fn().mockReturnValue(new Set(['deploy', 'code_review', 'default']));
+const { mockGenerateSessionId } = vi.hoisted(() => ({
+  mockGenerateSessionId: vi.fn(),
+}));
+
+vi.mock('@local-agent/shared', async () => {
+  const actual = await vi.importActual<typeof import('@local-agent/shared')>('@local-agent/shared');
+  return {
+    ...actual,
+    generateSessionId: mockGenerateSessionId,
+  };
+});
 
 vi.mock('../enrichment-service', () => ({
   EnrichmentService: vi.fn().mockImplementation(function () {
@@ -30,6 +41,7 @@ function createJobSubmission(overrides?: Partial<JobSubmission>): JobSubmission 
   return {
     task_id: 'task-123',
     task_type: 'code_review',
+    session_id: 'generated-session-id',
     payload: 'Review this',
     executors: [
       { executor: 'claude_code', executor_model: 'opus' },
@@ -46,6 +58,7 @@ describe('EnrichmentPoller', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGenerateSessionId.mockReturnValue('generated-session-id');
     const service = new EnrichmentService() as any;
     poller = new EnrichmentPoller('http://localhost:3000', service);
   });
@@ -77,7 +90,7 @@ describe('EnrichmentPoller', () => {
     await poller.pollOnce();
 
     expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next');
-    expect(mockEnrich).toHaveBeenCalledWith(task);
+    expect(mockEnrich).toHaveBeenCalledWith(task, 'generated-session-id');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -92,6 +105,7 @@ describe('EnrichmentPoller', () => {
     mockFetch.mockResolvedValueOnce({ status: 204 });
     await poller.pollOnce();
     expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
   });
 
   it('publishes failed result and acks task when enrichment rejects (no task_source)', async () => {
@@ -211,6 +225,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockGenerateSessionId.mockReturnValue('generated-session-id');
     const service = new EnrichmentService() as any;
     mockThreadFetcher = { fetchThreadContext: vi.fn() };
     poller = new EnrichmentPoller(
@@ -231,7 +246,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     const jobSubmission = createJobSubmission({ payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ threadContext: 'user: fix CI', inheritedTaskType: null });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ threadContext: 'user: fix CI', inheritedTaskType: null, inheritedSessionId: null });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -245,12 +260,13 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       expect.objectContaining({
         payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests',
       }),
+      'generated-session-id',
     );
   });
 
-  it('does not modify payload when task has no task_source', async () => {
+  it('generates new session_id when no thread', async () => {
     const task = createTask({ payload: 'hello' });
-    const jobSubmission = createJobSubmission({ payload: 'hello' });
+    const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
 
     mockFetch
@@ -260,16 +276,65 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
+    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
     expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
-    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }));
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id');
   });
 
-  it('does not modify payload when fetchThreadContext returns null', async () => {
+  it('generates new session_id when thread has no inherited session_id', async () => {
     const task = createTask({
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'hello',
     });
-    const jobSubmission = createJobSubmission({ payload: 'hello' });
+    const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: null,
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id');
+  });
+
+  it('inherits session_id from thread when available', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'hello',
+    });
+    const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'inherited-session-id' });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: null,
+      inheritedTaskType: null,
+      inheritedSessionId: 'inherited-session-id',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'inherited-session-id');
+  });
+
+  it('generates new session_id when thread fetch returns null', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'hello',
+    });
+    const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
 
@@ -280,7 +345,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }));
+    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id');
   });
 
   it('overrides task_type to inherited value when current is generic', async () => {
@@ -297,6 +363,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
       threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
+      inheritedSessionId: null,
     });
 
     mockFetch
@@ -308,6 +375,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({ task_type: 'deploy' }),
+      'generated-session-id',
     );
   });
 
@@ -322,6 +390,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
       threadContext: 'user: review code\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
+      inheritedSessionId: null,
     });
 
     mockFetch
@@ -333,6 +402,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({ task_type: 'code_review' }),
+      'generated-session-id',
     );
   });
 
@@ -347,6 +417,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
       threadContext: 'user: hello\nassistant: Job abc — success',
       inheritedTaskType: null,
+      inheritedSessionId: null,
     });
 
     mockFetch
@@ -358,6 +429,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({ task_type: 'generic' }),
+      'generated-session-id',
     );
   });
 });
