@@ -177,32 +177,4 @@ Read in `task-daemon.ts` and passed to `TaskPoller` constructor.
 
 ## Implementation Plan
 
-### Phase 1: Session Lock Manager
-**Files:** New `packages/daemon/task/src/services/session-lock.ts`
-- Implement `SessionLockManager` class
-- `acquire()`, `release()`, `isLocked()` methods
-- PID-based stale lock detection
-- Unit tests: acquire/release lifecycle, stale lock detection, concurrent lock attempts
-
-### Phase 2: Concurrent Poll Loop
-**Files:** Modified `packages/daemon/task/src/task-poller.ts`, `packages/daemon/task/src/task-daemon.ts`
-- Add `inFlightJobs` map and `activeSessions` set
-- Modify `pollOnce()` to check concurrency limit and session lock
-- Add async job execution with `finally` cleanup
-- Add back-off logic when at capacity
-- Read `MAX_CONCURRENT_SESSIONS` from env
-- Integration test: multiple jobs dispatched concurrently, same-session serialization
-
-### Phase 3: NACK API Endpoint
-**Files:** Modified `packages/api/src/routes/jobs.ts`
-- Add `POST /jobs/:id/nack` endpoint
-- Implement NACK with requeue in RabbitMQ service
-- Wire daemon to call NACK after 5s delay on session conflict
-- Test: NACK requeues message back to queue
-
-### Phase 4: GC Safety & Graceful Shutdown
-**Files:** Modified `packages/daemon/task/src/services/gc-executor.ts`, `packages/daemon/task/src/task-daemon.ts`
-- Add lock file check in GC before deletion
-- Modify shutdown handler to wait for in-flight jobs
-- Add `DEFAULT_MAX_CONCURRENT_SESSIONS` to `shared/constants.ts`
-- Test: GC skips locked sessions, shutdown waits for completion
+See [concurrent-sessions-implementation.md](./concurrent-sessions-implementation.md).
