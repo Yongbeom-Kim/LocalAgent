@@ -77,6 +77,7 @@ describe('MarketplaceConfig', () => {
       executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
       submitted_at: '2026-01-01T00:00:00Z',
       enriched_at: '2026-01-01T00:00:01Z',
+      session_id: 's1',
       marketplaces: [{ url: 'https://github.com/example/repo.git', plugins: ['my-plugin'] }],
     };
     expect(job.marketplaces).toHaveLength(1);
@@ -93,6 +94,7 @@ describe('MarketplaceConfig', () => {
       executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
       submitted_at: '2026-01-01T00:00:00Z',
       enriched_at: '2026-01-01T00:00:01Z',
+      session_id: 's1',
     };
     expect(job.marketplaces).toBeUndefined();
   });

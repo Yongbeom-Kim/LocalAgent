@@ -74,6 +74,7 @@ export interface JobSubmission {
   payload: string;
   executors: ExecutorPreference[];
   submitted_at: string;
+  session_id: string;
   system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
@@ -89,6 +90,7 @@ export interface Job {
   executors: ExecutorPreference[];
   submitted_at: string;
   enriched_at: string;
+  session_id: string;
   system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
@@ -105,6 +107,7 @@ export interface JobAttempt {
   executor_model: string;
   submitted_at: string;
   enriched_at: string;
+  session_id: string;
   system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
 }
@@ -136,6 +139,7 @@ export interface TaskResultSubmission {
   job_id: string;
   task_id: string;
   task_type: string;
+  session_id?: string;
   status: ResultStatus;
   exit_code: number | null;
   stdout: string;
