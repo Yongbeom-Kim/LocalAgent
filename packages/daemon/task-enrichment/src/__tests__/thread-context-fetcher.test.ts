@@ -543,3 +543,194 @@ describe('task_type line stripping from thread context', () => {
     expect(result!.threadContext).not.toContain('task_type:');
   });
 });
+
+describe('session_id extraction and stripping from thread messages', () => {
+  let fetcher: ThreadContextFetcher;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetcher = new ThreadContextFetcher(APP_ID, APP_SECRET);
+  });
+
+  it('extracts session_id from first bot message with valid UUIDv7 tag', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'deploy the app' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'session_id: 018f6b7e-1234-7abc-8def-1234567890ab\nJob abc — success',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'check status' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedSessionId).toBe('018f6b7e-1234-7abc-8def-1234567890ab');
+  });
+
+  it('returns null inheritedSessionId when no bot message has session_id', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'Job abc — success' }) },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedSessionId).toBeNull();
+  });
+
+  it('ignores user messages with session_id tags', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'session_id: 018f6b7e-1234-7abc-8def-1234567890ab\nhello',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedSessionId).toBeNull();
+  });
+
+  it('ignores malformed non-UUIDv7 session_id', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'session_id: 018f6b7e-1234-6abc-8def-1234567890ab\nJob abc — success',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+
+    expect(result).not.toBeNull();
+    expect(result!.inheritedSessionId).toBeNull();
+  });
+
+  it('strips session_id lines from thread context', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'task_type: deploy\nsession_id: 018f6b7e-1234-7abc-8def-1234567890ab\nJob abc — success',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const validTypes = new Set(['deploy']);
+    const result = await fetcher.fetchThreadContext('om_new_msg', validTypes);
+
+    expect(result).not.toBeNull();
+    expect(result!.threadContext).toBe('user: hello\nassistant: Job abc — success');
+    expect(result!.threadContext).not.toContain('session_id:');
+  });
+});

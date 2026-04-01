@@ -12,10 +12,13 @@ const INITIAL_BACKOFF_MS = 1000;
 
 const TASK_TYPE_REGEX = /^task_type: ([a-zA-Z0-9_-]+)$/m;
 const TASK_TYPE_LINE_REGEX = /^task_type: [a-zA-Z0-9_-]+\n?/m;
+const SESSION_ID_REGEX = /^session_id: ([0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})$/m;
+const SESSION_ID_LINE_REGEX = /^session_id: [0-9a-f-]+\n?/m;
 
 export interface ThreadContextResult {
   threadContext: string | null;
   inheritedTaskType: string | null;
+  inheritedSessionId: string | null;
 }
 
 interface LarkMessage {
@@ -73,11 +76,22 @@ export class ThreadContextFetcher {
       }
     }
 
-    // Step 4: Format, excluding the current message, stripping task_type lines
+    let inheritedSessionId: string | null = null;
+    for (const m of messages) {
+      if (m.sender.sender_type === 'user') continue;
+      const content = extractLarkMessageContent(m.msg_type, m.body.content);
+      const match = content.match(SESSION_ID_REGEX);
+      if (match) {
+        inheritedSessionId = match[1];
+        break;
+      }
+    }
+
+    // Step 4: Format, excluding the current message, stripping task_type and session_id lines
     const filtered = messages.filter((m) => m.message_id !== messageId);
 
     if (filtered.length === 0) {
-      return { threadContext: null, inheritedTaskType };
+      return { threadContext: null, inheritedTaskType, inheritedSessionId };
     }
 
     const threadContext = filtered
@@ -85,11 +99,12 @@ export class ThreadContextFetcher {
         const role = m.sender.sender_type === 'user' ? 'user' : 'assistant';
         let content = extractLarkMessageContent(m.msg_type, m.body.content);
         content = content.replace(TASK_TYPE_LINE_REGEX, '');
+        content = content.replace(SESSION_ID_LINE_REGEX, '');
         return `${role}: ${content}`;
       })
       .join('\n');
 
-    return { threadContext: threadContext || null, inheritedTaskType };
+    return { threadContext: threadContext || null, inheritedTaskType, inheritedSessionId };
   }
 
   private async getToken(): Promise<string> {
