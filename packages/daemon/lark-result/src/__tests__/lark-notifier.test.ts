@@ -11,6 +11,7 @@ function createResult(overrides?: Partial<TaskResult>): TaskResult {
     result_id: 'res-1',
     job_id: 'job-456',
     task_id: 'task-123',
+    task_type: 'generic',
     status: 'success',
     exit_code: 0,
     stdout: 'Task completed successfully',
@@ -82,6 +83,25 @@ describe('LarkNotifier', () => {
     expect(content.text).toContain('task-123');
     expect(content.text).toContain('success');
     expect(content.text.length).toBeLessThan(3000);
+  });
+
+  it('includes task_type prefix line in reply text', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    await notifier.notify(createResult({ task_type: 'deploy' }));
+
+    const sendCall = mockFetch.mock.calls[1];
+    const body = JSON.parse(sendCall[1].body);
+    const content = JSON.parse(body.content);
+    expect(content.text).toMatch(/^task_type: deploy\n/);
   });
 
   it('retries up to 3 times on fetch failure then resolves', async () => {
