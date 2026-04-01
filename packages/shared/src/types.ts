@@ -82,6 +82,7 @@ export interface JobSubmission {
   task_source?: TaskSource;
   setup_hook?: string;
   setup_hook_timeout_ms?: number;
+  skipContinue?: boolean;
 }
 
 export interface Job {
@@ -99,6 +100,7 @@ export interface Job {
   task_source?: TaskSource;
   setup_hook?: string;
   setup_hook_timeout_ms?: number;
+  skipContinue?: boolean;
 }
 
 export interface JobAttempt {
@@ -114,6 +116,7 @@ export interface JobAttempt {
   session_id: string;
   system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
+  skipContinue?: boolean;
 }
 
 // --- Task Source ---

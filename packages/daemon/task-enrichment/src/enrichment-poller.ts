@@ -9,6 +9,11 @@ const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an i
 const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
 const CLEANUP_MISSING_THREAD_REASON = 'Cleanup tasks require an existing thread with an inherited session_id.';
 const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
+const NEW_INSTANCE_TASK_TYPE = 'new_instance';
+const NEW_INSTANCE_PROMPT = 'Respond with: New session instance started.';
+const NEW_INSTANCE_MISSING_SOURCE_REASON = 'The /new command requires a Lark source.';
+const NEW_INSTANCE_MISSING_THREAD_REASON = 'The /new command can only be used inside a thread.';
+const NEW_INSTANCE_MISSING_SESSION_REASON = 'The /new command requires an existing session in this thread.';
 
 export class EnrichmentPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -39,6 +44,7 @@ export class EnrichmentPoller {
 
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
       const isGcTask = task.task_type === GC_TASK_TYPE;
+      const isNewInstanceTask = task.task_type === NEW_INSTANCE_TASK_TYPE;
       let threadResult: ThreadContextResult | null | undefined;
 
       if (isCleanupTask && task.task_source?.source !== 'lark') {
@@ -59,7 +65,7 @@ export class EnrichmentPoller {
           return;
         }
 
-        if (threadResult?.inheritedTaskType && !isCleanupTask && !isGcTask) {
+        if (threadResult?.inheritedTaskType && !isCleanupTask && !isGcTask && !isNewInstanceTask) {
           if (task.task_type === 'generic' || task.task_type === threadResult.inheritedTaskType) {
             task.task_type = threadResult.inheritedTaskType;
             logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
@@ -110,6 +116,65 @@ export class EnrichmentPoller {
           }
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for gc task — not acking task');
+          return;
+        }
+
+        await this.ackTask(task.task_id);
+        return;
+      }
+
+      if (isNewInstanceTask && task.task_source?.source !== 'lark') {
+        logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected new_instance task without lark task_source');
+        await this.publishRejection(task, NEW_INSTANCE_MISSING_SOURCE_REASON);
+        await this.ackTask(task.task_id);
+        return;
+      }
+
+      if (isNewInstanceTask && !threadResult) {
+        logger.warn({ task_id: task.task_id }, 'Rejected new_instance task outside thread');
+        await this.publishRejection(task, NEW_INSTANCE_MISSING_THREAD_REASON);
+        await this.ackTask(task.task_id);
+        return;
+      }
+
+      if (isNewInstanceTask && !threadResult?.inheritedSessionId) {
+        logger.warn({ task_id: task.task_id }, 'Rejected new_instance task without inherited session_id');
+        await this.publishRejection(task, NEW_INSTANCE_MISSING_SESSION_REASON);
+        await this.ackTask(task.task_id);
+        return;
+      }
+
+      if (isNewInstanceTask) {
+        const inheritedType = threadResult!.inheritedTaskType ?? task.task_type;
+
+        const enrichmentResult = this.enrichmentService.enrich(
+          { ...task, task_type: NEW_INSTANCE_TASK_TYPE, payload: NEW_INSTANCE_PROMPT },
+          threadResult!.inheritedSessionId!,
+          undefined,
+        );
+
+        if (enrichmentResult.type === 'rejected') {
+          logger.warn({ task_id: task.task_id, reason: enrichmentResult.reason }, 'Enrichment rejected new_instance task');
+          await this.publishRejection(task, enrichmentResult.reason);
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        enrichmentResult.job.skipContinue = true;
+        enrichmentResult.job.task_type = inheritedType;
+
+        try {
+          const jobRes = await fetch(`${this.apiUrl}/jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(enrichmentResult.job),
+          });
+          if (jobRes.status !== 201) {
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for new_instance — not acking');
+            return;
+          }
+        } catch (jobErr) {
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for new_instance — not acking');
           return;
         }
 

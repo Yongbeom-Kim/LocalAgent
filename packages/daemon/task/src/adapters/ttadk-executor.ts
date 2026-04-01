@@ -22,7 +22,7 @@ export class TTADKExecutor implements TaskExecutor {
       };
     }
 
-    if (env.isExistingWorkspace) {
+    if (env.isExistingWorkspace && !job.skipContinue) {
       const continueResult = await this.execTTADK(job, env, {
         mode: 'continue',
         input: job.payload,

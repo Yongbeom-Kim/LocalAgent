@@ -10,6 +10,8 @@ const LARK_LIST_MESSAGES_URL = 'https://open.larksuite.com/open-apis/im/v1/messa
 const MAX_RETRIES = 3;
 const INITIAL_BACKOFF_MS = 1000;
 
+const NEW_INSTANCE_MARKER = 'New session instance started.';
+
 const TASK_TYPE_REGEX = /^task_type: ([a-zA-Z0-9_-]+)$/m;
 const TASK_TYPE_LINE_REGEX = /^task_type: [a-zA-Z0-9_-]+\n?/m;
 const UUID_V7_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
@@ -88,8 +90,9 @@ export class ThreadContextFetcher {
       }
     }
 
-    // Step 4: Format, excluding the current message, stripping task_type and session_id lines
-    const filtered = messages.filter((m) => m.message_id !== messageId);
+    // Step 4: Apply /new fence for thread context, then format
+    const fencedMessages = this.applyNewInstanceFence(messages);
+    const filtered = fencedMessages.filter((m) => m.message_id !== messageId);
 
     if (filtered.length === 0) {
       return { threadContext: null, inheritedTaskType, inheritedSessionId };
@@ -178,6 +181,25 @@ export class ThreadContextFetcher {
     } while (pageToken);
 
     return allMessages;
+  }
+
+  private applyNewInstanceFence(messages: LarkMessage[]): LarkMessage[] {
+    let fenceIndex = -1;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.sender.sender_type === 'user') continue;
+      const content = extractLarkMessageContent(m.msg_type, m.body.content);
+      if (content.includes(NEW_INSTANCE_MARKER)) {
+        fenceIndex = i;
+        break;
+      }
+    }
+
+    if (fenceIndex === -1) {
+      return messages;
+    }
+
+    return messages.slice(fenceIndex);
   }
 
   private sleep(ms: number): Promise<void> {
