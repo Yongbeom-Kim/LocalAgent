@@ -9,3 +9,6 @@ export const DEFAULT_LARK_QUEUE_NAME = 'lark-messages';
 export const DEFAULT_JOBS_QUEUE_NAME = 'jobs';
 export const DEFAULT_TELEGRAM_QUEUE_NAME = 'telegram-messages';
 export const DEFAULT_SETUP_HOOK_TIMEOUT_MS = 300_000; // 5 minutes
+export const MAX_SNIPPET_CHARS = 2000;
+
+export const GLOBAL_SYSTEM_PROMPT = `You are running in a non-interactive environment. Any output beyond ${MAX_SNIPPET_CHARS} characters will be truncated. If your response is likely to exceed this limit, create a Lark document with the full content and send the document link to the user instead.`;

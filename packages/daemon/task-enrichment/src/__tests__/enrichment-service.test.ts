@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Task, JobSubmission } from '@local-agent/shared';
+import { Task, JobSubmission, GLOBAL_SYSTEM_PROMPT } from '@local-agent/shared';
 import { EnrichmentService, EnrichmentResult } from '../enrichment-service';
 
 function createTask(overrides?: Partial<Task>): Task {
@@ -442,7 +442,7 @@ describe('getValidTaskTypes', () => {
 });
 
 describe('system_prompt passthrough', () => {
-  it('includes system_prompt in enriched job when rule has one', () => {
+  it('prepends global system prompt to rule system_prompt', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         code_review: {
@@ -455,10 +455,12 @@ describe('system_prompt passthrough', () => {
     const result = service.enrich(createTask({ task_type: 'code_review' }));
 
     expect(result.type).toBe('enriched');
-    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe('You are a code reviewer. Focus on security.');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe(
+      `${GLOBAL_SYSTEM_PROMPT}\n\nYou are a code reviewer. Focus on security.`,
+    );
   });
 
-  it('omits system_prompt when rule has none', () => {
+  it('uses only global system prompt when rule has none', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
@@ -470,10 +472,10 @@ describe('system_prompt passthrough', () => {
     const result = service.enrich(createTask({ task_type: 'default' }));
 
     expect(result.type).toBe('enriched');
-    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBeUndefined();
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe(GLOBAL_SYSTEM_PROMPT);
   });
 
-  it('treats empty string system_prompt as absent', () => {
+  it('uses only global system prompt when rule system_prompt is empty', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
@@ -486,10 +488,10 @@ describe('system_prompt passthrough', () => {
     const result = service.enrich(createTask({ task_type: 'default' }));
 
     expect(result.type).toBe('enriched');
-    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBeUndefined();
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe(GLOBAL_SYSTEM_PROMPT);
   });
 
-  it('treats whitespace-only system_prompt as absent', () => {
+  it('uses only global system prompt when rule system_prompt is whitespace', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
@@ -502,10 +504,10 @@ describe('system_prompt passthrough', () => {
     const result = service.enrich(createTask({ task_type: 'default' }));
 
     expect(result.type).toBe('enriched');
-    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBeUndefined();
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe(GLOBAL_SYSTEM_PROMPT);
   });
 
-  it('trims leading/trailing whitespace from system_prompt', () => {
+  it('trims leading/trailing whitespace from rule system_prompt before combining', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
@@ -518,6 +520,8 @@ describe('system_prompt passthrough', () => {
     const result = service.enrich(createTask({ task_type: 'default' }));
 
     expect(result.type).toBe('enriched');
-    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe('Be concise.');
+    expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe(
+      `${GLOBAL_SYSTEM_PROMPT}\n\nBe concise.`,
+    );
   });
 });

@@ -1,4 +1,4 @@
-import { Job, TaskResultSubmission, createLogger } from '@local-agent/shared';
+import { Job, TaskResultSubmission, createLogger, MAX_SNIPPET_CHARS } from '@local-agent/shared';
 import { TaskOrchestrator } from './core/task-orchestrator';
 
 const logger = createLogger('task-daemon:poller');
@@ -35,6 +35,11 @@ export class TaskPoller {
       } catch (err) {
         logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
         return;
+      }
+
+      // Truncate stdout for downstream consumers (notifications, etc.)
+      if (result.stdout.length > MAX_SNIPPET_CHARS) {
+        result.stdout = result.stdout.substring(0, MAX_SNIPPET_CHARS);
       }
 
       // Attach task_type and task_source from job to result for downstream routing

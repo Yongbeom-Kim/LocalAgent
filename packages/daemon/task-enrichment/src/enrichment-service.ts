@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
-import { Task, JobSubmission, isTaskExecutorType, isValidExecutorModel, TaskExecutorType, ExecutorPreference, createLogger } from '@local-agent/shared';
+import { Task, JobSubmission, isTaskExecutorType, isValidExecutorModel, TaskExecutorType, ExecutorPreference, createLogger, GLOBAL_SYSTEM_PROMPT } from '@local-agent/shared';
 
 const logger = createLogger('enrichment-daemon:service');
 
@@ -104,7 +104,10 @@ export class EnrichmentService {
       executors.push({ executor: entry.executor as TaskExecutorType, executor_model: entry.executor_model });
     }
 
-    const systemPrompt = rule.system_prompt?.trim() || undefined;
+    const rulePrompt = rule.system_prompt?.trim() || '';
+    const systemPrompt = rulePrompt
+      ? `${GLOBAL_SYSTEM_PROMPT}\n\n${rulePrompt}`
+      : GLOBAL_SYSTEM_PROMPT;
 
     return {
       type: 'enriched',
@@ -114,7 +117,7 @@ export class EnrichmentService {
         payload: task.payload,
         executors,
         submitted_at: task.submitted_at,
-        ...(systemPrompt ? { system_prompt: systemPrompt } : {}),
+        system_prompt: systemPrompt,
         marketplaces: rule.marketplaces,
         ...(task.task_source ? { task_source: task.task_source } : {}),
         ...(rule.setup_hook !== undefined ? { setup_hook: rule.setup_hook } : {}),

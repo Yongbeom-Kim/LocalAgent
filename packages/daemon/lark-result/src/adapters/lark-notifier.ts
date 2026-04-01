@@ -11,7 +11,6 @@ const LARK_REACTIONS_URL = (messageId: string) =>
   `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions?user_id_type=open_id`;
 const LARK_DELETE_REACTION_URL = (messageId: string, reactionId: string) =>
   `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions/${reactionId}`;
-const MAX_SNIPPET_CHARS = 2000;
 const MAX_RETRIES = DEFAULT_LARK_MAX_RETRIES;
 
 export class LarkNotifier {
@@ -56,15 +55,13 @@ export class LarkNotifier {
       throw new Error(`Lark token request failed with code ${tokenData.code}`);
     }
 
-    const snippet = result.stdout.length > MAX_SNIPPET_CHARS
-      ? result.stdout.substring(0, MAX_SNIPPET_CHARS)
-      : result.stdout;
-
     const text = [
+      `Task ID: ${result.task_id}`,
+      `Job ID: ${result.job_id}`,
       `task_type: ${result.task_type}`,
-      `Job ${result.job_id} (Task ${result.task_id}) — ${result.status}`,
+      `status: ${result.status}`,
       `Exit code: ${result.exit_code ?? 'N/A'}`,
-      snippet ? `Output:\n${snippet}` : 'No output',
+      result.stdout ? `Output:\n${result.stdout}` : 'No output',
     ].join('\n');
 
     let msgRes: Response;
