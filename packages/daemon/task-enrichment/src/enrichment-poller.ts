@@ -32,10 +32,17 @@ export class EnrichmentPoller {
       logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
 
       if (this.threadContextFetcher && task.task_source?.source === 'lark') {
-        const threadContext = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id);
-        if (threadContext) {
-          task.payload = `--- Thread Context ---\n${threadContext}\n--- Current Message ---\n${task.payload}`;
-          logger.info({ task_id: task.task_id }, 'Prepended thread context to payload');
+        const validTaskTypes = this.enrichmentService.getValidTaskTypes();
+        const threadResult = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id, validTaskTypes);
+        if (threadResult) {
+          if (task.task_type === 'generic' && threadResult.inheritedTaskType) {
+            task.task_type = threadResult.inheritedTaskType;
+            logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
+          }
+          if (threadResult.threadContext) {
+            task.payload = `--- Thread Context ---\n${threadResult.threadContext}\n--- Current Message ---\n${task.payload}`;
+            logger.info({ task_id: task.task_id }, 'Prepended thread context to payload');
+          }
         }
       }
 

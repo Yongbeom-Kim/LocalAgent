@@ -4,10 +4,12 @@ import { EnrichmentService, EnrichmentResult } from '../enrichment-service';
 import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
 
 const mockEnrich = vi.fn();
+const mockGetValidTaskTypes = vi.fn().mockReturnValue(new Set(['deploy', 'code_review', 'default']));
 
 vi.mock('../enrichment-service', () => ({
   EnrichmentService: vi.fn().mockImplementation(function () {
     this.enrich = mockEnrich;
+    this.getValidTaskTypes = mockGetValidTaskTypes;
   }),
 }));
 
@@ -227,7 +229,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     const jobSubmission = createJobSubmission({ payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue('user: fix CI');
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ threadContext: 'user: fix CI', inheritedTaskType: null });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -236,7 +238,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockThreadFetcher.fetchThreadContext).toHaveBeenCalledWith('om_msg1');
+    expect(mockThreadFetcher.fetchThreadContext).toHaveBeenCalledWith('om_msg1', expect.any(Set));
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({
         payload: '--- Thread Context ---\nuser: fix CI\n--- Current Message ---\nnow fix the tests',
@@ -277,5 +279,83 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }));
+  });
+
+  it('overrides task_type to inherited value when current is generic', async () => {
+    const task = createTask({
+      task_type: 'generic',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'follow up',
+    });
+    const jobSubmission = createJobSubmission({
+      task_type: 'deploy',
+      payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+    });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: deploy the app\nassistant: Job abc — success',
+      inheritedTaskType: 'deploy',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).toHaveBeenCalledWith(
+      expect.objectContaining({ task_type: 'deploy' }),
+    );
+  });
+
+  it('does not override task_type when current is not generic', async () => {
+    const task = createTask({
+      task_type: 'code_review',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'review this',
+    });
+    const jobSubmission = createJobSubmission({ task_type: 'code_review' });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: review code\nassistant: Job abc — success',
+      inheritedTaskType: 'deploy',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).toHaveBeenCalledWith(
+      expect.objectContaining({ task_type: 'code_review' }),
+    );
+  });
+
+  it('keeps generic task_type when no inherited type found', async () => {
+    const task = createTask({
+      task_type: 'generic',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'hello',
+    });
+    const jobSubmission = createJobSubmission({ task_type: 'generic' });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: hello\nassistant: Job abc — success',
+      inheritedTaskType: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).toHaveBeenCalledWith(
+      expect.objectContaining({ task_type: 'generic' }),
+    );
   });
 });
