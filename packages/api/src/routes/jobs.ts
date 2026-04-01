@@ -100,7 +100,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     try {
       const nacked = rabbitmq.nackJob(req.params.id);
       if (!nacked) {
-        res.status(404).json({ error: 'Job not found or already acknowledged' });
+        res.status(404).json({ error: 'Job not found or already processed' });
         return;
       }
       res.status(200).json({ requeued: true });

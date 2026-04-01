@@ -65,12 +65,19 @@ export class SessionLockManager {
 
   /**
    * Release the lock for the given session.
+   * Errors are swallowed so a failed release never propagates out of the
+   * executeJob finally-block (which would cause drain() to reject and leave
+   * the inFlightJobs map in an inconsistent state).
    */
   release(sessionId: string): void {
     const filePath = this.lockPath(sessionId);
     if (existsSync(filePath)) {
-      unlinkSync(filePath);
-      logger.info({ sessionId }, 'Session lock released');
+      try {
+        unlinkSync(filePath);
+        logger.info({ sessionId }, 'Session lock released');
+      } catch (err) {
+        logger.error({ sessionId, err }, 'Failed to release session lock — lock file may remain');
+      }
     }
   }
 
@@ -94,7 +101,12 @@ export class SessionLockManager {
     try {
       process.kill(pid, 0);
       return true;
-    } catch {
+    } catch (err: unknown) {
+      // EPERM means the process exists but we lack permission to signal it → alive.
+      // ESRCH means no such process → dead.
+      if (err instanceof Error && (err as NodeJS.ErrnoException).code === 'EPERM') {
+        return true;
+      }
       return false;
     }
   }

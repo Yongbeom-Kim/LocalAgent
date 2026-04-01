@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Job, TaskResultSubmission, DEFAULT_REQUEUE_DELAY_MS } from '@local-agent/shared';
+import { Job, TaskResultSubmission } from '@local-agent/shared';
 import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ExecutionEnvironment } from '../services/job-environment';
 import { SessionLockManager } from '../services/session-lock';
@@ -141,9 +141,7 @@ describe('TaskPoller Concurrent', () => {
   });
 
   describe('same-session serialization', () => {
-    it('NACKs a job when session lock cannot be acquired', async () => {
-      vi.useFakeTimers();
-
+    it('NACKs a job immediately when session lock cannot be acquired', async () => {
       const jobEnv = new JobEnvironment(false);
       poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
 
@@ -166,22 +164,15 @@ describe('TaskPoller Concurrent', () => {
       });
       await poller.pollOnce();
 
-      // Second poll - job2 fails lock, should wait then NACK
+      // Second poll - job2 fails lock, should NACK immediately (no sleep)
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job2),
         })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ requeued: true }),
-        });
+        .mockResolvedValueOnce({ status: 200 }); // NACK response
 
-      const pollPromise = poller.pollOnce();
-
-      // Advance past the requeue delay
-      await vi.advanceTimersByTimeAsync(DEFAULT_REQUEUE_DELAY_MS);
-      await pollPromise;
+      await poller.pollOnce();
 
       // Verify NACK was called for job2
       const nackCall = mockFetch.mock.calls.find(
@@ -195,8 +186,7 @@ describe('TaskPoller Concurrent', () => {
         .mockResolvedValueOnce({ status: 201 })
         .mockResolvedValueOnce({ status: 200 });
       resolveJob1(createMockResult('job-1', 'session-A'));
-      await vi.runAllTimersAsync();
-      vi.useRealTimers();
+      await poller.drain();
     });
   });
 
@@ -241,10 +231,12 @@ describe('TaskPoller Concurrent', () => {
       // No additional fetch call should have been made
       expect(mockFetch.mock.calls.length).toBe(fetchCountBefore);
 
-      // Clean up
+      // Clean up — queue result+ack responses for both jobs
       mockFetch
-        .mockResolvedValue({ status: 201 })
-        .mockResolvedValue({ status: 200 });
+        .mockResolvedValueOnce({ status: 201 }) // result for job1
+        .mockResolvedValueOnce({ status: 200 }) // ack for job1
+        .mockResolvedValueOnce({ status: 201 }) // result for job2
+        .mockResolvedValueOnce({ status: 200 }); // ack for job2
       resolveJob1(createMockResult('job-1', 'session-A'));
       resolveJob2(createMockResult('job-2', 'session-B'));
       await poller.drain();

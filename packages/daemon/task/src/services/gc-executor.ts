@@ -44,7 +44,7 @@ export class GcExecutor {
 
         // Skip actively-locked sessions (safety net)
         if (this.sessionLock.isLockedByLiveProcess(entry)) {
-          logger.info({ dirPath }, 'Skipping locked session directory');
+          logger.info({ job_id: job.job_id, dirPath }, 'Skipping locked session directory');
           retained += 1;
           continue;
         }

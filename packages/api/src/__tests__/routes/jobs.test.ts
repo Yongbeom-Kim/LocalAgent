@@ -168,7 +168,7 @@ describe('POST /jobs/:id/nack', () => {
     const app = buildApp();
     const res = await request(app).post('/jobs/unknown-job/nack');
     expect(res.status).toBe(404);
-    expect(res.body).toEqual({ error: 'Job not found or already acknowledged' });
+    expect(res.body).toEqual({ error: 'Job not found or already processed' });
     expect(mockRabbitMQ.nackJob).toHaveBeenCalledWith('unknown-job');
   });
 });

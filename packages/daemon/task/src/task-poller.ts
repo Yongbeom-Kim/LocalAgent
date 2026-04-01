@@ -4,7 +4,6 @@ import {
   createLogger,
   MAX_SNIPPET_CHARS,
   DEFAULT_MAX_CONCURRENT_SESSIONS,
-  DEFAULT_REQUEUE_DELAY_MS,
 } from '@local-agent/shared';
 import { TaskOrchestrator } from './core/task-orchestrator';
 import { SessionLockManager } from './services/session-lock';
@@ -58,7 +57,8 @@ export class TaskPoller {
         this.inFlightJobs.set(job.job_id, promise);
       } else {
         logger.info({ job_id: job.job_id, session_id: job.session_id }, 'Session locked, requeueing job');
-        await new Promise((resolve) => setTimeout(resolve, DEFAULT_REQUEUE_DELAY_MS));
+        // NACK immediately — do not sleep here; sleeping blocks the poll loop from
+        // dispatching other jobs or responding to shutdown for the full delay duration.
         try {
           await fetch(`${this.apiUrl}/jobs/${job.job_id}/nack`, { method: 'POST' });
         } catch (nackErr) {
