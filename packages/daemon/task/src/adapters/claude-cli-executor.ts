@@ -14,6 +14,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
       return {
         job_id: job.job_id,
         task_id: job.task_id,
+        task_type: job.task_type,
         status: 'failure',
         exit_code: null,
         stdout: '',
@@ -54,6 +55,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
           resolve({
             job_id: job.job_id,
             task_id: job.task_id,
+            task_type: job.task_type,
             status: 'failure',
             exit_code: code,
             stdout: truncate(stdout, MAX_RESULT_OUTPUT_BYTES),
@@ -65,6 +67,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
           resolve({
             job_id: job.job_id,
             task_id: job.task_id,
+            task_type: job.task_type,
             status: 'success',
             exit_code: 0,
             stdout: truncate(stdout, MAX_RESULT_OUTPUT_BYTES),
@@ -82,6 +85,7 @@ export class ClaudeCliExecutor implements TaskExecutor {
         resolve({
           job_id: job.job_id,
           task_id: job.task_id,
+          task_type: job.task_type,
           status: 'failure',
           exit_code: null,
           stdout: '',

@@ -20,6 +20,7 @@ export class TaskOrchestrator {
       return {
         job_id: job.job_id,
         task_id: job.task_id,
+        task_type: job.task_type,
         status: 'failure',
         exit_code: null,
         stdout: '',
@@ -41,6 +42,7 @@ export class TaskOrchestrator {
         return {
           job_id: job.job_id,
           task_id: job.task_id,
+          task_type: job.task_type,
           status: 'failure',
           exit_code: null,
           stdout: '',
@@ -80,6 +82,7 @@ export class TaskOrchestrator {
         lastResult = {
           job_id: job.job_id,
           task_id: job.task_id,
+          task_type: job.task_type,
           status: 'failure',
           exit_code: null,
           stdout: '',
