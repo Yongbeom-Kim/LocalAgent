@@ -1,7 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { Job } from '@local-agent/shared';
+import type { Job } from '@local-agent/shared';
+
+const { TEST_SESSION_BASE_DIR } = vi.hoisted(() => ({
+  TEST_SESSION_BASE_DIR: '/tmp/local-agent-job-environment-test/session',
+}));
+
+vi.mock('@local-agent/shared', async () => {
+  const actual = await vi.importActual<typeof import('@local-agent/shared')>('@local-agent/shared');
+  return {
+    ...actual,
+    SESSION_BASE_DIR: TEST_SESSION_BASE_DIR,
+  };
+});
 
 vi.mock('node:child_process', () => ({
   execFileSync: vi.fn(),
@@ -19,7 +31,7 @@ import { JobEnvironment } from '../job-environment';
 
 const mockExecFileSync = vi.mocked(execFileSync);
 const MockSetupHookRunner = vi.mocked(SetupHookRunner);
-const sessionRootDir = '/var/tmp/local-agent/session';
+const sessionRootDir = TEST_SESSION_BASE_DIR;
 
 function createJob(overrides?: Partial<Job>): Job {
   return {
@@ -85,7 +97,7 @@ describe('JobEnvironment', () => {
       const env = await jobEnv.setup(createJob());
       createdDirs.push(env.workDir);
 
-      expect(env.workDir).toBe('/var/tmp/local-agent/session/session-test-001');
+      expect(env.workDir).toBe(join(sessionRootDir, 'session-test-001'));
       expect(env.isExistingWorkspace).toBe(false);
       expect(existsSync(env.workDir)).toBe(true);
     });
@@ -117,7 +129,7 @@ describe('JobEnvironment', () => {
         expect.any(Object),
       );
       expect(env.pluginDirs).toEqual([
-        '/var/tmp/local-agent/session/session-test-001/marketplaces/claude-plugins-official/superpowers',
+        join(sessionRootDir, 'session-test-001', 'marketplaces', 'claude-plugins-official', 'superpowers'),
       ]);
     });
 
@@ -140,9 +152,9 @@ describe('JobEnvironment', () => {
 
       expect(mockExecFileSync).toHaveBeenCalledTimes(2);
       expect(env.pluginDirs).toEqual([
-        '/var/tmp/local-agent/session/session-test-001/marketplaces/claude-plugins-official/superpowers',
-        '/var/tmp/local-agent/session/session-test-001/marketplaces/personal-claude-code/development',
-        '/var/tmp/local-agent/session/session-test-001/marketplaces/personal-claude-code/learning',
+        join(sessionRootDir, 'session-test-001', 'marketplaces', 'claude-plugins-official', 'superpowers'),
+        join(sessionRootDir, 'session-test-001', 'marketplaces', 'personal-claude-code', 'development'),
+        join(sessionRootDir, 'session-test-001', 'marketplaces', 'personal-claude-code', 'learning'),
       ]);
     });
 
@@ -190,7 +202,7 @@ describe('JobEnvironment', () => {
       createdDirs.push(env.workDir);
 
       expect(env.pluginDirs).toEqual([
-        '/var/tmp/local-agent/session/session-test-001/marketplaces/my-repo/superpowers',
+        join(sessionRootDir, 'session-test-001', 'marketplaces', 'my-repo', 'superpowers'),
       ]);
     });
 

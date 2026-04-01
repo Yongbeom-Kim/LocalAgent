@@ -216,6 +216,46 @@ describe('MessageHandler', () => {
       );
     });
 
+    it('submits bare /gc as gc with empty payload', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/gc' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'gc',
+        '',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    });
+
+    it('does not treat /gc with args as a gc command', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/gc foo' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'generic',
+        '/gc foo',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+    });
+
+    it('does not treat /gcollect as a gc command', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/gcollect' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'generic',
+        '/gcollect',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+    });
+
     it('submits bare /end as cleanup with empty payload', async () => {
       await handler.handle(makeEvent({
         content: JSON.stringify({ text: '/end' }),

@@ -1,7 +1,7 @@
 import { mkdirSync, rmSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
-import { Job, DEFAULT_SETUP_HOOK_TIMEOUT_MS, createLogger } from '@local-agent/shared';
+import { Job, DEFAULT_SETUP_HOOK_TIMEOUT_MS, SESSION_BASE_DIR, createLogger } from '@local-agent/shared';
 import { SetupHookRunner } from './setup-hook-runner';
 
 const logger = createLogger('task-daemon:job-environment');
@@ -19,7 +19,7 @@ export class JobEnvironment {
   ) {}
 
   async setup(job: Job): Promise<ExecutionEnvironment> {
-    const workDir = join('/var/tmp/local-agent/session', job.session_id);
+    const workDir = join(SESSION_BASE_DIR, job.session_id);
 
     if (existsSync(workDir)) {
       const pluginDirs = this.collectPluginDirs(job, workDir);

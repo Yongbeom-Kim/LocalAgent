@@ -3,6 +3,7 @@ import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
 import { CleanupExecutor } from '../adapters/cleanup-executor';
 import { TTADKExecutor } from '../adapters/ttadk-executor';
 import { TaskExecutor } from '../ports/task-executor';
+import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:orchestrator');
@@ -20,6 +21,12 @@ export class TaskOrchestrator {
       { job_id: job.job_id, task_id: job.task_id, task_type: job.task_type, executors: job.executors },
       'Processing job',
     );
+
+    if (job.task_type === 'gc') {
+      logger.info({ job_id: job.job_id, task_id: job.task_id }, 'Processing gc job');
+      const gcExecutor = new GcExecutor();
+      return gcExecutor.execute(job);
+    }
 
     if (job.executors.length === 0) {
       logger.error({ job_id: job.job_id }, 'Job has empty executors array');

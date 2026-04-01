@@ -67,6 +67,10 @@ export class MessageHandler {
   }
 
   private parseCommand(payload: string): { taskType: string | null; taskPayload: string; isCommand: boolean } {
+    if (payload === '/gc') {
+      return { taskType: 'gc', taskPayload: '', isCommand: true };
+    }
+
     if (payload === '/end') {
       return { taskType: 'cleanup', taskPayload: '', isCommand: true };
     }

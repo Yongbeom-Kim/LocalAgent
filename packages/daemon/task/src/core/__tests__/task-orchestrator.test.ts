@@ -45,7 +45,18 @@ const mockCleanupResultSubmission: TaskResultSubmission = {
   stderr: '',
 };
 
+const mockGcResultSubmission: TaskResultSubmission = {
+  job_id: 'job-456',
+  task_id: 'test-123',
+  task_type: 'gc',
+  status: 'success',
+  exit_code: 0,
+  stdout: 'GC complete: removed 1 session(s), retained 0.',
+  stderr: '',
+};
+
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockGcExecute = vi.fn().mockReturnValue(mockGcResultSubmission);
 const mockTTADKExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockCleanupExecute = vi.fn().mockResolvedValue(mockCleanupResultSubmission);
 
@@ -67,9 +78,16 @@ vi.mock('../../adapters/cleanup-executor', () => ({
   }),
 }));
 
+vi.mock('../../services/gc-executor', () => ({
+  GcExecutor: vi.fn(function (this: { execute: typeof mockGcExecute }) {
+    this.execute = mockGcExecute;
+  }),
+}));
+
 import { ClaudeCliExecutor } from '../../adapters/claude-cli-executor';
 import { CleanupExecutor } from '../../adapters/cleanup-executor';
 import { TTADKExecutor } from '../../adapters/ttadk-executor';
+import { GcExecutor } from '../../services/gc-executor';
 import { TaskOrchestrator } from '../task-orchestrator';
 import { JobEnvironment } from '../../services/job-environment';
 
@@ -95,11 +113,13 @@ describe('TaskOrchestrator', () => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockTTADKExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockCleanupExecute.mockClear().mockResolvedValue(mockCleanupResultSubmission);
+    mockGcExecute.mockClear().mockReturnValue(mockGcResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
     vi.mocked(ClaudeCliExecutor).mockClear();
     vi.mocked(TTADKExecutor).mockClear();
     vi.mocked(CleanupExecutor).mockClear();
+    vi.mocked(GcExecutor).mockClear();
     jobEnv = new JobEnvironment(false);
     orchestrator = new TaskOrchestrator(jobEnv);
   });
@@ -379,6 +399,35 @@ describe('TaskOrchestrator', () => {
       expect.objectContaining({ history }),
       mockEnv,
     );
+  });
+
+  it('short-circuits gc jobs without environment setup', async () => {
+    const job = createJob({
+      task_type: 'gc',
+      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+    });
+
+    const result = await orchestrator.handle(job);
+
+    expect(GcExecutor).toHaveBeenCalledTimes(1);
+    expect(mockGcExecute).toHaveBeenCalledWith(job);
+    expect(mockSetup).not.toHaveBeenCalled();
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
+    expect(mockTTADKExecute).not.toHaveBeenCalled();
+    expect(mockCleanupExecute).not.toHaveBeenCalled();
+    expect(result).toEqual(mockGcResultSubmission);
+  });
+
+  it('calls execute on instantiated GcExecutor', async () => {
+    const job = createJob({
+      task_type: 'gc',
+      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+    });
+
+    await orchestrator.handle(job);
+
+    expect(GcExecutor).toHaveBeenCalledTimes(1);
+    expect(mockGcExecute).toHaveBeenCalledWith(job);
   });
 
   it('returns failure for empty executors array', async () => {

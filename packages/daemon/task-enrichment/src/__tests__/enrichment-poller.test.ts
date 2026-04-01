@@ -228,6 +228,58 @@ describe('EnrichmentPoller', () => {
     });
   });
 
+  it('creates minimal job for base-message gc task and does not enrich', async () => {
+    const task = createTask({
+      task_type: 'gc',
+      payload: 'ignored payload',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-gc-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: 'task-123',
+        task_type: 'gc',
+        payload: '',
+        executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        submitted_at: '2026-03-29T00:00:00.000Z',
+        session_id: 'generated-session-id',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
+  });
+
+  it('does not ack gc task when POST /jobs fails', async () => {
+    const task = createTask({
+      task_type: 'gc',
+      payload: '',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 500, json: () => Promise.resolve({ error: 'nope' }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
+  });
+
   it('handles fetch errors gracefully', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
     await expect(poller.pollOnce()).resolves.toBeUndefined();
@@ -500,6 +552,117 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+    });
+  });
+
+  it('rejects threaded gc task and acks it', async () => {
+    const task = createTask({
+      task_type: 'gc',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: please run cleanup',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-gc-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'gc',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'The /gc command can only be used as a base message, not inside a thread.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
+  });
+
+  it('rejects gc task when thread context exists without inherited metadata', async () => {
+    const task = createTask({
+      task_type: 'gc',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'assistant: earlier response',
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-gc-2' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'gc',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'The /gc command can only be used as a base message, not inside a thread.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
+  });
+
+  it('includes generated session_id, task_source, and placeholder executors in gc job', async () => {
+    const task = createTask({
+      task_type: 'gc',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-gc-2' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: 'task-123',
+        task_type: 'gc',
+        payload: '',
+        executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        submitted_at: '2026-03-29T00:00:00.000Z',
+        session_id: 'generated-session-id',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
     });
   });
 

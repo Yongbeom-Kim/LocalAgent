@@ -1,12 +1,14 @@
-import { Task, createLogger, generateSessionId } from '@local-agent/shared';
+import { Task, JobSubmission, createLogger, generateSessionId } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
 
 const logger = createLogger('enrichment-daemon:poller');
 const CLEANUP_TASK_TYPE = 'cleanup';
+const GC_TASK_TYPE = 'gc';
 const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an inherited session_id from the thread root.';
 const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
 const CLEANUP_MISSING_THREAD_REASON = 'Cleanup tasks require an existing thread with an inherited session_id.';
+const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
 
 export class EnrichmentPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -36,6 +38,7 @@ export class EnrichmentPoller {
       logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
 
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
+      const isGcTask = task.task_type === GC_TASK_TYPE;
       let threadResult: ThreadContextResult | null | undefined;
 
       if (isCleanupTask && task.task_source?.source !== 'lark') {
@@ -56,7 +59,7 @@ export class EnrichmentPoller {
           return;
         }
 
-        if (threadResult?.inheritedTaskType && !isCleanupTask) {
+        if (threadResult?.inheritedTaskType && !isCleanupTask && !isGcTask) {
           if (task.task_type === 'generic' || task.task_type === threadResult.inheritedTaskType) {
             task.task_type = threadResult.inheritedTaskType;
             logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
@@ -75,6 +78,43 @@ export class EnrichmentPoller {
             return;
           }
         }
+      }
+
+      if (isGcTask && threadResult) {
+        logger.warn({ task_id: task.task_id }, 'Rejected gc task inside thread');
+        await this.publishRejection(task, GC_THREAD_REJECTION_REASON);
+        await this.ackTask(task.task_id);
+        return;
+      }
+
+      if (isGcTask) {
+        const jobSubmission: JobSubmission = {
+          task_id: task.task_id,
+          task_type: GC_TASK_TYPE,
+          payload: '',
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          submitted_at: task.submitted_at,
+          session_id: generateSessionId(),
+          ...(task.task_source ? { task_source: task.task_source } : {}),
+        };
+
+        try {
+          const jobRes = await fetch(`${this.apiUrl}/jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(jobSubmission),
+          });
+          if (jobRes.status !== 201) {
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for gc task — not acking task');
+            return;
+          }
+        } catch (jobErr) {
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for gc task — not acking task');
+          return;
+        }
+
+        await this.ackTask(task.task_id);
+        return;
       }
 
       if (isCleanupTask && !threadResult?.inheritedSessionId) {
