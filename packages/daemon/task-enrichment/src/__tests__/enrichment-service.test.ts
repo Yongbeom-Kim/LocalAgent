@@ -413,6 +413,34 @@ describe('setup_hook passthrough', () => {
   });
 });
 
+describe('getValidTaskTypes', () => {
+  it('returns set of all rule keys', () => {
+    const service = EnrichmentService.fromObject({
+      rules: {
+        code_review: {
+          executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+        },
+        deploy: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        },
+        default: {
+          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        },
+      },
+    });
+
+    const types = service.getValidTaskTypes();
+
+    expect(types).toEqual(new Set(['code_review', 'deploy', 'default']));
+  });
+
+  it('returns empty set when no rules', () => {
+    const service = EnrichmentService.fromObject({ rules: {} });
+    const types = service.getValidTaskTypes();
+    expect(types).toEqual(new Set());
+  });
+});
+
 describe('system_prompt passthrough', () => {
   it('includes system_prompt in enriched job when rule has one', () => {
     const service = EnrichmentService.fromObject({

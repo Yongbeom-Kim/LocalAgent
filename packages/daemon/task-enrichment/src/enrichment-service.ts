@@ -126,4 +126,8 @@ export class EnrichmentService {
   getValidTypes(): string[] {
     return Object.keys(this.rules);
   }
+
+  getValidTaskTypes(): Set<string> {
+    return new Set(Object.keys(this.rules));
+  }
 }
