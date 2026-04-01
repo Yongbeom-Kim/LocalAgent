@@ -55,6 +55,7 @@ export class TaskOrchestrator {
         const attempt: JobAttempt = {
           job_id: job.job_id,
           task_id: job.task_id,
+          session_id: job.session_id,
           task_type: job.task_type,
           payload: job.payload,
           executor: pref.executor,

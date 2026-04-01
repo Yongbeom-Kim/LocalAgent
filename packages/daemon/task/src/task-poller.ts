@@ -42,10 +42,11 @@ export class TaskPoller {
         result.stdout = result.stdout.substring(0, MAX_SNIPPET_CHARS);
       }
 
-      // Attach task_type and task_source from job to result for downstream routing
+      // Attach task_type, session_id, and task_source from job to result for downstream routing
       const resultWithSource: TaskResultSubmission = {
         ...result,
         task_type: job.task_type,
+        session_id: job.session_id,
         ...(job.task_source ? { task_source: job.task_source } : {}),
       };
 
