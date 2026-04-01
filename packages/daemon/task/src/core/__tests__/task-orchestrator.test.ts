@@ -8,6 +8,12 @@ const mockEnv: ExecutionEnvironment = {
   isExistingWorkspace: false,
 };
 
+const emptyEnv: ExecutionEnvironment = {
+  workDir: '',
+  pluginDirs: [],
+  isExistingWorkspace: false,
+};
+
 const mockSetup = vi.fn().mockResolvedValue(mockEnv);
 const mockTeardown = vi.fn().mockResolvedValue(undefined);
 
@@ -28,8 +34,20 @@ const mockResultSubmission: TaskResultSubmission = {
   stderr: '',
 };
 
+const mockCleanupResultSubmission: TaskResultSubmission = {
+  job_id: 'job-456',
+  task_id: 'test-123',
+  task_type: 'cleanup',
+  session_id: 'session-789',
+  status: 'success',
+  exit_code: 0,
+  stdout: 'cleanup complete',
+  stderr: '',
+};
+
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockTTADKExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockCleanupExecute = vi.fn().mockResolvedValue(mockCleanupResultSubmission);
 
 vi.mock('../../adapters/claude-cli-executor', () => ({
   ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
@@ -43,7 +61,14 @@ vi.mock('../../adapters/ttadk-executor', () => ({
   }),
 }));
 
+vi.mock('../../adapters/cleanup-executor', () => ({
+  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute }) {
+    this.execute = mockCleanupExecute;
+  }),
+}));
+
 import { ClaudeCliExecutor } from '../../adapters/claude-cli-executor';
+import { CleanupExecutor } from '../../adapters/cleanup-executor';
 import { TTADKExecutor } from '../../adapters/ttadk-executor';
 import { TaskOrchestrator } from '../task-orchestrator';
 import { JobEnvironment } from '../../services/job-environment';
@@ -69,10 +94,12 @@ describe('TaskOrchestrator', () => {
   beforeEach(() => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockTTADKExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockCleanupExecute.mockClear().mockResolvedValue(mockCleanupResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
     vi.mocked(ClaudeCliExecutor).mockClear();
     vi.mocked(TTADKExecutor).mockClear();
+    vi.mocked(CleanupExecutor).mockClear();
     jobEnv = new JobEnvironment(false);
     orchestrator = new TaskOrchestrator(jobEnv);
   });
@@ -107,6 +134,7 @@ describe('TaskOrchestrator', () => {
 
     expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
     expect(TTADKExecutor).not.toHaveBeenCalled();
+    expect(CleanupExecutor).not.toHaveBeenCalled();
     expect(mockClaudeExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         executor: 'claude_code',
@@ -126,6 +154,7 @@ describe('TaskOrchestrator', () => {
 
     expect(TTADKExecutor).toHaveBeenCalledTimes(1);
     expect(ClaudeCliExecutor).not.toHaveBeenCalled();
+    expect(CleanupExecutor).not.toHaveBeenCalled();
     expect(mockTTADKExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         executor: 'ttadk',
@@ -135,6 +164,48 @@ describe('TaskOrchestrator', () => {
     );
     expect(result).toEqual(mockResultSubmission);
     expect(mockTeardown).not.toHaveBeenCalled();
+  });
+
+  it('resolves builtin executor for cleanup jobs', async () => {
+    const job = createJob({
+      task_type: 'cleanup',
+      payload: 'cleanup session workspace',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
+    });
+
+    const result = await orchestrator.handle(job);
+
+    expect(CleanupExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeCliExecutor).not.toHaveBeenCalled();
+    expect(TTADKExecutor).not.toHaveBeenCalled();
+    expect(mockCleanupExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_type: 'cleanup',
+        executor: 'builtin',
+        executor_model: 'none',
+      }),
+      emptyEnv,
+    );
+    expect(result).toEqual(mockCleanupResultSubmission);
+  });
+
+  it('skips environment setup for cleanup jobs', async () => {
+    const job = createJob({
+      task_type: 'cleanup',
+      payload: 'cleanup session workspace',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
+    });
+
+    await orchestrator.handle(job);
+
+    expect(mockSetup).not.toHaveBeenCalled();
+    expect(mockTeardown).not.toHaveBeenCalled();
+    expect(mockCleanupExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_type: 'cleanup',
+      }),
+      emptyEnv,
+    );
   });
 
   it('returns failure result when setup fails', async () => {

@@ -1,10 +1,16 @@
 import { Job, JobAttempt, TaskResultSubmission, TaskExecutorType, createLogger } from '@local-agent/shared';
 import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
+import { CleanupExecutor } from '../adapters/cleanup-executor';
 import { TTADKExecutor } from '../adapters/ttadk-executor';
 import { TaskExecutor } from '../ports/task-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:orchestrator');
+const EMPTY_EXECUTION_ENVIRONMENT: ExecutionEnvironment = {
+  workDir: '',
+  pluginDirs: [],
+  isExistingWorkspace: false,
+};
 
 export class TaskOrchestrator {
   constructor(private readonly jobEnv: JobEnvironment) {}
@@ -28,20 +34,26 @@ export class TaskOrchestrator {
       };
     }
 
+    const isCleanupTask = job.task_type === 'cleanup';
+
     let env: ExecutionEnvironment;
-    try {
-      env = await this.jobEnv.setup(job);
-    } catch (error) {
-      logger.error({ job_id: job.job_id, err: error }, 'Environment setup failed');
-      return {
-        job_id: job.job_id,
-        task_id: job.task_id,
-        task_type: job.task_type,
-        status: 'failure',
-        exit_code: null,
-        stdout: '',
-        stderr: `Environment setup failed: ${error instanceof Error ? error.message : String(error)}`,
-      };
+    if (isCleanupTask) {
+      env = EMPTY_EXECUTION_ENVIRONMENT;
+    } else {
+      try {
+        env = await this.jobEnv.setup(job);
+      } catch (error) {
+        logger.error({ job_id: job.job_id, err: error }, 'Environment setup failed');
+        return {
+          job_id: job.job_id,
+          task_id: job.task_id,
+          task_type: job.task_type,
+          status: 'failure',
+          exit_code: null,
+          stdout: '',
+          stderr: `Environment setup failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
     }
 
     let lastResult: TaskResultSubmission | null = null;
@@ -107,6 +119,7 @@ export class TaskOrchestrator {
   private resolveExecutor(executor: TaskExecutorType): TaskExecutor {
     if (executor === 'claude_code') return new ClaudeCliExecutor();
     if (executor === 'ttadk') return new TTADKExecutor();
+    if (executor === 'builtin') return new CleanupExecutor();
     throw new Error(`Unknown executor: ${executor}`);
   }
 }

@@ -194,23 +194,38 @@ describe('EnrichmentPoller', () => {
     });
   });
 
-  it('does not ack task when POST /jobs fails', async () => {
-    const task = createTask();
-    const jobSubmission = createJobSubmission();
-    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+  it('rejects cleanup task without lark source', async () => {
+    const task = createTask({
+      task_type: 'cleanup',
+      payload: '',
+    });
 
     mockFetch
-      .mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(task),
-      })
-      .mockResolvedValueOnce({
-        status: 500,
-      });
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
 
     await poller.pollOnce();
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'cleanup',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Cleanup tasks require a Lark task source to resolve the existing session.',
+        stderr: '',
+      }),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
   });
 
   it('handles fetch errors gracefully', async () => {
@@ -486,6 +501,115 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
     });
+  });
+
+  it('rejects cleanup task when thread fetch returns null', async () => {
+    const task = createTask({
+      task_type: 'cleanup',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'cleanup',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Cleanup tasks require an existing thread with an inherited session_id.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('rejects cleanup task without inherited session_id', async () => {
+    const task = createTask({
+      task_type: 'cleanup',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: please end this session\nassistant: acknowledged',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'cleanup',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Cleanup tasks in existing threads require an inherited session_id from the thread root.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('bypasses inherited task_type mismatch for cleanup and skips thread history', async () => {
+    const task = createTask({
+      task_type: 'cleanup',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    const jobSubmission = createJobSubmission({
+      task_type: 'cleanup',
+      payload: '',
+      session_id: 'inherited-session-id',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
+    });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: deploy the app\nassistant: Job abc — success',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'inherited-session-id',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(task.task_type).toBe('cleanup');
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(mockEnrich).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_type: 'cleanup',
+        payload: '',
+      }),
+      'inherited-session-id',
+      undefined,
+    );
   });
 
   it('keeps current behavior when no inherited type found', async () => {

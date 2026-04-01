@@ -166,6 +166,17 @@ describe('EnrichmentService', () => {
 
       expect(result.type).toBe('enriched');
     });
+
+    it('loads cleanup rule from builtin config with builtin executor', () => {
+      const configPath = new URL('../../config/builtin.yaml', import.meta.url).pathname;
+      const service = EnrichmentService.fromFile(configPath);
+      const result = service.enrich(createTask({ task_type: 'cleanup' }), TEST_SESSION_ID);
+
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
+        { executor: 'builtin', executor_model: 'none' },
+      ]);
+    });
   });
 
   describe('marketplace passthrough', () => {
@@ -338,12 +349,17 @@ describe('fromDirectory', () => {
     return mkdtempSync(join(tmpdir(), 'enrichment-config-'));
   }
 
-  it('loads and merges rules from multiple YAML files', () => {
+  it('loads and merges rules from multiple YAML files including builtin.yaml', () => {
     const dir = makeTempDir();
-    writeFileSync(join(dir, 'a.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
-    writeFileSync(join(dir, 'b.yaml'), `rules:\n  code_review:\n    executors:\n      - executor: claude_code\n        executor_model: opus\n`);
+    writeFileSync(join(dir, 'builtin.yaml'), `rules:\n  cleanup:\n    executors:\n      - executor: builtin\n        executor_model: none\n`);
+    writeFileSync(join(dir, 'enrichment.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
+    writeFileSync(join(dir, 'local.yaml'), `rules:\n  code_review:\n    executors:\n      - executor: claude_code\n        executor_model: opus\n`);
 
     const service = EnrichmentService.fromDirectory(dir);
+
+    const cleanupResult = service.enrich(createTask({ task_type: 'cleanup' }), TEST_SESSION_ID);
+    expect(cleanupResult.type).toBe('enriched');
+    expect((cleanupResult as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([{ executor: 'builtin', executor_model: 'none' }]);
 
     const defaultResult = service.enrich(createTask({ task_type: 'default' }), TEST_SESSION_ID);
     expect(defaultResult.type).toBe('enriched');

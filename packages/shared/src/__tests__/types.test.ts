@@ -18,6 +18,10 @@ describe('EXECUTOR_MODELS', () => {
       'glm-5-ttadk', 'kimi-k2.5', 'glm-4.7-ttadk', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex',
     ]);
   });
+
+  it('defines builtin models', () => {
+    expect(EXECUTOR_MODELS.builtin).toEqual(['none']);
+  });
 });
 
 describe('isValidExecutorModel', () => {
@@ -30,6 +34,14 @@ describe('isValidExecutorModel', () => {
   it('returns true for valid ttadk model', () => {
     expect(isValidExecutorModel('ttadk', 'gpt-5.4')).toBe(true);
     expect(isValidExecutorModel('ttadk', 'kimi-k2.5')).toBe(true);
+  });
+
+  it('returns true for valid builtin model', () => {
+    expect(isValidExecutorModel('builtin', 'none')).toBe(true);
+  });
+
+  it('returns false for invalid builtin model', () => {
+    expect(isValidExecutorModel('builtin', 'opus')).toBe(false);
   });
 
   it('returns false for cross-executor mismatch', () => {
@@ -58,6 +70,10 @@ describe('getExecutorModelOptions', () => {
     expect(getExecutorModelOptions('ttadk')).toBe(
       'glm-5-ttadk, kimi-k2.5, glm-4.7-ttadk, gpt-5.3-codex, gpt-5.4, gpt-5.2-codex',
     );
+  });
+
+  it('returns comma-separated list for builtin', () => {
+    expect(getExecutorModelOptions('builtin')).toBe('none');
   });
 });
 
@@ -111,6 +127,12 @@ describe('isValidExecutorPreferences', () => {
   it('returns true for single-element array', () => {
     expect(isValidExecutorPreferences([
       { executor: 'claude_code', executor_model: 'opus' },
+    ])).toBe(true);
+  });
+
+  it('returns true for builtin executor with none model', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'builtin', executor_model: 'none' },
     ])).toBe(true);
   });
 

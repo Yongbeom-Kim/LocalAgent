@@ -3,6 +3,10 @@ import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
 
 const logger = createLogger('enrichment-daemon:poller');
+const CLEANUP_TASK_TYPE = 'cleanup';
+const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an inherited session_id from the thread root.';
+const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
+const CLEANUP_MISSING_THREAD_REASON = 'Cleanup tasks require an existing thread with an inherited session_id.';
 
 export class EnrichmentPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -31,32 +35,53 @@ export class EnrichmentPoller {
       const task = (await res.json()) as Task;
       logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
 
+      const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
       let threadResult: ThreadContextResult | null | undefined;
+
+      if (isCleanupTask && task.task_source?.source !== 'lark') {
+        logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected cleanup task without lark task_source');
+        await this.publishRejection(task, CLEANUP_MISSING_SOURCE_REASON);
+        await this.ackTask(task.task_id);
+        return;
+      }
 
       if (this.threadContextFetcher && task.task_source?.source === 'lark') {
         const validTaskTypes = this.enrichmentService.getValidTaskTypes();
         threadResult = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id, validTaskTypes);
-        if (threadResult) {
-          if (threadResult.inheritedTaskType) {
-            if (task.task_type === 'generic' || task.task_type === threadResult.inheritedTaskType) {
-              task.task_type = threadResult.inheritedTaskType;
-              logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
-            } else {
-              const rejectionReason = `Cannot change task type in a thread. This thread uses task_type '${threadResult.inheritedTaskType}'. Remove the /task prefix or start a new conversation.`;
-              logger.warn(
-                {
-                  task_id: task.task_id,
-                  task_type: task.task_type,
-                  inherited_task_type: threadResult.inheritedTaskType,
-                },
-                'Rejected task with mismatched thread task_type',
-              );
-              await this.publishRejection(task, rejectionReason);
-              await this.ackTask(task.task_id);
-              return;
-            }
+
+        if (isCleanupTask && !threadResult) {
+          logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without thread context');
+          await this.publishRejection(task, CLEANUP_MISSING_THREAD_REASON);
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        if (threadResult?.inheritedTaskType && !isCleanupTask) {
+          if (task.task_type === 'generic' || task.task_type === threadResult.inheritedTaskType) {
+            task.task_type = threadResult.inheritedTaskType;
+            logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
+          } else {
+            const rejectionReason = `Cannot change task type in a thread. This thread uses task_type '${threadResult.inheritedTaskType}'. Remove the /task prefix or start a new conversation.`;
+            logger.warn(
+              {
+                task_id: task.task_id,
+                task_type: task.task_type,
+                inherited_task_type: threadResult.inheritedTaskType,
+              },
+              'Rejected task with mismatched thread task_type',
+            );
+            await this.publishRejection(task, rejectionReason);
+            await this.ackTask(task.task_id);
+            return;
           }
         }
+      }
+
+      if (isCleanupTask && !threadResult?.inheritedSessionId) {
+        logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without inherited session_id');
+        await this.publishRejection(task, CLEANUP_REJECTION_REASON);
+        await this.ackTask(task.task_id);
+        return;
       }
 
       const sessionId = threadResult?.inheritedSessionId ?? generateSessionId();
@@ -66,7 +91,7 @@ export class EnrichmentPoller {
         logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated new session_id for enrichment');
       }
 
-      const threadHistory = threadResult?.threadContext ?? undefined;
+      const threadHistory = isCleanupTask ? undefined : (threadResult?.threadContext ?? undefined);
       const enrichmentResult = this.enrichmentService.enrich(task, sessionId, threadHistory);
 
       if (enrichmentResult.type === 'rejected') {

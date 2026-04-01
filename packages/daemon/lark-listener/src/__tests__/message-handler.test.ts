@@ -200,7 +200,7 @@ describe('MessageHandler', () => {
       expect(reactor.react).not.toHaveBeenCalled();
       expect(replier.reply).toHaveBeenCalledWith(
         'om_msg1',
-        'Usage: /task <type> <payload>',
+        'Usage: /task <type> <payload> or /end (in a thread)',
       );
     });
 
@@ -212,8 +212,48 @@ describe('MessageHandler', () => {
       expect(submitter.submit).not.toHaveBeenCalled();
       expect(replier.reply).toHaveBeenCalledWith(
         'om_msg1',
-        'Usage: /task <type> <payload>',
+        'Usage: /task <type> <payload> or /end (in a thread)',
       );
+    });
+
+    it('submits bare /end as cleanup with empty payload', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/end' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'cleanup',
+        '',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    });
+
+    it('replies with usage hint for /end with args and does not submit', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/end now' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(reactor.react).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith(
+        'om_msg1',
+        'Usage: /task <type> <payload> or /end (in a thread)',
+      );
+    });
+
+    it('does not treat /ending as an /end command', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/ending cleanup soon' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'generic',
+        '/ending cleanup soon',
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
     });
 
     it('submits plain messages as task_type generic (no /task prefix)', async () => {

@@ -1,4 +1,4 @@
-export const TASK_EXECUTORS = ['claude_code', 'ttadk'] as const;
+export const TASK_EXECUTORS = ['claude_code', 'ttadk', 'builtin'] as const;
 export const TASK_EXECUTOR_OPTIONS = TASK_EXECUTORS.join(', ');
 export type TaskExecutorType = (typeof TASK_EXECUTORS)[number];
 
@@ -9,6 +9,7 @@ export function isTaskExecutorType(value: unknown): value is TaskExecutorType {
 export const EXECUTOR_MODELS = {
   claude_code: ['opus', 'sonnet', 'haiku'],
   ttadk: ['glm-5-ttadk', 'kimi-k2.5', 'glm-4.7-ttadk', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex'],
+  builtin: ['none'],
 } as const satisfies Record<TaskExecutorType, readonly string[]>;
 
 export type ExecutorModelType<T extends TaskExecutorType = TaskExecutorType> =

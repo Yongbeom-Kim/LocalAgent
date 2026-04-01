@@ -5,6 +5,7 @@ import type { LarkReplier } from './adapters/lark-replier';
 import type { DedupMap } from './services/dedup';
 
 const logger = createLogger('lark-listener:handler');
+const USAGE_HINT = 'Usage: /task <type> <payload> or /end (in a thread)';
 
 interface LarkMessageEvent {
   sender: {
@@ -49,8 +50,7 @@ export class MessageHandler {
     const { taskType, taskPayload, isCommand } = this.parseCommand(payload);
 
     if (isCommand && taskType === null) {
-      // Bare /task with no arguments — reply with usage hint
-      await this.replier.reply(message_id, 'Usage: /task <type> <payload>');
+      await this.replier.reply(message_id, USAGE_HINT);
       return;
     }
 
@@ -67,6 +67,14 @@ export class MessageHandler {
   }
 
   private parseCommand(payload: string): { taskType: string | null; taskPayload: string; isCommand: boolean } {
+    if (payload === '/end') {
+      return { taskType: 'cleanup', taskPayload: '', isCommand: true };
+    }
+
+    if (payload.startsWith('/end ') || payload.startsWith('/end\n')) {
+      return { taskType: null, taskPayload: '', isCommand: true };
+    }
+
     // Must match exactly "/task" followed by space, newline, or end-of-string.
     // This avoids false positives like "/taskforce" or "/tasklist".
     if (!payload.startsWith('/task ') && !payload.startsWith('/task\n') && payload !== '/task') {
