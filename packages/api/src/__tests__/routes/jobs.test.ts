@@ -7,6 +7,7 @@ const mockRabbitMQ = {
   publishJob: vi.fn().mockReturnValue(true),
   getNextJob: vi.fn(),
   ackJob: vi.fn(),
+  nackJob: vi.fn(),
 };
 
 function buildApp() {
@@ -147,5 +148,27 @@ describe('POST /jobs', () => {
     expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
       expect.objectContaining({ setup_hook: 'npm ci', setup_hook_timeout_ms: 60000 }),
     );
+  });
+});
+
+describe('POST /jobs/:id/nack', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('returns 200 with { requeued: true } when job is found', async () => {
+    mockRabbitMQ.nackJob.mockReturnValue(true);
+    const app = buildApp();
+    const res = await request(app).post('/jobs/job-abc/nack');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({ requeued: true });
+    expect(mockRabbitMQ.nackJob).toHaveBeenCalledWith('job-abc');
+  });
+
+  it('returns 404 when job is not found', async () => {
+    mockRabbitMQ.nackJob.mockReturnValue(false);
+    const app = buildApp();
+    const res = await request(app).post('/jobs/unknown-job/nack');
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Job not found or already acknowledged' });
+    expect(mockRabbitMQ.nackJob).toHaveBeenCalledWith('unknown-job');
   });
 });

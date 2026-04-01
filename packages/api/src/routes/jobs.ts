@@ -96,5 +96,18 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     }
   });
 
+  router.post('/:id/nack', (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const nacked = rabbitmq.nackJob(req.params.id);
+      if (!nacked) {
+        res.status(404).json({ error: 'Job not found or already acknowledged' });
+        return;
+      }
+      res.status(200).json({ requeued: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   return router;
 }
