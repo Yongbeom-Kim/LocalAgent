@@ -1,6 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { Job, isValidExecutorPreferences, ExecutorPreference, isValidTaskSource } from '@local-agent/shared';
+import { Job, isValidExecutorPreferences, isValidTaskSource } from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createJobRoutes(rabbitmq: RabbitMQService): Router {
@@ -8,7 +8,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_id, task_type, payload, executors, submitted_at, system_prompt, marketplaces, task_source, setup_hook, setup_hook_timeout_ms } = req.body;
+      const { task_id, task_type, payload, executors, submitted_at, session_id, system_prompt, marketplaces, task_source, setup_hook, setup_hook_timeout_ms } = req.body;
 
       if (typeof task_id !== 'string' || !task_id) {
         res.status(400).json({ error: 'task_id is required and must be a string' });
@@ -32,6 +32,10 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'submitted_at is required and must be a string' });
         return;
       }
+      if (typeof session_id !== 'string' || !session_id) {
+        res.status(400).json({ error: 'session_id is required and must be a non-empty string' });
+        return;
+      }
       if (task_source !== undefined && !isValidTaskSource(task_source)) {
         res.status(400).json({ error: 'task_source must be a valid source object' });
         return;
@@ -44,6 +48,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         payload,
         executors,
         submitted_at,
+        session_id,
         enriched_at: new Date().toISOString(),
         ...(system_prompt ? { system_prompt } : {}),
         ...(marketplaces ? { marketplaces } : {}),

@@ -23,11 +23,33 @@ function validJobSubmission() {
     payload: 'hello',
     executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
     submitted_at: '2026-03-31T00:00:00.000Z',
+    session_id: 'session-123',
   };
 }
 
 describe('POST /jobs', () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it('returns 201 with session_id when submission is valid', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send(validJobSubmission());
+    expect(res.status).toBe(201);
+    expect(res.body.session_id).toBe('session-123');
+    expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
+      expect.objectContaining({ session_id: 'session-123' }),
+    );
+  });
+
+  it('returns 400 when session_id missing', async () => {
+    const app = buildApp();
+    const { session_id, ...submissionWithoutSessionId } = validJobSubmission();
+    const res = await request(app)
+      .post('/jobs')
+      .send(submissionWithoutSessionId);
+    expect(res.status).toBe(400);
+  });
 
   it('returns 201 with task_source when provided', async () => {
     const app = buildApp();

@@ -58,6 +58,40 @@ describe('POST /results', () => {
     );
   });
 
+  it('returns 201 with session_id when provided', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({ ...validSubmission(), session_id: 'session-123' });
+    expect(res.status).toBe(201);
+    expect(res.body.session_id).toBe('session-123');
+    expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
+      'results',
+      expect.objectContaining({ session_id: 'session-123' }),
+    );
+  });
+
+  it('returns 201 without session_id when absent', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send(validSubmission());
+    expect(res.status).toBe(201);
+    expect(res.body.session_id).toBeUndefined();
+    expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
+      'results',
+      expect.not.objectContaining({ session_id: expect.anything() }),
+    );
+  });
+
+  it('returns 400 when session_id is not a string', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({ ...validSubmission(), session_id: 123 });
+    expect(res.status).toBe(400);
+  });
+
   it('returns 400 when job_id missing', async () => {
     const app = buildApp();
     const { job_id, ...noJobId } = validSubmission();

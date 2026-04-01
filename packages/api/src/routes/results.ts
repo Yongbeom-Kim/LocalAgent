@@ -8,7 +8,7 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { job_id, task_id, status, exit_code, stdout, stderr, task_source, task_type } = req.body;
+      const { job_id, task_id, status, exit_code, stdout, stderr, task_source, task_type, session_id } = req.body;
 
       if (typeof job_id !== 'string' || !job_id) {
         res.status(400).json({ error: 'job_id is required and must be a string' });
@@ -30,6 +30,10 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'task_type must be a string if provided' });
         return;
       }
+      if (session_id !== undefined && typeof session_id !== 'string') {
+        res.status(400).json({ error: 'session_id must be a string if provided' });
+        return;
+      }
 
       const result: TaskResult = {
         result_id: uuidv4(),
@@ -42,6 +46,7 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         stderr: typeof stderr === 'string' ? stderr : '',
         completed_at: new Date().toISOString(),
         ...(task_source ? { task_source } : {}),
+        ...(session_id !== undefined ? { session_id } : {}),
       };
 
       const buffered = rabbitmq.publishToExchange(DEFAULT_RESULTS_EXCHANGE_NAME, result);
