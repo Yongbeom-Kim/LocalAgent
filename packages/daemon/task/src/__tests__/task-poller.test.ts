@@ -59,6 +59,13 @@ function createJob(overrides?: Partial<Job>): Job {
 
 import { TaskPoller } from '../task-poller';
 import { JobEnvironment } from '../services/job-environment';
+import { SessionLockManager } from '../services/session-lock';
+
+const mockSessionLock = {
+  acquire: vi.fn().mockReturnValue(true),
+  release: vi.fn(),
+  isLockedByLiveProcess: vi.fn().mockReturnValue(false),
+} as unknown as SessionLockManager;
 
 describe('TaskPoller', () => {
   let poller: TaskPoller;
@@ -69,8 +76,10 @@ describe('TaskPoller', () => {
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
     vi.mocked(ClaudeCliExecutor).mockClear();
+    (mockSessionLock.acquire as ReturnType<typeof vi.fn>).mockClear().mockReturnValue(true);
+    (mockSessionLock.release as ReturnType<typeof vi.fn>).mockClear();
     const jobEnv = new JobEnvironment(false);
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv));
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
   });
 
   afterEach(() => {
@@ -96,6 +105,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/jobs/next');
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
@@ -125,6 +135,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
@@ -147,6 +158,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
@@ -177,6 +189,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       // orchestrator catches unknown executor error and returns failure result
       expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -214,6 +227,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(resultPostBody.task_source).toEqual(taskSource);
@@ -237,6 +251,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(resultPostBody.session_id).toBe('session-forwarded');
@@ -260,6 +275,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(resultPostBody.task_type).toBe('deploy');
@@ -283,6 +299,7 @@ describe('TaskPoller', () => {
         });
 
       await poller.pollOnce();
+      await poller.drain();
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(resultPostBody.task_source).toBeUndefined();

@@ -1,19 +1,42 @@
-import { Job, TaskResultSubmission, createLogger, MAX_SNIPPET_CHARS } from '@local-agent/shared';
+import {
+  Job,
+  TaskResultSubmission,
+  createLogger,
+  MAX_SNIPPET_CHARS,
+  DEFAULT_MAX_CONCURRENT_SESSIONS,
+  DEFAULT_REQUEUE_DELAY_MS,
+} from '@local-agent/shared';
 import { TaskOrchestrator } from './core/task-orchestrator';
+import { SessionLockManager } from './services/session-lock';
 
 const logger = createLogger('task-daemon:poller');
 
 export class TaskPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private inFlightJobs = new Map<string, Promise<void>>();
+  private activeSessions = new Set<string>();
+  private basePollInterval = 0;
+  private currentPollInterval = 0;
 
   constructor(
     private readonly apiUrl: string,
     private readonly orchestrator: TaskOrchestrator,
+    private readonly sessionLock: SessionLockManager,
+    private readonly maxConcurrency: number = DEFAULT_MAX_CONCURRENT_SESSIONS,
   ) {}
 
   async pollOnce(): Promise<void> {
     try {
+      if (this.inFlightJobs.size >= this.maxConcurrency) {
+        this.increasePollInterval();
+        logger.info(
+          { inFlight: this.inFlightJobs.size, maxConcurrency: this.maxConcurrency },
+          'At capacity, backing off',
+        );
+        return;
+      }
+
       const res = await fetch(`${this.apiUrl}/jobs/next`);
 
       if (res.status === 204) {
@@ -29,20 +52,34 @@ export class TaskPoller {
       const job = (await res.json()) as Job;
       logger.info({ job_id: job.job_id, task_id: job.task_id }, 'Received job');
 
-      let result: TaskResultSubmission;
-      try {
-        result = await this.orchestrator.handle(job);
-      } catch (err) {
-        logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
-        return;
+      if (this.sessionLock.acquire(job.session_id, job.job_id)) {
+        this.activeSessions.add(job.session_id);
+        const promise = this.executeJob(job);
+        this.inFlightJobs.set(job.job_id, promise);
+      } else {
+        logger.info({ job_id: job.job_id, session_id: job.session_id }, 'Session locked, requeueing job');
+        await new Promise((resolve) => setTimeout(resolve, DEFAULT_REQUEUE_DELAY_MS));
+        try {
+          await fetch(`${this.apiUrl}/jobs/${job.job_id}/nack`, { method: 'POST' });
+        } catch (nackErr) {
+          logger.error({ job_id: job.job_id, err: nackErr }, 'NACK request failed');
+        }
       }
+    } catch (err) {
+      logger.error({ err }, 'Poll error');
+    }
+  }
 
-      // Truncate stdout for downstream consumers (notifications, etc.)
+  private async executeJob(job: Job): Promise<void> {
+    try {
+      const result = await this.orchestrator.handle(job);
+
+      // Truncate stdout
       if (result.stdout.length > MAX_SNIPPET_CHARS) {
         result.stdout = result.stdout.substring(0, MAX_SNIPPET_CHARS);
       }
 
-      // Attach task_type, session_id, and task_source from job to result for downstream routing
+      // Attach routing fields
       const resultWithSource: TaskResultSubmission = {
         ...result,
         task_type: job.task_type,
@@ -50,7 +87,7 @@ export class TaskPoller {
         ...(job.task_source ? { task_source: job.task_source } : {}),
       };
 
-      // Publish result to API (best-effort)
+      // Publish result (best-effort)
       try {
         const resultRes = await fetch(`${this.apiUrl}/results`, {
           method: 'POST',
@@ -76,17 +113,38 @@ export class TaskPoller {
         logger.error({ job_id: job.job_id, err: ackErr }, 'ACK request failed');
       }
     } catch (err) {
-      logger.error({ err }, 'Poll error');
+      logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
+    } finally {
+      this.sessionLock.release(job.session_id);
+      this.inFlightJobs.delete(job.job_id);
+      this.activeSessions.delete(job.session_id);
+      this.resetPollInterval();
+      logger.info(
+        { job_id: job.job_id, inFlight: this.inFlightJobs.size },
+        'Job completed, slot freed',
+      );
     }
   }
 
+  private increasePollInterval(): void {
+    this.currentPollInterval = Math.min(this.currentPollInterval * 2, 30_000);
+  }
+
+  private resetPollInterval(): void {
+    this.currentPollInterval = this.basePollInterval;
+  }
+
   start(intervalMs: number): void {
-    logger.info({ intervalMs }, 'Starting task poller');
+    this.basePollInterval = intervalMs;
+    this.currentPollInterval = intervalMs;
     this.running = true;
+
+    logger.info({ intervalMs }, 'Starting task poller');
+
     const loop = async () => {
       await this.pollOnce();
       if (this.running) {
-        this.timer = setTimeout(loop, intervalMs);
+        this.timer = setTimeout(loop, this.currentPollInterval);
       }
     };
     loop();
@@ -98,6 +156,15 @@ export class TaskPoller {
       clearTimeout(this.timer);
       this.timer = null;
       logger.info('Task poller stopped');
+    }
+  }
+
+  async drain(): Promise<void> {
+    this.stop();
+    if (this.inFlightJobs.size > 0) {
+      logger.info({ count: this.inFlightJobs.size }, 'Waiting for in-flight jobs to complete');
+      await Promise.all(this.inFlightJobs.values());
+      logger.info('All in-flight jobs completed');
     }
   }
 }
