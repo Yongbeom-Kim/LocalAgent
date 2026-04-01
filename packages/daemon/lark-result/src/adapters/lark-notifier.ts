@@ -59,6 +59,7 @@ export class LarkNotifier {
       `Task ID: ${result.task_id}`,
       `Job ID: ${result.job_id}`,
       `task_type: ${result.task_type}`,
+      ...(result.session_id ? [`session_id: ${result.session_id}`] : []),
       `status: ${result.status}`,
       `Exit code: ${result.exit_code ?? 'N/A'}`,
       result.stdout ? `Output:\n${result.stdout}` : 'No output',

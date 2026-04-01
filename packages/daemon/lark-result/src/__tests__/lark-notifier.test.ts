@@ -63,7 +63,7 @@ describe('LarkNotifier', () => {
     );
   });
 
-  it('includes job_id, task_id, status, and truncated stdout in message', async () => {
+  it('includes job_id, task_id, status, and stdout in message', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -82,7 +82,7 @@ describe('LarkNotifier', () => {
     expect(content.text).toContain('job-456');
     expect(content.text).toContain('task-123');
     expect(content.text).toContain('success');
-    expect(content.text.length).toBeLessThan(3000);
+    expect(content.text).toContain('Output:\n');
   });
 
   it('includes task_type prefix line in reply text', async () => {
@@ -101,7 +101,45 @@ describe('LarkNotifier', () => {
     const sendCall = mockFetch.mock.calls[1];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
-    expect(content.text).toMatch(/^task_type: deploy\n/);
+    expect(content.text).toContain('task_type: deploy');
+  });
+
+  it('includes session_id line when session_id is present', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    await notifier.notify(createResult({ session_id: '0195f2d6-5d6d-7b8d-9f8d-123456789abc' }));
+
+    const sendCall = mockFetch.mock.calls[1];
+    const body = JSON.parse(sendCall[1].body);
+    const content = JSON.parse(body.content);
+    expect(content.text).toContain('session_id: 0195f2d6-5d6d-7b8d-9f8d-123456789abc');
+  });
+
+  it('omits session_id line when session_id is absent', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    await notifier.notify(createResult({ session_id: undefined }));
+
+    const sendCall = mockFetch.mock.calls[1];
+    const body = JSON.parse(sendCall[1].body);
+    const content = JSON.parse(body.content);
+    expect(content.text).not.toContain('session_id:');
   });
 
   it('retries up to 3 times on fetch failure then resolves', async () => {
