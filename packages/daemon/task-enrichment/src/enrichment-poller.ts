@@ -37,9 +37,24 @@ export class EnrichmentPoller {
         const validTaskTypes = this.enrichmentService.getValidTaskTypes();
         threadResult = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id, validTaskTypes);
         if (threadResult) {
-          if (task.task_type === 'generic' && threadResult.inheritedTaskType) {
-            task.task_type = threadResult.inheritedTaskType;
-            logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
+          if (threadResult.inheritedTaskType) {
+            if (task.task_type === 'generic' || task.task_type === threadResult.inheritedTaskType) {
+              task.task_type = threadResult.inheritedTaskType;
+              logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
+            } else {
+              const rejectionReason = `Cannot change task type in a thread. This thread uses task_type '${threadResult.inheritedTaskType}'. Remove the /task prefix or start a new conversation.`;
+              logger.warn(
+                {
+                  task_id: task.task_id,
+                  task_type: task.task_type,
+                  inherited_task_type: threadResult.inheritedTaskType,
+                },
+                'Rejected task with mismatched thread task_type',
+              );
+              await this.publishRejection(task, rejectionReason);
+              await this.ackTask(task.task_id);
+              return;
+            }
           }
           if (threadResult.threadContext) {
             task.payload = `--- Thread Context ---\n${threadResult.threadContext}\n--- Current Message ---\n${task.payload}`;

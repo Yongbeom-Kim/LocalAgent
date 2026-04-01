@@ -9,6 +9,7 @@ interface JobContext {
   job_id: string;
   task_id: string;
   task_type: string;
+  session_id: string;
   payload: string;
 }
 
@@ -26,6 +27,7 @@ export class SetupHookRunner {
       LOCALAGENT_JOB_ID: jobContext.job_id,
       LOCALAGENT_TASK_ID: jobContext.task_id,
       LOCALAGENT_TASK_TYPE: jobContext.task_type,
+      LOCALAGENT_SESSION_ID: jobContext.session_id,
       LOCALAGENT_PAYLOAD: jobContext.payload,
     };
 

@@ -51,6 +51,7 @@ function createJob(overrides?: Partial<Job>): Job {
   return {
     job_id: 'job-456',
     task_id: 'test-123',
+    session_id: 'session-789',
     task_type: 'generic',
     payload: 'What is 2+2?',
     executors: [{ executor: 'claude_code', executor_model: 'opus' }],
@@ -75,13 +76,14 @@ describe('TaskOrchestrator', () => {
     orchestrator = new TaskOrchestrator(jobEnv);
   });
 
-  it('calls setup before execution and teardown after', async () => {
+  it('calls setup once before execution and never tears down', async () => {
     const job = createJob();
     await orchestrator.handle(job);
 
     const expectedAttempt: JobAttempt = {
       job_id: 'job-456',
       task_id: 'test-123',
+      session_id: 'session-789',
       task_type: 'generic',
       payload: 'What is 2+2?',
       executor: 'claude_code',
@@ -90,9 +92,10 @@ describe('TaskOrchestrator', () => {
       enriched_at: '2026-03-26T00:00:01.000Z',
     };
 
+    expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockSetup).toHaveBeenCalledWith(job);
     expect(mockClaudeExecute).toHaveBeenCalledWith(expectedAttempt, mockEnv);
-    expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
   it('returns TaskResultSubmission from Claude executor for claude_code jobs', async () => {
@@ -111,6 +114,7 @@ describe('TaskOrchestrator', () => {
       mockEnv,
     );
     expect(result).toEqual(mockResultSubmission);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
   it('returns TaskResultSubmission from TTADK executor for ttadk jobs', async () => {
@@ -129,6 +133,7 @@ describe('TaskOrchestrator', () => {
       mockEnv,
     );
     expect(result).toEqual(mockResultSubmission);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
   it('returns failure result when setup fails', async () => {
@@ -143,17 +148,18 @@ describe('TaskOrchestrator', () => {
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
-  it('calls teardown even when execution fails', async () => {
+  it('returns failure when execution fails without teardown', async () => {
     mockClaudeExecute.mockRejectedValue(new Error('execution boom'));
 
     const result = await orchestrator.handle(createJob());
 
-    expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
+    expect(mockSetup).toHaveBeenCalledTimes(1);
+    expect(mockTeardown).not.toHaveBeenCalled();
     expect(result.status).toBe('failure');
     expect(result.stderr).toContain('execution boom');
   });
 
-  it('returns failure for unknown executor', async () => {
+  it('returns failure for unknown executor without teardown', async () => {
     const job = createJob({
       executors: [{ executor: 'invalid' as never, executor_model: 'test' }],
     });
@@ -161,10 +167,11 @@ describe('TaskOrchestrator', () => {
 
     expect(result.status).toBe('failure');
     expect(result.stderr).toContain('Unknown executor: invalid');
-    expect(mockTeardown).toHaveBeenCalledWith(mockEnv);
+    expect(mockSetup).toHaveBeenCalledTimes(1);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
-  it('falls back to second executor when first fails', async () => {
+  it('falls back to second executor using shared environment', async () => {
     const failResult: TaskResultSubmission = {
       job_id: 'job-456',
       task_id: 'test-123',
@@ -199,8 +206,10 @@ describe('TaskOrchestrator', () => {
     expect(result.stdout).toBe('fallback output');
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
     expect(mockTTADKExecute).toHaveBeenCalledTimes(1);
-    expect(mockSetup).toHaveBeenCalledTimes(2);
-    expect(mockTeardown).toHaveBeenCalledTimes(2);
+    expect(mockSetup).toHaveBeenCalledTimes(1);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(expect.anything(), mockEnv);
+    expect(mockTTADKExecute).toHaveBeenCalledWith(expect.anything(), mockEnv);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
   it('returns last failure when all executors fail', async () => {
@@ -236,6 +245,8 @@ describe('TaskOrchestrator', () => {
 
     expect(result.status).toBe('failure');
     expect(result.stderr).toBe('second failure');
+    expect(mockSetup).toHaveBeenCalledTimes(1);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
   it('returns success immediately without trying remaining executors', async () => {
@@ -251,7 +262,7 @@ describe('TaskOrchestrator', () => {
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
     expect(mockTTADKExecute).not.toHaveBeenCalled();
     expect(mockSetup).toHaveBeenCalledTimes(1);
-    expect(mockTeardown).toHaveBeenCalledTimes(1);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
   it('constructs correct JobAttempt for each executor preference', async () => {
@@ -282,6 +293,8 @@ describe('TaskOrchestrator', () => {
       expect.objectContaining({ executor: 'ttadk', executor_model: 'gpt-5.4' }),
       mockEnv,
     );
+    expect(mockSetup).toHaveBeenCalledTimes(1);
+    expect(mockTeardown).not.toHaveBeenCalled();
   });
 
   it('returns failure for empty executors array', async () => {

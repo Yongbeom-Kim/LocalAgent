@@ -349,7 +349,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id');
   });
 
-  it('overrides task_type to inherited value when current is generic', async () => {
+  it('inherits generic task_type from thread and keeps thread context prepending', async () => {
     const task = createTask({
       task_type: 'generic',
       task_source: { source: 'lark', message_id: 'om_msg1' },
@@ -374,21 +374,27 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockEnrich).toHaveBeenCalledWith(
-      expect.objectContaining({ task_type: 'deploy' }),
+      expect.objectContaining({
+        task_type: 'deploy',
+        payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+      }),
       'generated-session-id',
     );
   });
 
-  it('does not override task_type when current is not generic', async () => {
+  it('accepts matching explicit task_type in thread', async () => {
     const task = createTask({
-      task_type: 'code_review',
+      task_type: 'deploy',
       task_source: { source: 'lark', message_id: 'om_msg1' },
-      payload: 'review this',
+      payload: 'follow up',
     });
-    const jobSubmission = createJobSubmission({ task_type: 'code_review' });
+    const jobSubmission = createJobSubmission({
+      task_type: 'deploy',
+      payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+    });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
-      threadContext: 'user: review code\nassistant: Job abc — success',
+      threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
       inheritedSessionId: null,
     });
@@ -401,12 +407,55 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     await poller.pollOnce();
 
     expect(mockEnrich).toHaveBeenCalledWith(
-      expect.objectContaining({ task_type: 'code_review' }),
+      expect.objectContaining({
+        task_type: 'deploy',
+        payload: '--- Thread Context ---\nuser: deploy the app\nassistant: Job abc — success\n--- Current Message ---\nfollow up',
+      }),
       'generated-session-id',
     );
   });
 
-  it('keeps generic task_type when no inherited type found', async () => {
+  it('rejects differing explicit task_type in thread and does not enrich', async () => {
+    const task = createTask({
+      task_type: 'code_review',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'review this',
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: deploy the app\nassistant: Job abc — success',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'code_review',
+        status: 'failure',
+        exit_code: null,
+        stdout: "Cannot change task type in a thread. This thread uses task_type 'deploy'. Remove the /task prefix or start a new conversation.",
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
+  });
+
+  it('keeps current behavior when no inherited type found', async () => {
     const task = createTask({
       task_type: 'generic',
       task_source: { source: 'lark', message_id: 'om_msg1' },

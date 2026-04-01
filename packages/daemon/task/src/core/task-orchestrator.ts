@@ -28,27 +28,27 @@ export class TaskOrchestrator {
       };
     }
 
+    let env: ExecutionEnvironment;
+    try {
+      env = await this.jobEnv.setup(job);
+    } catch (error) {
+      logger.error({ job_id: job.job_id, err: error }, 'Environment setup failed');
+      return {
+        job_id: job.job_id,
+        task_id: job.task_id,
+        task_type: job.task_type,
+        status: 'failure',
+        exit_code: null,
+        stdout: '',
+        stderr: `Environment setup failed: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+
     let lastResult: TaskResultSubmission | null = null;
 
     for (let i = 0; i < job.executors.length; i++) {
       const pref = job.executors[i];
       const isLast = i === job.executors.length - 1;
-
-      let env: ExecutionEnvironment;
-      try {
-        env = await this.jobEnv.setup(job);
-      } catch (error) {
-        logger.error({ job_id: job.job_id, err: error }, 'Environment setup failed');
-        return {
-          job_id: job.job_id,
-          task_id: job.task_id,
-          task_type: job.task_type,
-          status: 'failure',
-          exit_code: null,
-          stdout: '',
-          stderr: `Environment setup failed: ${error instanceof Error ? error.message : String(error)}`,
-        };
-      }
 
       try {
         const executor = this.resolveExecutor(pref.executor);
@@ -96,8 +96,6 @@ export class TaskOrchestrator {
             'Executor threw, trying next preference',
           );
         }
-      } finally {
-        await this.jobEnv.teardown(env!);
       }
     }
 

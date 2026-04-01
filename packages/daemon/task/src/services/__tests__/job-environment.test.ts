@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { Job } from '@local-agent/shared';
 
@@ -15,16 +15,18 @@ vi.mock('../setup-hook-runner', () => ({
 
 import { execFileSync } from 'node:child_process';
 import { SetupHookRunner } from '../setup-hook-runner';
-import { JobEnvironment, ExecutionEnvironment } from '../job-environment';
+import { JobEnvironment } from '../job-environment';
 
 const mockExecFileSync = vi.mocked(execFileSync);
 const MockSetupHookRunner = vi.mocked(SetupHookRunner);
+const sessionRootDir = '/var/tmp/local-agent/session';
 
 function createJob(overrides?: Partial<Job>): Job {
   return {
     job_id: 'job-test-001',
     task_id: 'task-test-001',
     task_type: 'generic',
+    session_id: 'session-test-001',
     payload: 'test payload',
     executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
     submitted_at: '2026-03-29T00:00:00.000Z',
@@ -45,14 +47,11 @@ describe('JobEnvironment', () => {
     jobEnv = new JobEnvironment(false, new SetupHookRunner());
     mockRunner = MockSetupHookRunner.mock.results[0].value as { run: ReturnType<typeof vi.fn> };
 
-    // Make mock execFileSync simulate creating the cloned directory
     mockExecFileSync.mockImplementation((_cmd, args) => {
       if (args && Array.isArray(args)) {
-        // git clone --depth 1 <url> <dest>
         const dest = args[args.length - 1] as string;
-        if (typeof dest === 'string' && dest.includes('localagent-job-')) {
+        if (typeof dest === 'string' && dest.startsWith(sessionRootDir)) {
           mkdirSync(dest, { recursive: true });
-          // Create a fake plugin directory inside
           const url = args[args.length - 2] as string;
           if (url.includes('claude-plugins-official')) {
             mkdirSync(join(dest, 'superpowers'), { recursive: true });
@@ -60,6 +59,9 @@ describe('JobEnvironment', () => {
           if (url.includes('personal-claude-code')) {
             mkdirSync(join(dest, 'development'), { recursive: true });
             mkdirSync(join(dest, 'learning'), { recursive: true });
+          }
+          if (url.includes('my-repo')) {
+            mkdirSync(join(dest, 'superpowers'), { recursive: true });
           }
           createdDirs.push(dest);
         }
@@ -69,20 +71,21 @@ describe('JobEnvironment', () => {
   });
 
   afterEach(() => {
-    // Clean up any temp dirs created during tests
     for (const dir of createdDirs) {
       try {
         rmSync(dir, { recursive: true, force: true });
-      } catch { /* ignore */ }
+      } catch {
+        // ignore cleanup errors in tests
+      }
     }
   });
 
   describe('setup', () => {
-    it('creates a temp directory for the job', async () => {
+    it('creates a deterministic session workspace directory', async () => {
       const env = await jobEnv.setup(createJob());
       createdDirs.push(env.workDir);
 
-      expect(env.workDir).toMatch(/localagent-job-job-test-001/);
+      expect(env.workDir).toBe('/var/tmp/local-agent/session/session-test-001');
       expect(existsSync(env.workDir)).toBe(true);
     });
 
@@ -112,8 +115,9 @@ describe('JobEnvironment', () => {
         ['clone', '--depth', '1', 'https://github.com/anthropics/claude-plugins-official.git', expect.stringContaining('claude-plugins-official')],
         expect.any(Object),
       );
-      expect(env.pluginDirs).toHaveLength(1);
-      expect(env.pluginDirs[0]).toMatch(/claude-plugins-official\/superpowers$/);
+      expect(env.pluginDirs).toEqual([
+        '/var/tmp/local-agent/session/session-test-001/marketplaces/claude-plugins-official/superpowers',
+      ]);
     });
 
     it('resolves multiple plugins from multiple marketplaces', async () => {
@@ -134,7 +138,36 @@ describe('JobEnvironment', () => {
       createdDirs.push(env.workDir);
 
       expect(mockExecFileSync).toHaveBeenCalledTimes(2);
-      expect(env.pluginDirs).toHaveLength(3);
+      expect(env.pluginDirs).toEqual([
+        '/var/tmp/local-agent/session/session-test-001/marketplaces/claude-plugins-official/superpowers',
+        '/var/tmp/local-agent/session/session-test-001/marketplaces/personal-claude-code/development',
+        '/var/tmp/local-agent/session/session-test-001/marketplaces/personal-claude-code/learning',
+      ]);
+    });
+
+    it('reuses an existing session workspace and skips clone and hook execution', async () => {
+      const job = createJob({
+        setup_hook: 'npm ci',
+        marketplaces: [
+          {
+            url: 'https://github.com/anthropics/claude-plugins-official.git',
+            plugins: ['superpowers'],
+          },
+        ],
+      });
+      const workDir = join(sessionRootDir, job.session_id);
+      const pluginDir = join(workDir, 'marketplaces', 'claude-plugins-official', 'superpowers');
+      mkdirSync(pluginDir, { recursive: true });
+      createdDirs.push(workDir);
+
+      const env = await jobEnv.setup(job);
+
+      expect(env).toEqual({
+        workDir,
+        pluginDirs: [pluginDir],
+      });
+      expect(mockExecFileSync).not.toHaveBeenCalled();
+      expect(mockRunner.run).not.toHaveBeenCalled();
     });
 
     it('strips .git suffix from repo URL to derive directory name', async () => {
@@ -144,19 +177,12 @@ describe('JobEnvironment', () => {
         ],
       });
 
-      // Mock to create directory with expected plugin
-      mockExecFileSync.mockImplementation((_cmd, args) => {
-        const dest = (args as string[])[args!.length - 1];
-        mkdirSync(dest, { recursive: true });
-        mkdirSync(join(dest, 'superpowers'), { recursive: true });
-        createdDirs.push(dest);
-        return Buffer.from('');
-      });
-
       const env = await jobEnv.setup(job);
       createdDirs.push(env.workDir);
 
-      expect(env.pluginDirs[0]).toMatch(/my-repo\/superpowers$/);
+      expect(env.pluginDirs).toEqual([
+        '/var/tmp/local-agent/session/session-test-001/marketplaces/my-repo/superpowers',
+      ]);
     });
 
     it('throws when a plugin directory does not exist in cloned repo', async () => {
@@ -167,6 +193,7 @@ describe('JobEnvironment', () => {
       });
 
       await expect(jobEnv.setup(job)).rejects.toThrow(/Plugin directory.*nonexistent-plugin.*not found/);
+      expect(existsSync(join(sessionRootDir, job.session_id))).toBe(false);
     });
 
     it('throws when git clone fails', async () => {
@@ -181,24 +208,38 @@ describe('JobEnvironment', () => {
       });
 
       await expect(jobEnv.setup(job)).rejects.toThrow('fatal: repository not found');
+      expect(existsSync(join(sessionRootDir, job.session_id))).toBe(false);
+    });
+
+    it('cleans up the session workspace when setup hook fails and debug is false', async () => {
+      mockRunner.run.mockRejectedValueOnce(new Error('Setup hook failed: npm not found'));
+      const job = createJob({ setup_hook: 'npm ci' });
+      const workDir = join(sessionRootDir, job.session_id);
+
+      await expect(jobEnv.setup(job)).rejects.toThrow('Setup hook failed');
+      expect(existsSync(workDir)).toBe(false);
+    });
+
+    it('preserves the session workspace on setup failure when debug is true', async () => {
+      const debugJobEnv = new JobEnvironment(true, new SetupHookRunner());
+      const debugRunner = MockSetupHookRunner.mock.results[1].value as { run: ReturnType<typeof vi.fn> };
+      debugRunner.run.mockRejectedValueOnce(new Error('Setup hook failed: npm not found'));
+      const job = createJob({ session_id: 'session-debug-001', setup_hook: 'npm ci' });
+      const workDir = join(sessionRootDir, job.session_id);
+      createdDirs.push(workDir);
+
+      await expect(debugJobEnv.setup(job)).rejects.toThrow('Setup hook failed');
+      expect(existsSync(workDir)).toBe(true);
     });
   });
 
   describe('teardown', () => {
-    it('removes the temp directory', async () => {
+    it('is a no-op and preserves the session workspace', async () => {
       const env = await jobEnv.setup(createJob());
+      createdDirs.push(env.workDir);
 
       expect(existsSync(env.workDir)).toBe(true);
       await jobEnv.teardown(env);
-      expect(existsSync(env.workDir)).toBe(false);
-    });
-
-    it('skips cleanup when DEBUG is enabled', async () => {
-      const debugJobEnv = new JobEnvironment(true);
-      const env = await debugJobEnv.setup(createJob());
-      createdDirs.push(env.workDir);
-
-      await debugJobEnv.teardown(env);
       expect(existsSync(env.workDir)).toBe(true);
     });
   });
@@ -223,6 +264,7 @@ describe('JobEnvironment', () => {
           job_id: job.job_id,
           task_id: job.task_id,
           task_type: job.task_type,
+          session_id: job.session_id,
           payload: job.payload,
         },
         60_000,
@@ -238,19 +280,11 @@ describe('JobEnvironment', () => {
       expect(mockRunner.run).toHaveBeenCalledWith(
         'echo hi',
         env.workDir,
-        expect.any(Object),
+        expect.objectContaining({
+          session_id: job.session_id,
+        }),
         DEFAULT_SETUP_HOOK_TIMEOUT_MS,
       );
-    });
-
-    it('throws and cleans up workDir when hook fails', async () => {
-      mockRunner.run.mockRejectedValueOnce(new Error('Setup hook failed: npm not found'));
-
-      const job = createJob({ setup_hook: 'npm ci' });
-      await expect(jobEnv.setup(job)).rejects.toThrow('Setup hook failed');
-
-      // workDir should be cleaned up
-      // We can't easily get workDir here so we verify setup threw — cleanup is verified via the try/catch path
     });
   });
 });
