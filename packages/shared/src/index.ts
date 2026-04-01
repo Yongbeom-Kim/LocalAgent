@@ -43,3 +43,4 @@ export {
 } from './constants';
 export { truncate } from './truncate';
 export { extractLarkMessageContent } from './lark-content';
+export { generateSessionId } from './session';
