@@ -1,12 +1,21 @@
 import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
-import { Task, JobSubmission, isTaskExecutorType, isValidExecutorModel, TaskExecutorType, ExecutorPreference, createLogger, GLOBAL_SYSTEM_PROMPT } from '@local-agent/shared';
+import {
+  Task,
+  JobSubmission,
+  isTaskExecutorType,
+  isValidExecutorModel,
+  TaskExecutorType,
+  ExecutorPreference,
+  createLogger,
+  GLOBAL_SYSTEM_PROMPT,
+  isControlTaskType,
+} from '@local-agent/shared';
 
 const logger = createLogger('enrichment-daemon:service');
 
 interface EnrichmentRule {
-  executors: Array<{ executor: string; executor_model: string }>;
   system_prompt?: string;
   marketplaces?: Array<{ url: string; plugins: string[] }>;
   setup_hook?: string;
@@ -77,31 +86,46 @@ export class EnrichmentService {
       };
     }
 
-    if (!rule.executors || rule.executors.length === 0) {
-      logger.error({ task_id: task.task_id, task_type: task.task_type }, 'Enrichment rule has empty executors array — rejecting task');
+    if (task.task_type === 'gc') {
+      logger.error({ task_id: task.task_id }, 'gc task reached enrichment — invalid configuration');
       return {
         type: 'rejected',
-        reason: `Task type "${task.task_type}" has invalid configuration (empty executors).`,
+        reason: 'Task type "gc" must be handled by the enrichment poller, not enrichment rules.',
       };
     }
 
-    const executors: ExecutorPreference[] = [];
-    for (const entry of rule.executors) {
-      if (!isTaskExecutorType(entry.executor)) {
-        logger.error({ task_id: task.task_id, executor: entry.executor }, 'Invalid executor in enrichment rule — rejecting task');
+    let executors: ExecutorPreference[];
+
+    if (!isControlTaskType(task.task_type)) {
+      if (!task.executor || !task.executor_model) {
         return {
           type: 'rejected',
-          reason: `Task type "${task.task_type}" has invalid configuration (bad executor).`,
+          reason: `Task type "${task.task_type}" requires explicit executor routing.`,
         };
       }
-      if (!isValidExecutorModel(entry.executor as TaskExecutorType, entry.executor_model)) {
-        logger.error({ task_id: task.task_id, executor: entry.executor, model: entry.executor_model }, 'Invalid executor_model in enrichment rule — rejecting task');
+      if (!isValidExecutorModel(task.executor, task.executor_model)) {
         return {
           type: 'rejected',
-          reason: `Task type "${task.task_type}" has invalid configuration (bad executor model).`,
+          reason: `Task type "${task.task_type}" has invalid executor routing.`,
         };
       }
-      executors.push({ executor: entry.executor as TaskExecutorType, executor_model: entry.executor_model });
+      executors = [{ executor: task.executor, executor_model: task.executor_model }];
+    } else if (task.task_type === 'cleanup') {
+      executors = [{ executor: 'builtin', executor_model: 'none' }];
+    } else if (task.task_type === 'new_instance') {
+      if (task.executor && task.executor_model) {
+        if (!isTaskExecutorType(task.executor) || !isValidExecutorModel(task.executor, task.executor_model)) {
+          return {
+            type: 'rejected',
+            reason: `Task type "new_instance" has invalid executor routing.`,
+          };
+        }
+        executors = [{ executor: task.executor, executor_model: task.executor_model }];
+      } else {
+        executors = [{ executor: 'claude', executor_model: 'sonnet' }];
+      }
+    } else {
+      return { type: 'rejected', reason: `Unsupported control task type "${task.task_type}".` };
     }
 
     const rulePrompt = rule.system_prompt?.trim() || '';

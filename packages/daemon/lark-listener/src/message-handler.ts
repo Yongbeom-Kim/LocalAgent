@@ -1,11 +1,11 @@
-import { createLogger, type TaskSource, extractLarkMessageContent } from '@local-agent/shared';
+import { createLogger, type TaskSource, extractLarkMessageContent, type TaskExecutorType } from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
 import type { LarkReplier } from './adapters/lark-replier';
 import type { DedupMap } from './services/dedup';
 
 const logger = createLogger('lark-listener:handler');
-const USAGE_HINT = 'Usage: /task <type> <payload> or /end (in a thread)';
+const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /end (in a thread)';
 
 interface LarkMessageEvent {
   sender: {
@@ -20,6 +20,10 @@ interface LarkMessageEvent {
     mentions?: Array<{ key: string; name: string; id: { open_id: string } }>;
   };
 }
+
+type ParsedSubmit =
+  | { kind: 'submit'; taskType: string; taskPayload: string; executor?: TaskExecutorType; executorModel?: string }
+  | { kind: 'usage' };
 
 export class MessageHandler {
   constructor(
@@ -40,25 +44,35 @@ export class MessageHandler {
 
     this.dedup.add(message_id);
 
-    const payload = this.buildPayload(message_type, message.content);
-
     logger.info(
       { message_id, message_type, chat_type: message.chat_type, sender: event.sender.sender_id.open_id },
       'Processing message',
     );
 
-    const { taskType, taskPayload, isCommand } = this.parseCommand(payload);
+    if (message_type !== 'text') {
+      await this.replier.reply(message_id, USAGE_HINT);
+      return;
+    }
 
-    if (isCommand && taskType === null) {
+    const text = this.extractText(message.content);
+    const parsed = this.parseCommand(text);
+
+    if (parsed.kind === 'usage') {
       await this.replier.reply(message_id, USAGE_HINT);
       return;
     }
 
     const taskSource: TaskSource = { source: 'lark' as const, message_id: message.message_id };
-    const taskId = await this.submitter.submit(taskType ?? 'generic', taskPayload, taskSource);
+    const taskId = await this.submitter.submit(
+      parsed.taskType,
+      parsed.taskPayload,
+      taskSource,
+      parsed.executor,
+      parsed.executorModel,
+    );
 
     if (taskId) {
-      logger.info({ message_id, task_id: taskId, task_type: taskType }, 'Task enqueued');
+      logger.info({ message_id, task_id: taskId, task_type: parsed.taskType }, 'Task enqueued');
     } else {
       logger.error({ message_id }, 'Failed to enqueue task');
     }
@@ -66,13 +80,13 @@ export class MessageHandler {
     await this.reactor.react(message_id);
   }
 
-  private parseCommand(payload: string): { taskType: string | null; taskPayload: string; isCommand: boolean } {
+  private parseCommand(payload: string): ParsedSubmit {
     if (payload === '/gc') {
-      return { taskType: 'gc', taskPayload: '', isCommand: true };
+      return { kind: 'submit', taskType: 'gc', taskPayload: '' };
     }
 
     if (payload === '/new') {
-      return { taskType: 'new_instance', taskPayload: '', isCommand: true };
+      return { kind: 'submit', taskType: 'new_instance', taskPayload: '' };
     }
 
     if (payload.startsWith('/new ') || payload.startsWith('/new\n')) {
@@ -81,81 +95,75 @@ export class MessageHandler {
 
       if (args.length === 2) {
         return {
+          kind: 'submit',
           taskType: 'new_instance',
-          taskPayload: JSON.stringify({
-            executor: args[0],
-            executor_model: args[1],
-          }),
-          isCommand: true,
+          taskPayload: '',
+          executor: args[0] as TaskExecutorType,
+          executorModel: args[1],
         };
       }
 
-      return { taskType: null, taskPayload: '', isCommand: true };
+      return { kind: 'usage' };
     }
 
     if (payload === '/end') {
-      return { taskType: 'cleanup', taskPayload: '', isCommand: true };
+      return { kind: 'submit', taskType: 'cleanup', taskPayload: '' };
     }
 
     if (payload.startsWith('/end ') || payload.startsWith('/end\n')) {
-      return { taskType: null, taskPayload: '', isCommand: true };
+      return { kind: 'usage' };
     }
 
-    // Must match exactly "/task" followed by space, newline, or end-of-string.
-    // This avoids false positives like "/taskforce" or "/tasklist".
     if (!payload.startsWith('/task ') && !payload.startsWith('/task\n') && payload !== '/task') {
-      return { taskType: null, taskPayload: payload, isCommand: false };
+      return { kind: 'usage' };
     }
 
-    const rest = payload.slice('/task'.length).trimStart();
-
-    if (rest === '') {
-      return { taskType: null, taskPayload: '', isCommand: true };
+    const taskParse = this.parseTaskCommand(payload);
+    if (taskParse === null) {
+      return { kind: 'usage' };
     }
 
-    const spaceIndex = rest.indexOf(' ');
-    if (spaceIndex === -1) {
-      return { taskType: rest, taskPayload: '', isCommand: true };
-    }
-
-    const taskType = rest.substring(0, spaceIndex);
-    const taskPayload = rest.substring(spaceIndex + 1);
-    return { taskType, taskPayload, isCommand: true };
+    return {
+      kind: 'submit',
+      taskType: taskParse.taskType,
+      taskPayload: taskParse.taskPayload,
+      executor: taskParse.executor,
+      executorModel: taskParse.executorModel,
+    };
   }
 
-  private buildPayload(messageType: string, content: string): string {
-    if (messageType === 'text') {
-      return this.extractText(content);
+  private parseTaskCommand(text: string): {
+    taskType: string;
+    taskPayload: string;
+    executor: TaskExecutorType;
+    executorModel: string;
+  } | null {
+    const firstNl = text.indexOf('\n');
+    const firstLine = firstNl === -1 ? text : text.substring(0, firstNl);
+    const restAfterFirstLine = firstNl === -1 ? '' : text.substring(firstNl + 1);
+
+    if (!firstLine.startsWith('/task ')) {
+      return null;
     }
 
-    try {
-      const parsed = JSON.parse(content);
-      return JSON.stringify(this.buildStructuredPayload(messageType, parsed));
-    } catch {
-      // If content is not valid JSON, return as-is
-      return content;
+    const afterCmd = firstLine.slice('/task'.length).trimStart();
+    const m = /^(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(afterCmd);
+    if (!m) {
+      return null;
     }
+
+    const [, taskType, executorToken, modelToken, payloadStart] = m;
+    const fullPayload = restAfterFirstLine ? `${payloadStart}\n${restAfterFirstLine}` : payloadStart;
+
+    return {
+      taskType,
+      taskPayload: fullPayload,
+      executor: executorToken as TaskExecutorType,
+      executorModel: modelToken,
+    };
   }
 
   private extractText(content: string): string {
     return extractLarkMessageContent('text', content);
-  }
-
-  private buildStructuredPayload(
-    messageType: string,
-    parsed: Record<string, unknown>,
-  ): Record<string, unknown> {
-    switch (messageType) {
-      case 'image':
-        return { type: 'image', key: parsed.image_key };
-      case 'file':
-        return { type: 'file', key: parsed.file_key, name: parsed.file_name };
-      case 'audio':
-        return { type: 'audio', key: parsed.file_key };
-      case 'post':
-        return { type: 'post', content: parsed };
-      default:
-        return { type: messageType, ...parsed };
-    }
   }
 }

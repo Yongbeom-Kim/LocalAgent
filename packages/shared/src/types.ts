@@ -143,9 +143,18 @@ export function isValidExecutorPreferences(
   );
 }
 
+export const CONTROL_TASK_TYPES = ['new_instance', 'gc', 'cleanup'] as const;
+export type ControlTaskType = (typeof CONTROL_TASK_TYPES)[number];
+
+export function isControlTaskType(value: unknown): value is ControlTaskType {
+  return typeof value === 'string' && CONTROL_TASK_TYPES.includes(value as ControlTaskType);
+}
+
 export interface TaskSubmission {
   task_type: string;
   payload: string;
+  executor?: TaskExecutorType;
+  executor_model?: string;
   task_source?: TaskSource;
 }
 
@@ -153,6 +162,8 @@ export interface Task {
   task_id: string;
   task_type: string;
   payload: string;
+  executor?: TaskExecutorType;
+  executor_model?: string;
   submitted_at: string;
   task_source?: TaskSource;
 }

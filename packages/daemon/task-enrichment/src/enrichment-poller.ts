@@ -3,8 +3,7 @@ import {
   JobSubmission,
   createLogger,
   generateSessionId,
-  isTaskExecutorType,
-  isValidExecutorModel,
+  isControlTaskType,
   type TaskExecutorType,
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
@@ -22,32 +21,26 @@ const NEW_INSTANCE_PROMPT = 'Respond with: New session instance started.';
 const NEW_INSTANCE_MISSING_SOURCE_REASON = 'The /new command requires a Lark source.';
 const NEW_INSTANCE_MISSING_THREAD_REASON = 'The /new command can only be used inside a thread.';
 const NEW_INSTANCE_MISSING_SESSION_REASON = 'The /new command requires an existing session in this thread.';
-const NEW_INSTANCE_INVALID_OVERRIDE_REASON =
-  'Invalid /new executor and model: use a valid JSON object with executor and executor_model that pass validation.';
 
-function parseNewInstanceOverride(
-  payload: string,
-): { executor: TaskExecutorType; executor_model: string } | null {
-  if (!payload.trim()) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(payload);
-  } catch {
-    return null;
+const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
+
+const THREADED_NON_CONTROL_TASK_REJECTION =
+  'Cannot use /task in a thread. Remove the /task prefix or start a new conversation.';
+
+function resolveNewInstancePair(task: Task, threadResult: ThreadContextResult): {
+  executor: TaskExecutorType;
+  executor_model: string;
+} {
+  if (task.executor && task.executor_model) {
+    return { executor: task.executor, executor_model: task.executor_model };
   }
-  if (
-    typeof parsed === 'object' &&
-    parsed !== null &&
-    isTaskExecutorType((parsed as { executor?: unknown }).executor) &&
-    isValidExecutorModel(
-      (parsed as { executor: TaskExecutorType }).executor,
-      (parsed as { executor_model?: unknown }).executor_model,
-    )
-  ) {
-    const p = parsed as { executor: TaskExecutorType; executor_model: string };
-    return { executor: p.executor, executor_model: p.executor_model };
+  if (threadResult.inheritedExecutor && threadResult.inheritedExecutorModel) {
+    return {
+      executor: threadResult.inheritedExecutor,
+      executor_model: threadResult.inheritedExecutorModel,
+    };
   }
-  return null;
+  return { executor: 'claude', executor_model: 'sonnet' };
 }
 
 export class EnrichmentPoller {
@@ -100,24 +93,14 @@ export class EnrichmentPoller {
           return;
         }
 
-        if (threadResult?.inheritedTaskType && !isCleanupTask && !isGcTask && !isNewInstanceTask) {
-          if (task.task_type === 'generic' || task.task_type === threadResult.inheritedTaskType) {
-            task.task_type = threadResult.inheritedTaskType;
-            logger.info({ task_id: task.task_id, inherited_task_type: threadResult.inheritedTaskType }, 'Inherited task_type from thread root');
-          } else {
-            const rejectionReason = `Cannot change task type in a thread. This thread uses task_type '${threadResult.inheritedTaskType}'. Remove the /task prefix or start a new conversation.`;
-            logger.warn(
-              {
-                task_id: task.task_id,
-                task_type: task.task_type,
-                inherited_task_type: threadResult.inheritedTaskType,
-              },
-              'Rejected task with mismatched thread task_type',
-            );
-            await this.publishRejection(task, rejectionReason);
-            await this.ackTask(task.task_id);
-            return;
-          }
+        if (threadResult !== null && threadResult !== undefined && !isControlTaskType(task.task_type)) {
+          logger.warn(
+            { task_id: task.task_id, task_type: task.task_type },
+            'Rejected non-control Lark task in a thread',
+          );
+          await this.publishRejection(task, THREADED_NON_CONTROL_TASK_REJECTION);
+          await this.ackTask(task.task_id);
+          return;
         }
       }
 
@@ -133,7 +116,7 @@ export class EnrichmentPoller {
           task_id: task.task_id,
           task_type: GC_TASK_TYPE,
           payload: '',
-          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
+          executors: [GC_EXECUTOR],
           submitted_at: task.submitted_at,
           session_id: generateSessionId(),
           ...(task.task_source ? { task_source: task.task_source } : {}),
@@ -180,17 +163,6 @@ export class EnrichmentPoller {
       }
 
       if (isNewInstanceTask) {
-        let explicitOverride: { executor: TaskExecutorType; executor_model: string } | null = null;
-        if (task.payload.trim() !== '') {
-          explicitOverride = parseNewInstanceOverride(task.payload);
-          if (!explicitOverride) {
-            logger.warn({ task_id: task.task_id }, 'Rejected new_instance task with invalid explicit executor override');
-            await this.publishRejection(task, NEW_INSTANCE_INVALID_OVERRIDE_REASON);
-            await this.ackTask(task.task_id);
-            return;
-          }
-        }
-
         const inheritedType = threadResult!.inheritedTaskType ?? task.task_type;
 
         const enrichmentResult = this.enrichmentService.enrich(
@@ -208,16 +180,7 @@ export class EnrichmentPoller {
 
         enrichmentResult.job.skipContinue = true;
         enrichmentResult.job.task_type = inheritedType;
-        enrichmentResult.job.executors = explicitOverride
-          ? [explicitOverride]
-          : threadResult!.inheritedExecutor && threadResult!.inheritedExecutorModel
-            ? [
-                {
-                  executor: threadResult.inheritedExecutor,
-                  executor_model: threadResult.inheritedExecutorModel,
-                },
-              ]
-            : enrichmentResult.job.executors;
+        enrichmentResult.job.executors = [resolveNewInstancePair(task, threadResult!)];
 
         try {
           const jobRes = await fetch(`${this.apiUrl}/jobs`, {
@@ -260,20 +223,6 @@ export class EnrichmentPoller {
         await this.publishRejection(task, enrichmentResult.reason);
         await this.ackTask(task.task_id);
         return;
-      }
-
-      if (
-        !isGcTask &&
-        !isCleanupTask &&
-        threadResult?.inheritedExecutor &&
-        threadResult?.inheritedExecutorModel
-      ) {
-        enrichmentResult.job.executors = [
-          {
-            executor: threadResult.inheritedExecutor,
-            executor_model: threadResult.inheritedExecutorModel,
-          },
-        ];
       }
 
       try {

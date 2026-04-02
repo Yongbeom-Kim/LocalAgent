@@ -1,5 +1,2 @@
 rules:
-  cleanup:
-    executors:
-      - executor: builtin
-        executor_model: none
+  cleanup: {}

@@ -2,11 +2,14 @@ import { Command } from 'commander';
 import {
   DEFAULT_API_URL,
   type TaskSubmission,
+  type TaskExecutorType,
 } from '@local-agent/shared';
 
 export interface SubmitOptions {
   payload: string;
   type: string;
+  executor: TaskExecutorType;
+  model: string;
   apiUrl: string;
 }
 
@@ -22,6 +25,8 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
   const body: TaskSubmission = {
     task_type: options.type,
     payload: options.payload,
+    executor: options.executor,
+    executor_model: options.model,
   };
 
   let response: Response;
@@ -65,14 +70,25 @@ export function registerSubmitCommand(
     .command('submit')
     .description('Submit a task to the queue')
     .requiredOption('-p, --payload <string>', 'Task payload')
-    .option('-t, --type <string>', 'Task type', 'generic')
+    .requiredOption('-t, --type <string>', 'Task type')
+    .requiredOption('-e, --executor <string>', 'Executor')
+    .requiredOption('-m, --model <string>', 'Executor model')
     .option('-u, --api-url <string>', 'API base URL')
-    .action(async (opts: { payload: string; type: string; apiUrl?: string }) => {
+    .action(
+      async (opts: {
+        payload: string;
+        type: string;
+        executor: TaskExecutorType;
+        model: string;
+        apiUrl?: string;
+      }) => {
       const apiUrl = opts.apiUrl ?? process.env.API_URL ?? DEFAULT_API_URL;
 
       const result = await submit({
         payload: opts.payload,
         type: opts.type,
+        executor: opts.executor,
+        model: opts.model,
         apiUrl,
       });
 
@@ -84,5 +100,6 @@ export function registerSubmitCommand(
         console.error(`Error: Failed to submit task — ${result.error}`);
         process.exit(1);
       }
-    });
+    },
+    );
 }

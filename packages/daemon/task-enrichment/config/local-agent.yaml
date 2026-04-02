@@ -1,14 +1,7 @@
 rules:
-  # Default type for plain messages (no /task prefix)
   localagent-plan:
-    executors:
-      - executor: claude
-        executor_model: opus
     setup_hook: |
       git clone git@github.com:Yongbeom-Kim/LocalAgent.git
   localagent-exec:
-    executors:
-      - executor: claude-w
-        executor_model: gpt-5.4
     setup_hook: |
       git clone git@github.com:Yongbeom-Kim/LocalAgent.git

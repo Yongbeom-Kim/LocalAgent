@@ -8,6 +8,8 @@ import {
   isValidExecutorPreferences,
   isTaskExecutorType,
   type TaskResultSubmission,
+  isControlTaskType,
+  type TaskSubmission,
 } from '../types';
 
 /** Exact static allowlist order for `cursor` (must match `EXECUTOR_MODELS.cursor`). */
@@ -335,5 +337,38 @@ describe('TaskResultSubmission executor metadata', () => {
 
     expect(result.executor).toBe('claude');
     expect(result.executor_model).toBe('sonnet');
+  });
+});
+
+describe('isControlTaskType', () => {
+  it('returns true for control task types', () => {
+    expect(isControlTaskType('new_instance')).toBe(true);
+    expect(isControlTaskType('gc')).toBe(true);
+    expect(isControlTaskType('cleanup')).toBe(true);
+  });
+
+  it('returns false for normal task types', () => {
+    expect(isControlTaskType('code_review')).toBe(false);
+    expect(isControlTaskType('generic')).toBe(false);
+  });
+});
+
+describe('TaskSubmission routing fields', () => {
+  it('allows explicit routing fields on TaskSubmission', () => {
+    const task: TaskSubmission = {
+      task_type: 'code_review',
+      payload: 'review this diff',
+      executor: 'claude',
+      executor_model: 'sonnet',
+    };
+    expect(task.executor_model).toBe('sonnet');
+  });
+
+  it('allows control-task submissions without executor fields', () => {
+    const task: TaskSubmission = {
+      task_type: 'cleanup',
+      payload: '',
+    };
+    expect(task.executor).toBeUndefined();
   });
 });

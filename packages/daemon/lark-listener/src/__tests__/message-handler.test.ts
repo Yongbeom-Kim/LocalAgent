@@ -5,6 +5,8 @@ import type { LarkReactor } from '../adapters/lark-reactor';
 import type { LarkReplier } from '../adapters/lark-replier';
 import type { DedupMap } from '../services/dedup';
 
+const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /end (in a thread)';
+
 function makeEvent(overrides: Record<string, unknown> = {}) {
   return {
     sender: {
@@ -42,16 +44,12 @@ describe('MessageHandler', () => {
     );
   });
 
-  it('submits text message as plain string payload with task_source', async () => {
+  it('rejects plain text messages with the usage hint', async () => {
     await handler.handle(makeEvent());
 
-    expect(submitter.submit).toHaveBeenCalledWith(
-      'generic',
-      'fix the CI pipeline',
-      { source: 'lark', message_id: 'om_msg1' },
-    );
-    expect(reactor.react).toHaveBeenCalledWith('om_msg1');
-    expect(dedup.add).toHaveBeenCalledWith('om_msg1');
+    expect(submitter.submit).not.toHaveBeenCalled();
+    expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    expect(reactor.react).not.toHaveBeenCalled();
   });
 
   it('skips duplicate messages', async () => {
@@ -63,7 +61,7 @@ describe('MessageHandler', () => {
     expect(reactor.react).not.toHaveBeenCalled();
   });
 
-  it('submits image message with task_source', async () => {
+  it('rejects non-text messages with the usage hint', async () => {
     await handler.handle(
       makeEvent({
         message_type: 'image',
@@ -71,123 +69,60 @@ describe('MessageHandler', () => {
       }),
     );
 
-    const taskType = submitter.submit.mock.calls[0][0];
-    const payload = submitter.submit.mock.calls[0][1];
-    const taskSource = submitter.submit.mock.calls[0][2];
-    const parsed = JSON.parse(payload);
-    expect(taskType).toBe('generic');
-    expect(parsed.type).toBe('image');
-    expect(parsed.key).toBe('img_v3_abc');
-    expect(taskSource).toEqual({ source: 'lark', message_id: 'om_msg1' });
-  });
-
-  it('submits file message as JSON payload', async () => {
-    await handler.handle(
-      makeEvent({
-        message_type: 'file',
-        content: JSON.stringify({ file_key: 'file_v3_xyz', file_name: 'report.pdf' }),
-      }),
-    );
-
-    const taskType = submitter.submit.mock.calls[0][0];
-    const payload = submitter.submit.mock.calls[0][1];
-    const parsed = JSON.parse(payload);
-    expect(taskType).toBe('generic');
-    expect(parsed.type).toBe('file');
-    expect(parsed.key).toBe('file_v3_xyz');
-    expect(parsed.name).toBe('report.pdf');
-  });
-
-  it('submits post (rich text) message as JSON payload', async () => {
-    const postContent = { title: 'Title', content: [[{ tag: 'text', text: 'hello' }]] };
-    await handler.handle(
-      makeEvent({
-        message_type: 'post',
-        content: JSON.stringify(postContent),
-      }),
-    );
-
-    const taskType = submitter.submit.mock.calls[0][0];
-    const payload = submitter.submit.mock.calls[0][1];
-    const parsed = JSON.parse(payload);
-    expect(taskType).toBe('generic');
-    expect(parsed.type).toBe('post');
-    expect(parsed.content).toEqual(postContent);
-  });
-
-  it('submits unknown message type as JSON with raw content', async () => {
-    await handler.handle(
-      makeEvent({
-        message_type: 'sticker',
-        content: JSON.stringify({ sticker_id: 'sticker_abc' }),
-      }),
-    );
-
-    const taskType = submitter.submit.mock.calls[0][0];
-    const payload = submitter.submit.mock.calls[0][1];
-    const parsed = JSON.parse(payload);
-    expect(taskType).toBe('generic');
-    expect(parsed.type).toBe('sticker');
+    expect(submitter.submit).not.toHaveBeenCalled();
+    expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
   });
 
   it('still reacts even if submit returns null (failure)', async () => {
     submitter.submit.mockResolvedValue(null);
 
-    await handler.handle(makeEvent());
+    await handler.handle(
+      makeEvent({
+        content: JSON.stringify({
+          text: '/task code_review cursor gpt-5.4-medium-fast review the failing tests',
+        }),
+      }),
+    );
 
-    // React is still called even though task submission failed
     expect(dedup.add).toHaveBeenCalledWith('om_msg1');
     expect(reactor.react).toHaveBeenCalledWith('om_msg1');
   });
 
-  it('handles malformed content JSON gracefully', async () => {
-    await handler.handle(
-      makeEvent({ content: 'not json' }),
-    );
-
-    // Should still attempt to submit with fallback
-    expect(submitter.submit).toHaveBeenCalled();
-    const taskType = submitter.submit.mock.calls[0][0];
-    const payload = submitter.submit.mock.calls[0][1];
-    expect(taskType).toBe('generic');
-    expect(payload).toBe('not json');
-  });
-
   describe('/task command parsing', () => {
-    it('parses /task <type> <payload> and submits with correct task_type', async () => {
-      await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/task code_review fix the login bug' }),
-      }));
+    it('submits /task <type> <executor> <model> <payload> with explicit routing', async () => {
+      await handler.handle(
+        makeEvent({
+          content: JSON.stringify({
+            text: '/task code_review cursor gpt-5.4-medium-fast review this diff',
+          }),
+        }),
+      );
 
       expect(submitter.submit).toHaveBeenCalledWith(
         'code_review',
-        'fix the login bug',
+        'review this diff',
         { source: 'lark', message_id: 'om_msg1' },
+        'cursor',
+        'gpt-5.4-medium-fast',
       );
       expect(reactor.react).toHaveBeenCalledWith('om_msg1');
     });
 
-    it('parses /task <type> with no payload (empty payload)', async () => {
-      await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/task code_review' }),
-      }));
+    it('preserves multiline payload after the first line', async () => {
+      await handler.handle(
+        makeEvent({
+          content: JSON.stringify({
+            text: '/task code_review claude sonnet review this diff\nand explain the risk',
+          }),
+        }),
+      );
 
       expect(submitter.submit).toHaveBeenCalledWith(
         'code_review',
-        '',
+        'review this diff\nand explain the risk',
         { source: 'lark', message_id: 'om_msg1' },
-      );
-    });
-
-    it('preserves multiline payload', async () => {
-      await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/task review fix this\nand that too' }),
-      }));
-
-      expect(submitter.submit).toHaveBeenCalledWith(
-        'review',
-        'fix this\nand that too',
-        { source: 'lark', message_id: 'om_msg1' },
+        'claude',
+        'sonnet',
       );
     });
 
@@ -198,22 +133,43 @@ describe('MessageHandler', () => {
 
       expect(submitter.submit).not.toHaveBeenCalled();
       expect(reactor.react).not.toHaveBeenCalled();
-      expect(replier.reply).toHaveBeenCalledWith(
-        'om_msg1',
-        'Usage: /task <type> <payload> or /end (in a thread)',
-      );
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
 
-    it('replies with usage hint for /task with only whitespace after', async () => {
+    it('rejects /task with only type', async () => {
       await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/task   ' }),
+        content: JSON.stringify({ text: '/task code_review' }),
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
-      expect(replier.reply).toHaveBeenCalledWith(
-        'om_msg1',
-        'Usage: /task <type> <payload> or /end (in a thread)',
-      );
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    });
+
+    it('rejects /task with only type and executor', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/task code_review claude' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    });
+
+    it('rejects /task when payload would start on next line', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/task code_review claude sonnet\nreview this' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    });
+
+    it('does not treat /taskforce as /task', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/taskforce code_review claude sonnet x' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
 
     it('submits bare /gc as gc with empty payload', async () => {
@@ -225,35 +181,20 @@ describe('MessageHandler', () => {
         'gc',
         '',
         { source: 'lark', message_id: 'om_msg1' },
+        undefined,
+        undefined,
       );
       expect(replier.reply).not.toHaveBeenCalled();
       expect(reactor.react).toHaveBeenCalledWith('om_msg1');
     });
 
-    it('does not treat /gc with args as a gc command', async () => {
+    it('replies with usage hint for /gc with args', async () => {
       await handler.handle(makeEvent({
         content: JSON.stringify({ text: '/gc foo' }),
       }));
 
-      expect(submitter.submit).toHaveBeenCalledWith(
-        'generic',
-        '/gc foo',
-        { source: 'lark', message_id: 'om_msg1' },
-      );
-      expect(replier.reply).not.toHaveBeenCalled();
-    });
-
-    it('does not treat /gcollect as a gc command', async () => {
-      await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/gcollect' }),
-      }));
-
-      expect(submitter.submit).toHaveBeenCalledWith(
-        'generic',
-        '/gcollect',
-        { source: 'lark', message_id: 'om_msg1' },
-      );
-      expect(replier.reply).not.toHaveBeenCalled();
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
 
     it('submits bare /end as cleanup with empty payload', async () => {
@@ -265,6 +206,8 @@ describe('MessageHandler', () => {
         'cleanup',
         '',
         { source: 'lark', message_id: 'om_msg1' },
+        undefined,
+        undefined,
       );
       expect(replier.reply).not.toHaveBeenCalled();
       expect(reactor.react).toHaveBeenCalledWith('om_msg1');
@@ -277,23 +220,7 @@ describe('MessageHandler', () => {
 
       expect(submitter.submit).not.toHaveBeenCalled();
       expect(reactor.react).not.toHaveBeenCalled();
-      expect(replier.reply).toHaveBeenCalledWith(
-        'om_msg1',
-        'Usage: /task <type> <payload> or /end (in a thread)',
-      );
-    });
-
-    it('does not treat /ending as an /end command', async () => {
-      await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/ending cleanup soon' }),
-      }));
-
-      expect(submitter.submit).toHaveBeenCalledWith(
-        'generic',
-        '/ending cleanup soon',
-        { source: 'lark', message_id: 'om_msg1' },
-      );
-      expect(replier.reply).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
 
     it('submits bare /new as new_instance with empty payload', async () => {
@@ -305,6 +232,8 @@ describe('MessageHandler', () => {
         'new_instance',
         '',
         { source: 'lark', message_id: 'om_msg1' },
+        undefined,
+        undefined,
       );
       expect(replier.reply).not.toHaveBeenCalled();
       expect(reactor.react).toHaveBeenCalledWith('om_msg1');
@@ -316,11 +245,7 @@ describe('MessageHandler', () => {
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
-      expect(reactor.react).not.toHaveBeenCalled();
-      expect(replier.reply).toHaveBeenCalledWith(
-        'om_msg1',
-        'Usage: /task <type> <payload> or /end (in a thread)',
-      );
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
 
     it('rejects /new with more than two args', async () => {
@@ -329,22 +254,20 @@ describe('MessageHandler', () => {
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
-      expect(reactor.react).not.toHaveBeenCalled();
       expect(replier.reply).toHaveBeenCalled();
     });
 
-    it('submits /new <executor> <model> as new_instance with structured payload', async () => {
+    it('submits explicit /new using structured executor fields', async () => {
       await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/new cursor gpt-5.4-medium-fast' }),
+        content: JSON.stringify({ text: '/new claude sonnet' }),
       }));
 
       expect(submitter.submit).toHaveBeenCalledWith(
         'new_instance',
-        JSON.stringify({
-          executor: 'cursor',
-          executor_model: 'gpt-5.4-medium-fast',
-        }),
+        '',
         { source: 'lark', message_id: 'om_msg1' },
+        'claude',
+        'sonnet',
       );
       expect(replier.reply).not.toHaveBeenCalled();
       expect(reactor.react).toHaveBeenCalledWith('om_msg1');
@@ -355,37 +278,8 @@ describe('MessageHandler', () => {
         content: JSON.stringify({ text: '/newfoo' }),
       }));
 
-      expect(submitter.submit).toHaveBeenCalledWith(
-        'generic',
-        '/newfoo',
-        { source: 'lark', message_id: 'om_msg1' },
-      );
-      expect(replier.reply).not.toHaveBeenCalled();
-    });
-
-    it('submits plain messages as task_type generic (no /task prefix)', async () => {
-      await handler.handle(makeEvent({
-        content: JSON.stringify({ text: 'just a regular message' }),
-      }));
-
-      expect(submitter.submit).toHaveBeenCalledWith(
-        'generic',
-        'just a regular message',
-        { source: 'lark', message_id: 'om_msg1' },
-      );
-    });
-
-    it('does not treat /taskforce as a /task command (must have word boundary)', async () => {
-      await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/taskforce deploy' }),
-      }));
-
-      expect(submitter.submit).toHaveBeenCalledWith(
-        'generic',
-        '/taskforce deploy',
-        { source: 'lark', message_id: 'om_msg1' },
-      );
-      expect(replier.reply).not.toHaveBeenCalled();
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
   });
 });

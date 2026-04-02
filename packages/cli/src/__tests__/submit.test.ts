@@ -31,6 +31,8 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test prompt',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -56,6 +58,8 @@ describe('submitTask', () => {
     await submitModule.submitTask({
       payload: 'review this',
       type: 'code-review',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://example.com:3000',
     });
 
@@ -65,6 +69,39 @@ describe('submitTask', () => {
       body: JSON.stringify({
         task_type: 'code-review',
         payload: 'review this',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      }),
+    });
+  });
+
+  it('sends executor and model in the request body', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        task_id: 'task-123',
+        task_type: 'code_review',
+        submitted_at: '2026-03-26T10:00:00.000Z',
+      }),
+    });
+
+    await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
       }),
     });
   });
@@ -80,6 +117,8 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -100,6 +139,8 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -116,6 +157,8 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -131,6 +174,8 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -152,6 +197,8 @@ describe('submitTask', () => {
     const result = await submitModule.submitTask({
       payload: 'test',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://localhost:3000',
     });
 
@@ -190,13 +237,30 @@ describe('registerSubmitCommand', () => {
     const program = new Command();
     submitModule.registerSubmitCommand(program, submitTaskSpy);
 
-    await program.parseAsync(['submit', '--payload', 'test prompt', '--api-url', 'http://example.com:3000'], {
-      from: 'user',
-    });
+    await program.parseAsync(
+      [
+        'submit',
+        '--payload',
+        'test prompt',
+        '--type',
+        'generic',
+        '--executor',
+        'claude',
+        '--model',
+        'sonnet',
+        '--api-url',
+        'http://example.com:3000',
+      ],
+      {
+        from: 'user',
+      },
+    );
 
     expect(submitTaskSpy).toHaveBeenCalledWith({
       payload: 'test prompt',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: 'http://example.com:3000',
     });
     expect(logSpy).toHaveBeenCalledWith('Task submitted successfully.');
@@ -213,14 +277,38 @@ describe('registerSubmitCommand', () => {
     const program = new Command();
     submitModule.registerSubmitCommand(program, submitTaskSpy);
 
-    await program.parseAsync(['submit', '--payload', 'test prompt'], {
-      from: 'user',
-    });
+    await program.parseAsync(
+      [
+        'submit',
+        '--payload',
+        'test prompt',
+        '--type',
+        'generic',
+        '--executor',
+        'claude',
+        '--model',
+        'sonnet',
+      ],
+      {
+        from: 'user',
+      },
+    );
 
     expect(submitTaskSpy).toHaveBeenCalledWith({
       payload: 'test prompt',
       type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
       apiUrl: DEFAULT_API_URL,
     });
+  });
+
+  it('requires --type, --executor, and --model in the command wiring', async () => {
+    const program = new Command();
+    submitModule.registerSubmitCommand(program, vi.fn());
+
+    await expect(
+      program.parseAsync(['submit', '--payload', 'test'], { from: 'user' }),
+    ).rejects.toThrow();
   });
 });

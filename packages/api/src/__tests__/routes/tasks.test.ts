@@ -23,7 +23,12 @@ describe('POST /tasks', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello' });
+      .send({
+        task_type: 'generic',
+        payload: 'hello',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      });
     expect(res.status).toBe(201);
     expect(res.body.task_id).toBeDefined();
     expect(res.body.task_type).toBe('generic');
@@ -34,6 +39,8 @@ describe('POST /tasks', () => {
       task_type: 'generic',
       payload: 'hello',
       submitted_at: expect.any(String),
+      executor: 'claude',
+      executor_model: 'sonnet',
     });
   });
 
@@ -42,7 +49,12 @@ describe('POST /tasks', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello' });
+      .send({
+        task_type: 'generic',
+        payload: 'hello',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      });
 
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'Server busy, try again later' });
@@ -70,7 +82,13 @@ describe('POST /tasks', () => {
     const taskSource = { source: 'lark', message_id: 'om_abc123' };
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello', task_source: taskSource });
+      .send({
+        task_type: 'generic',
+        payload: 'hello',
+        executor: 'claude',
+        executor_model: 'sonnet',
+        task_source: taskSource,
+      });
     expect(res.status).toBe(201);
     expect(res.body.task_source).toEqual(taskSource);
     expect(mockRabbitMQ.publish).toHaveBeenCalledWith(
@@ -82,7 +100,12 @@ describe('POST /tasks', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello' });
+      .send({
+        task_type: 'generic',
+        payload: 'hello',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      });
     expect(res.status).toBe(201);
     expect(res.body.task_source).toBeUndefined();
   });
@@ -91,7 +114,13 @@ describe('POST /tasks', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello', task_source: { source: 'unknown' } });
+      .send({
+        task_type: 'generic',
+        payload: 'hello',
+        executor: 'claude',
+        executor_model: 'sonnet',
+        task_source: { source: 'unknown' },
+      });
     expect(res.status).toBe(400);
   });
 
@@ -99,7 +128,82 @@ describe('POST /tasks', () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello', task_source: { source: 'lark' } });
+      .send({
+        task_type: 'generic',
+        payload: 'hello',
+        executor: 'claude',
+        executor_model: 'sonnet',
+        task_source: { source: 'lark' },
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 201 for non-control task with explicit executor/model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      });
+    expect(res.status).toBe(201);
+  });
+
+  it('returns 400 when non-control task omits executor/model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({ task_type: 'code_review', payload: 'review this diff' });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/executor/);
+  });
+
+  it('returns 400 when non-control task payload is empty', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'code_review',
+        payload: '   ',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/payload/);
+  });
+
+  it('returns 201 when control task omits executor/model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({ task_type: 'new_instance', payload: '' });
+    expect(res.status).toBe(201);
+  });
+
+  it('returns 201 when control task includes a valid explicit executor/model pair', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'new_instance',
+        payload: '',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      });
+    expect(res.status).toBe(201);
+  });
+
+  it('returns 400 when only one routing field is present', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+      });
     expect(res.status).toBe(400);
   });
 
@@ -113,6 +217,8 @@ describe('GET /tasks/next', () => {
       task_id: 'abc-123',
       task_type: 'generic',
       payload: 'hello',
+      executor: 'claude',
+      executor_model: 'sonnet',
       submitted_at: '2026-03-26T00:00:00.000Z',
     });
     const app = buildApp();

@@ -1,4 +1,7 @@
 export {
+  CONTROL_TASK_TYPES,
+  type ControlTaskType,
+  isControlTaskType,
   TaskSubmission,
   Task,
   type TaskSource,

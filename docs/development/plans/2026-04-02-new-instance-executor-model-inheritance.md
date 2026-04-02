@@ -2,6 +2,8 @@
 
 > **Naming note:** The current executor naming contract uses `claude` and `cursor`. For the live rename spec, see `docs/development/design/2026-04-02-executor-rename-claude-and-cursor-design.md` and `docs/development/plans/2026-04-02-executor-rename-claude-and-cursor.md`.
 
+> The current normal-task routing contract is defined in `docs/development/design/2026-04-02-task-explicit-routing-contract-design.md` and `docs/development/plans/2026-04-02-task-explicit-routing-contract.md`.
+
 **Goal:** Let `/new` accept an optional `<executor> <model>` pair, persist the chosen pair through visible Lark reply metadata, and make later thread messages inherit that pair unless they explicitly change it.
 
 **Architecture:** Reuse the existing thread-metadata pattern instead of adding new storage. `lark-listener` only parses `/new` syntax and encodes explicit overrides; `task-daemon` and `lark-result` surface the actual executor/model used in result metadata; `ThreadContextFetcher` reads the most recent valid pair from bot replies; `EnrichmentPoller` applies that pair as the effective single-entry executor list for inheriting thread tasks.

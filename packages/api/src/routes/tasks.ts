@@ -1,6 +1,12 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { Task, isValidTaskSource } from '@local-agent/shared';
+import {
+  Task,
+  isValidTaskSource,
+  isControlTaskType,
+  isTaskExecutorType,
+  isValidExecutorModel,
+} from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
@@ -8,7 +14,7 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_type, payload, task_source } = req.body;
+      const { task_type, payload, task_source, executor, executor_model } = req.body;
 
       if (typeof task_type !== 'string' || !task_type) {
         res.status(400).json({ error: 'task_type is required and must be a string' });
@@ -24,11 +30,38 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         return;
       }
 
+      const isControl = isControlTaskType(task_type);
+
+      if ((executor === undefined) !== (executor_model === undefined)) {
+        res.status(400).json({ error: 'executor and executor_model must be provided together' });
+        return;
+      }
+
+      if (
+        executor !== undefined &&
+        (!isTaskExecutorType(executor) || !isValidExecutorModel(executor, executor_model))
+      ) {
+        res.status(400).json({ error: 'executor and executor_model must be a valid pair' });
+        return;
+      }
+
+      if (!isControl && executor === undefined) {
+        res.status(400).json({ error: 'executor and executor_model are required for non-control tasks' });
+        return;
+      }
+
+      if (!isControl && payload.trim() === '') {
+        res.status(400).json({ error: 'payload must be non-empty for non-control tasks' });
+        return;
+      }
+
       const task: Task = {
         task_id: uuidv4(),
         task_type,
         payload,
         submitted_at: new Date().toISOString(),
+        ...(executor !== undefined ? { executor } : {}),
+        ...(executor_model !== undefined ? { executor_model } : {}),
         ...(task_source ? { task_source } : {}),
       };
       const buffered = rabbitmq.publish(task);
