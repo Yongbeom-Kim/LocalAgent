@@ -1,4 +1,4 @@
-export const TASK_EXECUTORS = ['claude_code', 'claude-w', 'builtin', 'cursor_agent'] as const;
+export const TASK_EXECUTORS = ['claude', 'claude-w', 'builtin', 'cursor'] as const;
 export const TASK_EXECUTOR_OPTIONS = TASK_EXECUTORS.join(', ');
 export type TaskExecutorType = (typeof TASK_EXECUTORS)[number];
 
@@ -7,7 +7,7 @@ export function isTaskExecutorType(value: unknown): value is TaskExecutorType {
 }
 
 export const EXECUTOR_MODELS = {
-  claude_code: ['opus', 'sonnet', 'haiku'],
+  claude: ['opus', 'sonnet', 'haiku'],
   'claude-w': [
     'gpt-5.4',
     'gpt-5.3-codex',
@@ -20,7 +20,7 @@ export const EXECUTOR_MODELS = {
     'minimax-2.7',
   ],
   builtin: ['none'],
-  cursor_agent: [
+  cursor: [
     'auto',
     'composer-2-fast',
     'composer-2',

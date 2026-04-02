@@ -1,5 +1,7 @@
 # Design: Cursor Agent Model Selection in Enrichment Config
 
+> **Naming note:** The Cursor executor is named `cursor` in the live contract. See `docs/development/design/2026-04-02-executor-rename-claude-and-cursor-design.md` and `docs/development/plans/2026-04-02-executor-rename-claude-and-cursor.md`.
+
 **Date:** 2026-04-02
 **Status:** Ready for implementation planning
 **Type:** Feature enhancement

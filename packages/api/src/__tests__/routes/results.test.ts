@@ -161,11 +161,11 @@ describe('POST /results', () => {
       .post('/results')
       .send({
         ...validSubmission(),
-        executor: 'claude_code',
+        executor: 'claude',
         executor_model: 'sonnet',
       });
     expect(res.status).toBe(201);
-    expect(res.body.executor).toBe('claude_code');
+    expect(res.body.executor).toBe('claude');
     expect(res.body.executor_model).toBe('sonnet');
   });
 
@@ -175,7 +175,7 @@ describe('POST /results', () => {
       .post('/results')
       .send({
         ...validSubmission(),
-        executor: 'claude_code',
+        executor: 'claude',
       });
     expect(res.status).toBe(400);
   });
@@ -186,8 +186,20 @@ describe('POST /results', () => {
       .post('/results')
       .send({
         ...validSubmission(),
-        executor: 'claude_code',
+        executor: 'claude',
         executor_model: 'gpt-5.4',
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when executor uses legacy name claude_code', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({
+        ...validSubmission(),
+        executor: 'claude_code',
+        executor_model: 'sonnet',
       });
     expect(res.status).toBe(400);
   });

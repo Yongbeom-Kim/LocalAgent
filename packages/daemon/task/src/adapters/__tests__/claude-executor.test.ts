@@ -1,14 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { Writable, Readable } from 'node:stream';
-import { JobAttempt, TaskResultSubmission } from '@local-agent/shared';
+import { JobAttempt } from '@local-agent/shared';
 import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
 }));
 
-import { ClaudeCliExecutor } from '../claude-cli-executor';
+import { ClaudeExecutor } from '../claude-executor';
 import { spawn } from 'node:child_process';
 
 const mockSpawn = vi.mocked(spawn);
@@ -19,7 +19,7 @@ function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
     task_id: 'test-123',
     task_type: 'generic',
     payload: 'What is 2+2?',
-    executor: 'claude_code',
+    executor: 'claude',
     executor_model: 'opus',
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
@@ -70,12 +70,12 @@ function emitOutput(child: MockChildProcess, stdout: string, stderr: string, exi
   });
 }
 
-describe('ClaudeCliExecutor', () => {
-  let executor: ClaudeCliExecutor;
+describe('ClaudeExecutor', () => {
+  let executor: ClaudeExecutor;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    executor = new ClaudeCliExecutor();
+    executor = new ClaudeExecutor();
   });
 
   it('returns success result with stdout and stderr on successful execution', async () => {

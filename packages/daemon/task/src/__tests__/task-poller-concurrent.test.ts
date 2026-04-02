@@ -21,9 +21,9 @@ vi.mock('../services/job-environment', () => ({
 
 const mockClaudeExecute = vi.fn();
 
-vi.mock('../adapters/claude-cli-executor', () => {
+vi.mock('../adapters/claude-executor', () => {
   return {
-    ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
       this.execute = mockClaudeExecute;
     }),
   };
@@ -39,7 +39,7 @@ function createJob(overrides?: Partial<Job>): Job {
     session_id: 'session-789',
     task_type: 'generic',
     payload: 'hello',
-    executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+    executors: [{ executor: 'claude', executor_model: 'opus' }],
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
     ...overrides,

@@ -8,7 +8,7 @@ vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
 }));
 
-import { CursorAgentExecutor } from '../cursor-agent-executor';
+import { CursorExecutor } from '../cursor-executor';
 import { spawn } from 'node:child_process';
 
 const mockSpawn = vi.mocked(spawn);
@@ -19,7 +19,7 @@ function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
     task_id: 'test-123',
     task_type: 'generic',
     payload: 'What is 2+2?',
-    executor: 'cursor_agent',
+    executor: 'cursor',
     executor_model: 'auto',
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
@@ -65,12 +65,12 @@ function emitOutput(child: MockChildProcess, stdout: string, stderr: string, exi
   });
 }
 
-describe('CursorAgentExecutor', () => {
-  let executor: CursorAgentExecutor;
+describe('CursorExecutor', () => {
+  let executor: CursorExecutor;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    executor = new CursorAgentExecutor();
+    executor = new CursorExecutor();
   });
 
   it('returns success result with stdout and stderr on successful execution', async () => {

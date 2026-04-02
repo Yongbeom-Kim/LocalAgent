@@ -133,7 +133,7 @@ export class EnrichmentPoller {
           task_id: task.task_id,
           task_type: GC_TASK_TYPE,
           payload: '',
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           submitted_at: task.submitted_at,
           session_id: generateSessionId(),
           ...(task.task_source ? { task_source: task.task_source } : {}),

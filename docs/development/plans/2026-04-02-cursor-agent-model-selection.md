@@ -1,5 +1,7 @@
 # Cursor Agent Model Selection Implementation Plan
 
+> **Naming note:** The current executor naming contract uses `claude` and `cursor`. For the live rename spec, see `docs/development/design/2026-04-02-executor-rename-claude-and-cursor-design.md` and `docs/development/plans/2026-04-02-executor-rename-claude-and-cursor.md`.
+
 **Goal:** Replace `cursor_agent` freeform model validation with a shared static allowlist so enrichment config chooses Cursor models the same way as the other executors.
 
 **Architecture:** The implementation is intentionally centralized in `@local-agent/shared`. `packages/shared/src/types.ts` becomes the sole source of truth for Cursor model ids, and existing consumers in the enrichment daemon and API inherit the stricter behavior without needing new config shapes or route fields. Follow-up work in tests and docs verifies that the new contract is enforced everywhere and that older regex-based design notes are not mistaken for the active spec.

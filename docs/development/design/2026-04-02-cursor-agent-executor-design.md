@@ -1,5 +1,7 @@
 # Cursor Agent CLI executor
 
+> **Naming note:** The current executor naming contract uses `claude` and `cursor`. For the live rename spec, see `docs/development/design/2026-04-02-executor-rename-claude-and-cursor-design.md` and `docs/development/plans/2026-04-02-executor-rename-claude-and-cursor.md`.
+
 **Date:** 2026-04-02  
 **Status:** Reviewed (approve with changes incorporated below)  
 **Packages:** `@local-agent/shared`, `@local-agent/task-daemon` (primary); optional later: `@local-agent/task-enrichment-daemon` (YAML examples)

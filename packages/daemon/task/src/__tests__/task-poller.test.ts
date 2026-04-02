@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { Job, TaskResultSubmission } from '@local-agent/shared';
 import { TaskOrchestrator } from '../core/task-orchestrator';
-import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
+import { ClaudeExecutor } from '../adapters/claude-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 
 const mockEnv: ExecutionEnvironment = {
@@ -28,15 +28,15 @@ const mockResultSubmission: TaskResultSubmission = {
   exit_code: 0,
   stdout: 'result output',
   stderr: '',
-  executor: 'claude_code',
+  executor: 'claude',
   executor_model: 'opus',
 };
 
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 
-vi.mock('../adapters/claude-cli-executor', () => {
+vi.mock('../adapters/claude-executor', () => {
   return {
-    ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
       this.execute = mockClaudeExecute;
     }),
   };
@@ -52,7 +52,7 @@ function createJob(overrides?: Partial<Job>): Job {
     session_id: 'session-789',
     task_type: 'generic',
     payload: 'hello',
-    executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+    executors: [{ executor: 'claude', executor_model: 'opus' }],
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
     ...overrides,
@@ -77,7 +77,7 @@ describe('TaskPoller', () => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
-    vi.mocked(ClaudeCliExecutor).mockClear();
+    vi.mocked(ClaudeExecutor).mockClear();
     (mockSessionLock.acquire as ReturnType<typeof vi.fn>).mockClear().mockReturnValue(true);
     (mockSessionLock.release as ReturnType<typeof vi.fn>).mockClear();
     const jobEnv = new JobEnvironment(false);
@@ -171,7 +171,7 @@ describe('TaskPoller', () => {
     it('does nothing when queue is empty (204)', async () => {
       mockFetch.mockResolvedValueOnce({ status: 204 });
       await poller.pollOnce();
-      expect(ClaudeCliExecutor).not.toHaveBeenCalled();
+      expect(ClaudeExecutor).not.toHaveBeenCalled();
     });
 
     it('posts failure result and acks when executor is unknown', async () => {
@@ -304,7 +304,7 @@ describe('TaskPoller', () => {
       await poller.drain();
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(resultPostBody.executor).toBe('claude_code');
+      expect(resultPostBody.executor).toBe('claude');
       expect(resultPostBody.executor_model).toBe('opus');
     });
 

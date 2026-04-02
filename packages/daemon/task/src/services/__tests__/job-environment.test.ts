@@ -40,7 +40,7 @@ function createJob(overrides?: Partial<Job>): Job {
     task_type: 'generic',
     session_id: 'session-test-001',
     payload: 'test payload',
-    executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+    executors: [{ executor: 'claude', executor_model: 'sonnet' }],
     submitted_at: '2026-03-29T00:00:00.000Z',
     enriched_at: '2026-03-29T00:00:01.000Z',
     ...overrides,

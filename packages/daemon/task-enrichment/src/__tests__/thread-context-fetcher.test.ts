@@ -800,7 +800,7 @@ describe('executor/model extraction from thread messages', () => {
             msg_type: 'text',
             body: {
               content: JSON.stringify({
-                text: 'executor: claude_code\nmodel: sonnet\nJob old',
+                text: 'executor: claude\nmodel: sonnet\nJob old',
               }),
             },
           },
@@ -810,7 +810,7 @@ describe('executor/model extraction from thread messages', () => {
             msg_type: 'text',
             body: {
               content: JSON.stringify({
-                text: 'executor: cursor_agent\nmodel: gpt-5.4-medium-fast\nJob new',
+                text: 'executor: cursor\nmodel: gpt-5.4-medium-fast\nJob new',
               }),
             },
           },
@@ -824,7 +824,7 @@ describe('executor/model extraction from thread messages', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result!.inheritedExecutor).toBe('cursor_agent');
+    expect(result!.inheritedExecutor).toBe('cursor');
     expect(result!.inheritedExecutorModel).toBe('gpt-5.4-medium-fast');
   });
 
@@ -847,7 +847,7 @@ describe('executor/model extraction from thread messages', () => {
             msg_type: 'text',
             body: {
               content: JSON.stringify({
-                text: 'executor: claude_code\nmodel:   sonnet  \nJob',
+                text: 'executor: claude\nmodel:   sonnet  \nJob',
               }),
             },
           },
@@ -861,7 +861,7 @@ describe('executor/model extraction from thread messages', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result!.inheritedExecutor).toBe('claude_code');
+    expect(result!.inheritedExecutor).toBe('claude');
     expect(result!.inheritedExecutorModel).toBe('sonnet');
   });
 
@@ -884,7 +884,7 @@ describe('executor/model extraction from thread messages', () => {
             msg_type: 'text',
             body: {
               content: JSON.stringify({
-                text: 'executor: claude_code\nmodel: sonnet\nbody text',
+                text: 'executor: claude\nmodel: sonnet\nbody text',
               }),
             },
           },
@@ -921,7 +921,7 @@ describe('executor/model extraction from thread messages', () => {
             msg_type: 'text',
             body: {
               content: JSON.stringify({
-                text: 'executor: claude_code\nmodel: sonnet\nearlier reply',
+                text: 'executor: claude\nmodel: sonnet\nearlier reply',
               }),
             },
           },
@@ -951,7 +951,7 @@ describe('executor/model extraction from thread messages', () => {
       );
 
     const result = await fetcher.fetchThreadContext('om_new_msg');
-    expect(result!.inheritedExecutor).toBe('claude_code');
+    expect(result!.inheritedExecutor).toBe('claude');
     expect(result!.inheritedExecutorModel).toBe('sonnet');
     expect(result!.threadContext).toBe('assistant: New session instance started.');
   });

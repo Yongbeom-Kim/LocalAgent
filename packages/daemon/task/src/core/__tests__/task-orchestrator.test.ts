@@ -32,7 +32,7 @@ const mockResultSubmission: TaskResultSubmission = {
   exit_code: 0,
   stdout: 'output',
   stderr: '',
-  executor: 'claude_code',
+  executor: 'claude',
   executor_model: 'opus',
 };
 
@@ -62,11 +62,11 @@ const mockGcResultSubmission: TaskResultSubmission = {
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockGcExecute = vi.fn().mockReturnValue(mockGcResultSubmission);
 const mockClaudeWExecute = vi.fn().mockResolvedValue(mockResultSubmission);
-const mockCursorAgentExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockCursorExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockCleanupExecute = vi.fn().mockResolvedValue(mockCleanupResultSubmission);
 
-vi.mock('../../adapters/claude-cli-executor', () => ({
-  ClaudeCliExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+vi.mock('../../adapters/claude-executor', () => ({
+  ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
     this.execute = mockClaudeExecute;
   }),
 }));
@@ -83,9 +83,9 @@ vi.mock('../../adapters/cleanup-executor', () => ({
   }),
 }));
 
-vi.mock('../../adapters/cursor-agent-executor', () => ({
-  CursorAgentExecutor: vi.fn(function (this: { execute: typeof mockCursorAgentExecute }) {
-    this.execute = mockCursorAgentExecute;
+vi.mock('../../adapters/cursor-executor', () => ({
+  CursorExecutor: vi.fn(function (this: { execute: typeof mockCursorExecute }) {
+    this.execute = mockCursorExecute;
   }),
 }));
 
@@ -95,10 +95,10 @@ vi.mock('../../services/gc-executor', () => ({
   }),
 }));
 
-import { ClaudeCliExecutor } from '../../adapters/claude-cli-executor';
+import { ClaudeExecutor } from '../../adapters/claude-executor';
 import { CleanupExecutor } from '../../adapters/cleanup-executor';
 import { ClaudeWExecutor } from '../../adapters/claude-w-executor';
-import { CursorAgentExecutor } from '../../adapters/cursor-agent-executor';
+import { CursorExecutor } from '../../adapters/cursor-executor';
 import { GcExecutor } from '../../services/gc-executor';
 import { TaskOrchestrator } from '../task-orchestrator';
 import { JobEnvironment } from '../../services/job-environment';
@@ -110,7 +110,7 @@ function createJob(overrides?: Partial<Job>): Job {
     session_id: 'session-789',
     task_type: 'generic',
     payload: 'What is 2+2?',
-    executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+    executors: [{ executor: 'claude', executor_model: 'opus' }],
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',
     ...overrides,
@@ -124,14 +124,14 @@ describe('TaskOrchestrator', () => {
   beforeEach(() => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockClaudeWExecute.mockClear().mockResolvedValue(mockResultSubmission);
-    mockCursorAgentExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockCursorExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockCleanupExecute.mockClear().mockResolvedValue(mockCleanupResultSubmission);
     mockGcExecute.mockClear().mockReturnValue(mockGcResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
-    vi.mocked(ClaudeCliExecutor).mockClear();
+    vi.mocked(ClaudeExecutor).mockClear();
     vi.mocked(ClaudeWExecutor).mockClear();
-    vi.mocked(CursorAgentExecutor).mockClear();
+    vi.mocked(CursorExecutor).mockClear();
     vi.mocked(CleanupExecutor).mockClear();
     vi.mocked(GcExecutor).mockClear();
     jobEnv = new JobEnvironment(false);
@@ -148,7 +148,7 @@ describe('TaskOrchestrator', () => {
       session_id: 'session-789',
       task_type: 'generic',
       payload: 'What is 2+2?',
-      executor: 'claude_code',
+      executor: 'claude',
       executor_model: 'opus',
       submitted_at: '2026-03-26T00:00:00.000Z',
       enriched_at: '2026-03-26T00:00:01.000Z',
@@ -160,19 +160,17 @@ describe('TaskOrchestrator', () => {
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
-  it('returns TaskResultSubmission from Claude executor for claude_code jobs', async () => {
-    const job = createJob({
-      executors: [{ executor: 'claude_code', executor_model: 'opus' }],
-    });
+  it('returns TaskResultSubmission from Claude executor for claude jobs', async () => {
+    const job = createJob();
     const result = await orchestrator.handle(job);
 
-    expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
     expect(ClaudeWExecutor).not.toHaveBeenCalled();
-    expect(CursorAgentExecutor).not.toHaveBeenCalled();
+    expect(CursorExecutor).not.toHaveBeenCalled();
     expect(CleanupExecutor).not.toHaveBeenCalled();
     expect(mockClaudeExecute).toHaveBeenCalledWith(
       expect.objectContaining({
-        executor: 'claude_code',
+        executor: 'claude',
         executor_model: 'opus',
       }),
       mockEnv,
@@ -206,7 +204,7 @@ describe('TaskOrchestrator', () => {
 
     const result = await orchestrator.handle(createJob({
       executors: [
-        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'claude', executor_model: 'opus' },
         { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     }));
@@ -222,8 +220,8 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeCliExecutor).not.toHaveBeenCalled();
-    expect(CursorAgentExecutor).not.toHaveBeenCalled();
+    expect(ClaudeExecutor).not.toHaveBeenCalled();
+    expect(CursorExecutor).not.toHaveBeenCalled();
     expect(CleanupExecutor).not.toHaveBeenCalled();
     expect(mockClaudeWExecute).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -236,24 +234,24 @@ describe('TaskOrchestrator', () => {
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
-  it('returns TaskResultSubmission from CursorAgentExecutor for cursor_agent jobs', async () => {
+  it('returns TaskResultSubmission from CursorExecutor for cursor jobs', async () => {
     const job = createJob({
-      executors: [{ executor: 'cursor_agent', executor_model: 'auto' }],
+      executors: [{ executor: 'cursor', executor_model: 'auto' }],
     });
     const result = await orchestrator.handle(job);
 
-    expect(CursorAgentExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeCliExecutor).not.toHaveBeenCalled();
+    expect(CursorExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeExecutor).not.toHaveBeenCalled();
     expect(ClaudeWExecutor).not.toHaveBeenCalled();
     expect(CleanupExecutor).not.toHaveBeenCalled();
-    expect(mockCursorAgentExecute).toHaveBeenCalledWith(
+    expect(mockCursorExecute).toHaveBeenCalledWith(
       expect.objectContaining({
-        executor: 'cursor_agent',
+        executor: 'cursor',
         executor_model: 'auto',
       }),
       mockEnv,
     );
-    expect(result).toEqual({ ...mockResultSubmission, executor: 'cursor_agent', executor_model: 'auto' });
+    expect(result).toEqual({ ...mockResultSubmission, executor: 'cursor', executor_model: 'auto' });
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
@@ -267,7 +265,7 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(CleanupExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeCliExecutor).not.toHaveBeenCalled();
+    expect(ClaudeExecutor).not.toHaveBeenCalled();
     expect(ClaudeWExecutor).not.toHaveBeenCalled();
     expect(mockCleanupExecute).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -359,7 +357,7 @@ describe('TaskOrchestrator', () => {
 
     const job = createJob({
       executors: [
-        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'claude', executor_model: 'opus' },
         { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
@@ -402,7 +400,7 @@ describe('TaskOrchestrator', () => {
 
     const job = createJob({
       executors: [
-        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'claude', executor_model: 'opus' },
         { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
@@ -419,7 +417,7 @@ describe('TaskOrchestrator', () => {
   it('returns success immediately without trying remaining executors', async () => {
     const job = createJob({
       executors: [
-        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'claude', executor_model: 'opus' },
         { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
@@ -446,14 +444,14 @@ describe('TaskOrchestrator', () => {
 
     const job = createJob({
       executors: [
-        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'claude', executor_model: 'opus' },
         { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     await orchestrator.handle(job);
 
     expect(mockClaudeExecute).toHaveBeenCalledWith(
-      expect.objectContaining({ executor: 'claude_code', executor_model: 'opus' }),
+      expect.objectContaining({ executor: 'claude', executor_model: 'opus' }),
       mockEnv,
     );
     expect(mockClaudeWExecute).toHaveBeenCalledWith(
@@ -479,7 +477,7 @@ describe('TaskOrchestrator', () => {
   it('short-circuits gc jobs without environment setup', async () => {
     const job = createJob({
       task_type: 'gc',
-      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+      executors: [{ executor: 'claude', executor_model: 'sonnet' }],
     });
 
     const result = await orchestrator.handle(job);
@@ -496,7 +494,7 @@ describe('TaskOrchestrator', () => {
   it('calls execute on instantiated GcExecutor', async () => {
     const job = createJob({
       task_type: 'gc',
-      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+      executors: [{ executor: 'claude', executor_model: 'sonnet' }],
     });
 
     await orchestrator.handle(job);

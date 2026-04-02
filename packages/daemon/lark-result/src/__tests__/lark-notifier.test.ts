@@ -117,7 +117,7 @@ describe('LarkNotifier', () => {
 
     await notifier.notify(
       createResult({
-        executor: 'cursor_agent',
+        executor: 'cursor',
         executor_model: 'gpt-5.4-medium-fast',
       }),
     );
@@ -125,7 +125,7 @@ describe('LarkNotifier', () => {
     const sendCall = mockFetch.mock.calls[1];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
-    expect(content.text).toContain('executor: cursor_agent');
+    expect(content.text).toContain('executor: cursor');
     expect(content.text).toContain('model: gpt-5.4-medium-fast');
   });
 

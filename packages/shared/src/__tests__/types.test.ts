@@ -6,10 +6,11 @@ import {
   type Job,
   type MarketplaceConfig,
   isValidExecutorPreferences,
+  isTaskExecutorType,
   type TaskResultSubmission,
 } from '../types';
 
-/** Exact static allowlist order for `cursor_agent` (must match `EXECUTOR_MODELS.cursor_agent`). */
+/** Exact static allowlist order for `cursor` (must match `EXECUTOR_MODELS.cursor`). */
 const CURSOR_AGENT_MODELS_EXPECTED = [
   'auto',
   'composer-2-fast',
@@ -97,8 +98,8 @@ const CURSOR_AGENT_MODELS_EXPECTED = [
 ] as const;
 
 describe('EXECUTOR_MODELS', () => {
-  it('defines claude_code models', () => {
-    expect(EXECUTOR_MODELS.claude_code).toEqual(['opus', 'sonnet', 'haiku']);
+  it('defines claude models', () => {
+    expect(EXECUTOR_MODELS.claude).toEqual(['opus', 'sonnet', 'haiku']);
   });
 
   it('defines claude-w models', () => {
@@ -119,16 +120,37 @@ describe('EXECUTOR_MODELS', () => {
     expect(EXECUTOR_MODELS.builtin).toEqual(['none']);
   });
 
-  it('defines cursor_agent static allowlist', () => {
-    expect(EXECUTOR_MODELS.cursor_agent).toEqual(CURSOR_AGENT_MODELS_EXPECTED);
+  it('defines cursor static allowlist', () => {
+    expect(EXECUTOR_MODELS.cursor).toEqual(CURSOR_AGENT_MODELS_EXPECTED);
+  });
+});
+
+describe('isTaskExecutorType', () => {
+  it('accepts canonical executor names', () => {
+    expect(isTaskExecutorType('claude')).toBe(true);
+    expect(isTaskExecutorType('claude-w')).toBe(true);
+    expect(isTaskExecutorType('builtin')).toBe(true);
+    expect(isTaskExecutorType('cursor')).toBe(true);
+  });
+
+  it('rejects legacy executor names', () => {
+    expect(isTaskExecutorType('claude_code')).toBe(false);
+    expect(isTaskExecutorType('cursor_agent')).toBe(false);
+  });
+
+  it('rejects unknown strings and non-strings', () => {
+    expect(isTaskExecutorType('ttadk')).toBe(false);
+    expect(isTaskExecutorType('')).toBe(false);
+    expect(isTaskExecutorType(null)).toBe(false);
+    expect(isTaskExecutorType(undefined)).toBe(false);
   });
 });
 
 describe('isValidExecutorModel', () => {
-  it('returns true for valid claude_code model', () => {
-    expect(isValidExecutorModel('claude_code', 'opus')).toBe(true);
-    expect(isValidExecutorModel('claude_code', 'sonnet')).toBe(true);
-    expect(isValidExecutorModel('claude_code', 'haiku')).toBe(true);
+  it('returns true for valid claude model', () => {
+    expect(isValidExecutorModel('claude', 'opus')).toBe(true);
+    expect(isValidExecutorModel('claude', 'sonnet')).toBe(true);
+    expect(isValidExecutorModel('claude', 'haiku')).toBe(true);
   });
 
   it('returns true for valid claude-w model', () => {
@@ -145,7 +167,7 @@ describe('isValidExecutorModel', () => {
   });
 
   it('returns false for cross-executor mismatch', () => {
-    expect(isValidExecutorModel('claude_code', 'gpt-5.4')).toBe(false);
+    expect(isValidExecutorModel('claude', 'gpt-5.4')).toBe(false);
     expect(isValidExecutorModel('claude-w', 'opus')).toBe(false);
   });
 
@@ -157,29 +179,29 @@ describe('isValidExecutorModel', () => {
   });
 
   it('returns false for unknown model strings', () => {
-    expect(isValidExecutorModel('claude_code', 'gpt-4o')).toBe(false);
+    expect(isValidExecutorModel('claude', 'gpt-4o')).toBe(false);
     expect(isValidExecutorModel('claude-w', 'unknown')).toBe(false);
   });
 
   it('returns false for non-string values', () => {
-    expect(isValidExecutorModel('claude_code', 123)).toBe(false);
-    expect(isValidExecutorModel('claude_code', undefined)).toBe(false);
-    expect(isValidExecutorModel('claude_code', null)).toBe(false);
+    expect(isValidExecutorModel('claude', 123)).toBe(false);
+    expect(isValidExecutorModel('claude', undefined)).toBe(false);
+    expect(isValidExecutorModel('claude', null)).toBe(false);
   });
 
-  it('validates cursor_agent models against the static allowlist', () => {
-    expect(isValidExecutorModel('cursor_agent', 'auto')).toBe(true);
-    expect(isValidExecutorModel('cursor_agent', 'gpt-5.4-medium-fast')).toBe(true);
-    expect(isValidExecutorModel('cursor_agent', 'claude-4.6-sonnet-medium-thinking')).toBe(true);
-    expect(isValidExecutorModel('cursor_agent', 'not-a-real-model')).toBe(false);
-    expect(isValidExecutorModel('cursor_agent', 'bad id with spaces')).toBe(false);
-    expect(isValidExecutorModel('cursor_agent', 'gpt-5.4-medium-ultra')).toBe(false);
+  it('validates cursor models against the static allowlist', () => {
+    expect(isValidExecutorModel('cursor', 'auto')).toBe(true);
+    expect(isValidExecutorModel('cursor', 'gpt-5.4-medium-fast')).toBe(true);
+    expect(isValidExecutorModel('cursor', 'claude-4.6-sonnet-medium-thinking')).toBe(true);
+    expect(isValidExecutorModel('cursor', 'not-a-real-model')).toBe(false);
+    expect(isValidExecutorModel('cursor', 'bad id with spaces')).toBe(false);
+    expect(isValidExecutorModel('cursor', 'gpt-5.4-medium-ultra')).toBe(false);
   });
 });
 
 describe('getExecutorModelOptions', () => {
-  it('returns comma-separated list for claude_code', () => {
-    expect(getExecutorModelOptions('claude_code')).toBe('opus, sonnet, haiku');
+  it('returns comma-separated list for claude', () => {
+    expect(getExecutorModelOptions('claude')).toBe('opus, sonnet, haiku');
   });
 
   it('returns comma-separated list for claude-w', () => {
@@ -192,8 +214,8 @@ describe('getExecutorModelOptions', () => {
     expect(getExecutorModelOptions('builtin')).toBe('none');
   });
 
-  it('returns comma-separated list for cursor_agent', () => {
-    expect(getExecutorModelOptions('cursor_agent')).toBe(EXECUTOR_MODELS.cursor_agent.join(', '));
+  it('returns comma-separated list for cursor', () => {
+    expect(getExecutorModelOptions('cursor')).toBe(EXECUTOR_MODELS.cursor.join(', '));
   });
 });
 
@@ -207,7 +229,7 @@ describe('MarketplaceConfig', () => {
       task_id: 't1',
       task_type: 'test',
       payload: 'p',
-      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+      executors: [{ executor: 'claude', executor_model: 'sonnet' }],
       submitted_at: '2026-01-01T00:00:00Z',
       enriched_at: '2026-01-01T00:00:01Z',
       session_id: 's1',
@@ -225,7 +247,7 @@ describe('MarketplaceConfig', () => {
       task_id: 't1',
       task_type: 'test',
       payload: 'p',
-      executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+      executors: [{ executor: 'claude', executor_model: 'sonnet' }],
       submitted_at: '2026-01-01T00:00:00Z',
       enriched_at: '2026-01-01T00:00:01Z',
       session_id: 's1',
@@ -237,14 +259,14 @@ describe('MarketplaceConfig', () => {
 describe('isValidExecutorPreferences', () => {
   it('returns true for valid non-empty array', () => {
     expect(isValidExecutorPreferences([
-      { executor: 'claude_code', executor_model: 'sonnet' },
+      { executor: 'claude', executor_model: 'sonnet' },
       { executor: 'claude-w', executor_model: 'gpt-5.4' },
     ])).toBe(true);
   });
 
   it('returns true for single-element array', () => {
     expect(isValidExecutorPreferences([
-      { executor: 'claude_code', executor_model: 'opus' },
+      { executor: 'claude', executor_model: 'opus' },
     ])).toBe(true);
   });
 
@@ -254,15 +276,15 @@ describe('isValidExecutorPreferences', () => {
     ])).toBe(true);
   });
 
-  it('returns true for cursor_agent with allowlisted model', () => {
+  it('returns true for cursor with allowlisted model', () => {
     expect(isValidExecutorPreferences([
-      { executor: 'cursor_agent', executor_model: 'auto' },
+      { executor: 'cursor', executor_model: 'auto' },
     ])).toBe(true);
   });
 
-  it('returns false for cursor_agent with unlisted model', () => {
+  it('returns false for cursor with unlisted model', () => {
     expect(isValidExecutorPreferences([
-      { executor: 'cursor_agent', executor_model: 'not-a-real-model' },
+      { executor: 'cursor', executor_model: 'not-a-real-model' },
     ])).toBe(false);
   });
 
@@ -271,14 +293,14 @@ describe('isValidExecutorPreferences', () => {
   });
 
   it('returns false for non-array', () => {
-    expect(isValidExecutorPreferences('claude_code')).toBe(false);
+    expect(isValidExecutorPreferences('claude')).toBe(false);
     expect(isValidExecutorPreferences(null)).toBe(false);
     expect(isValidExecutorPreferences(undefined)).toBe(false);
   });
 
   it('returns false when any pair has invalid executor', () => {
     expect(isValidExecutorPreferences([
-      { executor: 'claude_code', executor_model: 'sonnet' },
+      { executor: 'claude', executor_model: 'sonnet' },
       { executor: 'nonexistent', executor_model: 'opus' },
     ])).toBe(false);
     expect(isValidExecutorPreferences([
@@ -288,12 +310,12 @@ describe('isValidExecutorPreferences', () => {
 
   it('returns false when any pair has invalid model for its executor', () => {
     expect(isValidExecutorPreferences([
-      { executor: 'claude_code', executor_model: 'gpt-5.4' },
+      { executor: 'claude', executor_model: 'gpt-5.4' },
     ])).toBe(false);
   });
 
   it('returns false for array with non-object elements', () => {
-    expect(isValidExecutorPreferences(['claude_code'])).toBe(false);
+    expect(isValidExecutorPreferences(['claude'])).toBe(false);
   });
 });
 
@@ -307,11 +329,11 @@ describe('TaskResultSubmission executor metadata', () => {
       exit_code: 0,
       stdout: 'done',
       stderr: '',
-      executor: 'claude_code',
+      executor: 'claude',
       executor_model: 'sonnet',
     };
 
-    expect(result.executor).toBe('claude_code');
+    expect(result.executor).toBe('claude');
     expect(result.executor_model).toBe('sonnet');
   });
 });

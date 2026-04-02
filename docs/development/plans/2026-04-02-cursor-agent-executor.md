@@ -1,5 +1,7 @@
 # Cursor Agent CLI executor — implementation plan
 
+> **Naming note:** The current executor naming contract uses `claude` and `cursor`. For the live rename spec, see `docs/development/design/2026-04-02-executor-rename-claude-and-cursor-design.md` and `docs/development/plans/2026-04-02-executor-rename-claude-and-cursor.md`.
+
 **Goal (original executor rollout):** Add `cursor_agent` to `TaskExecutorType`, validate dynamic Cursor model ids in `@local-agent/shared`, and implement `CursorAgentExecutor` in the task daemon with orchestrator routing and tests, per `docs/development/design/2026-04-02-cursor-agent-executor-design.md`.
 
 **Architecture (same rollout):** A thin `spawn('agent', ...)` adapter mirroring `ClaudeCliExecutor` (continue vs fresh, payload/history, truncation, logging). Shared package uses a regex-bounded model id for `cursor_agent` plus a conditional `ExecutorModelType` so typing stays sound.

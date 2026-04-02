@@ -1,8 +1,8 @@
 import { Job, JobAttempt, TaskResultSubmission, TaskExecutorType, createLogger } from '@local-agent/shared';
-import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
+import { ClaudeExecutor } from '../adapters/claude-executor';
 import { CleanupExecutor } from '../adapters/cleanup-executor';
 import { ClaudeWExecutor } from '../adapters/claude-w-executor';
-import { CursorAgentExecutor } from '../adapters/cursor-agent-executor';
+import { CursorExecutor } from '../adapters/cursor-executor';
 import { TaskExecutor } from '../ports/task-executor';
 import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
@@ -159,10 +159,10 @@ export class TaskOrchestrator {
   }
 
   private resolveExecutor(executor: TaskExecutorType): TaskExecutor {
-    if (executor === 'claude_code') return new ClaudeCliExecutor();
+    if (executor === 'claude') return new ClaudeExecutor();
     if (executor === 'claude-w') return new ClaudeWExecutor();
     if (executor === 'builtin') return new CleanupExecutor();
-    if (executor === 'cursor_agent') return new CursorAgentExecutor();
+    if (executor === 'cursor') return new CursorExecutor();
     throw new Error(`Unknown executor: ${executor}`);
   }
 }

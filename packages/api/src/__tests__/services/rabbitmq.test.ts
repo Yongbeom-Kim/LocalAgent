@@ -110,7 +110,7 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+        executors: [{ executor: 'claude', executor_model: 'opus' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       channel.get.mockResolvedValue({
@@ -130,7 +130,7 @@ describe('RabbitMQService', () => {
           task_id: 'duplicate-id',
           task_type: 'generic',
           payload: 'first',
-          executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+          executors: [{ executor: 'claude', executor_model: 'opus' }],
           submitted_at: '2026-03-26T00:00:00.000Z',
         })),
         fields: { deliveryTag: 1 },
@@ -156,7 +156,7 @@ describe('RabbitMQService', () => {
         task_id: 'duplicate-id',
         task_type: 'generic',
         payload: 'first',
-        executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+        executors: [{ executor: 'claude', executor_model: 'opus' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       expect(duplicateTask).toBeNull();
@@ -250,7 +250,7 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+        executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         submitted_at: '2026-03-31T00:00:00.000Z',
         session_id: 'session-abc',
         enriched_at: '2026-03-31T00:00:01.000Z',

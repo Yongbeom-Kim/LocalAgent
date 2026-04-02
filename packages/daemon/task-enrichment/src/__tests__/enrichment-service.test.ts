@@ -26,18 +26,18 @@ describe('EnrichmentService', () => {
         rules: {
           code_review: {
             executors: [
-              { executor: 'claude_code', executor_model: 'opus' },
-              { executor: 'claude_code', executor_model: 'sonnet' },
+              { executor: 'claude', executor_model: 'opus' },
+              { executor: 'claude', executor_model: 'sonnet' },
             ],
           },
           quick_question: {
             executors: [
-              { executor: 'claude_code', executor_model: 'haiku' },
+              { executor: 'claude', executor_model: 'haiku' },
             ],
           },
           default: {
             executors: [
-              { executor: 'claude_code', executor_model: 'sonnet' },
+              { executor: 'claude', executor_model: 'sonnet' },
               { executor: 'claude-w', executor_model: 'gpt-5.4' },
             ],
           },
@@ -54,8 +54,8 @@ describe('EnrichmentService', () => {
       expect(enriched.job.task_type).toBe('code_review');
       expect(enriched.job.payload).toBe('Review this code');
       expect(enriched.job.executors).toEqual([
-        { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'claude_code', executor_model: 'sonnet' },
+        { executor: 'claude', executor_model: 'opus' },
+        { executor: 'claude', executor_model: 'sonnet' },
       ]);
       expect(enriched.job.submitted_at).toBe('2026-03-29T00:00:00.000Z');
     });
@@ -84,8 +84,8 @@ describe('EnrichmentService', () => {
 
       expect(result.type).toBe('enriched');
       const enriched = result as { type: 'enriched'; job: JobSubmission };
-      expect(enriched.job.executors[0]).toEqual({ executor: 'claude_code', executor_model: 'opus' });
-      expect(enriched.job.executors[1]).toEqual({ executor: 'claude_code', executor_model: 'sonnet' });
+      expect(enriched.job.executors[0]).toEqual({ executor: 'claude', executor_model: 'opus' });
+      expect(enriched.job.executors[1]).toEqual({ executor: 'claude', executor_model: 'sonnet' });
     });
   });
 
@@ -96,7 +96,7 @@ describe('EnrichmentService', () => {
       service = EnrichmentService.fromObject({
         rules: {
           code_review: {
-            executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+            executors: [{ executor: 'claude', executor_model: 'opus' }],
           },
         },
       });
@@ -120,7 +120,7 @@ describe('EnrichmentService', () => {
         rules: {
           bad_rule: {
             executors: [
-              { executor: 'claude_code', executor_model: 'opus' },
+              { executor: 'claude', executor_model: 'opus' },
               { executor: 'nonexistent', executor_model: 'opus' },
             ],
           },
@@ -154,11 +154,11 @@ describe('EnrichmentService', () => {
       expect(result.type).toBe('rejected');
     });
 
-    it('enriches when cursor_agent uses allowlisted model gpt-5.4-medium-fast', () => {
+    it('enriches when cursor uses allowlisted model gpt-5.4-medium-fast', () => {
       const service = EnrichmentService.fromObject({
         rules: {
           cursor_task: {
-            executors: [{ executor: 'cursor_agent', executor_model: 'gpt-5.4-medium-fast' }],
+            executors: [{ executor: 'cursor', executor_model: 'gpt-5.4-medium-fast' }],
           },
         },
       });
@@ -166,15 +166,15 @@ describe('EnrichmentService', () => {
       const result = service.enrich(createTask({ task_type: 'cursor_task' }), TEST_SESSION_ID);
       expect(result.type).toBe('enriched');
       expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
-        { executor: 'cursor_agent', executor_model: 'gpt-5.4-medium-fast' },
+        { executor: 'cursor', executor_model: 'gpt-5.4-medium-fast' },
       ]);
     });
 
-    it('returns rejected result when cursor_agent uses unlisted model not-a-real-model', () => {
+    it('returns rejected result when cursor uses unlisted model not-a-real-model', () => {
       const service = EnrichmentService.fromObject({
         rules: {
           bad_cursor: {
-            executors: [{ executor: 'cursor_agent', executor_model: 'not-a-real-model' }],
+            executors: [{ executor: 'cursor', executor_model: 'not-a-real-model' }],
           },
         },
       });
@@ -211,8 +211,8 @@ describe('EnrichmentService', () => {
         rules: {
           development: {
             executors: [
-              { executor: 'claude_code', executor_model: 'opus' },
-              { executor: 'claude_code', executor_model: 'sonnet' },
+              { executor: 'claude', executor_model: 'opus' },
+              { executor: 'claude', executor_model: 'sonnet' },
             ],
             marketplaces: [
               { url: 'https://github.com/anthropics/claude-plugins-official.git', plugins: ['superpowers'] },
@@ -235,7 +235,7 @@ describe('EnrichmentService', () => {
       const service = EnrichmentService.fromObject({
         rules: {
           default: {
-            executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+            executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           },
         },
       });
@@ -254,7 +254,7 @@ describe('EnrichmentService', () => {
       service = EnrichmentService.fromObject({
         rules: {
           default: {
-            executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+            executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           },
         },
       });
@@ -289,7 +289,7 @@ describe('EnrichmentService', () => {
       service = EnrichmentService.fromObject({
         rules: {
           default: {
-            executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+            executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           },
         },
       });
@@ -320,10 +320,10 @@ describe('rejection for unknown types (no default fallback)', () => {
     service = EnrichmentService.fromObject({
       rules: {
         generic: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         },
         code_review: {
-          executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+          executors: [{ executor: 'claude', executor_model: 'opus' }],
         },
       },
     });
@@ -351,7 +351,7 @@ describe('rejection for unknown types (no default fallback)', () => {
 
     expect(result).toHaveProperty('type', 'enriched');
     expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
-      { executor: 'claude_code', executor_model: 'sonnet' },
+      { executor: 'claude', executor_model: 'sonnet' },
     ]);
   });
 });
@@ -360,8 +360,8 @@ describe('getValidTypes', () => {
   it('returns all rule keys', () => {
     const service = EnrichmentService.fromObject({
       rules: {
-        generic: { executors: [{ executor: 'claude_code', executor_model: 'sonnet' }] },
-        code_review: { executors: [{ executor: 'claude_code', executor_model: 'opus' }] },
+        generic: { executors: [{ executor: 'claude', executor_model: 'sonnet' }] },
+        code_review: { executors: [{ executor: 'claude', executor_model: 'opus' }] },
       },
     });
 
@@ -378,8 +378,8 @@ describe('fromDirectory', () => {
   it('loads and merges rules from multiple YAML files including builtin.yaml', () => {
     const dir = makeTempDir();
     writeFileSync(join(dir, 'builtin.yaml'), `rules:\n  cleanup:\n    executors:\n      - executor: builtin\n        executor_model: none\n`);
-    writeFileSync(join(dir, 'enrichment.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
-    writeFileSync(join(dir, 'local.yaml'), `rules:\n  code_review:\n    executors:\n      - executor: claude_code\n        executor_model: opus\n`);
+    writeFileSync(join(dir, 'enrichment.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude\n        executor_model: sonnet\n`);
+    writeFileSync(join(dir, 'local.yaml'), `rules:\n  code_review:\n    executors:\n      - executor: claude\n        executor_model: opus\n`);
 
     const service = EnrichmentService.fromDirectory(dir);
 
@@ -389,16 +389,16 @@ describe('fromDirectory', () => {
 
     const defaultResult = service.enrich(createTask({ task_type: 'default' }), TEST_SESSION_ID);
     expect(defaultResult.type).toBe('enriched');
-    expect((defaultResult as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([{ executor: 'claude_code', executor_model: 'sonnet' }]);
+    expect((defaultResult as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([{ executor: 'claude', executor_model: 'sonnet' }]);
 
     const reviewResult = service.enrich(createTask({ task_type: 'code_review' }), TEST_SESSION_ID);
     expect(reviewResult.type).toBe('enriched');
-    expect((reviewResult as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([{ executor: 'claude_code', executor_model: 'opus' }]);
+    expect((reviewResult as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([{ executor: 'claude', executor_model: 'opus' }]);
   });
 
   it('loads .yml files as well as .yaml', () => {
     const dir = makeTempDir();
-    writeFileSync(join(dir, 'rules.yml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
+    writeFileSync(join(dir, 'rules.yml'), `rules:\n  default:\n    executors:\n      - executor: claude\n        executor_model: sonnet\n`);
 
     const service = EnrichmentService.fromDirectory(dir);
     const result = service.enrich(createTask({ task_type: 'default' }), TEST_SESSION_ID);
@@ -408,7 +408,7 @@ describe('fromDirectory', () => {
   it('ignores non-YAML files', () => {
     const dir = makeTempDir();
     writeFileSync(join(dir, 'readme.md'), '# Not a config');
-    writeFileSync(join(dir, 'rules.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
+    writeFileSync(join(dir, 'rules.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude\n        executor_model: sonnet\n`);
 
     const service = EnrichmentService.fromDirectory(dir);
     const result = service.enrich(createTask({ task_type: 'default' }), TEST_SESSION_ID);
@@ -417,8 +417,8 @@ describe('fromDirectory', () => {
 
   it('throws on duplicate rule keys across files', () => {
     const dir = makeTempDir();
-    writeFileSync(join(dir, 'a.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: sonnet\n`);
-    writeFileSync(join(dir, 'b.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude_code\n        executor_model: opus\n`);
+    writeFileSync(join(dir, 'a.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude\n        executor_model: sonnet\n`);
+    writeFileSync(join(dir, 'b.yaml'), `rules:\n  default:\n    executors:\n      - executor: claude\n        executor_model: opus\n`);
 
     expect(() => EnrichmentService.fromDirectory(dir)).toThrow(/Duplicate rule key 'default'/);
   });
@@ -442,7 +442,7 @@ describe('setup_hook passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         coding: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           setup_hook: 'git clone https://github.com/org/repo .\nnpm ci',
           setup_hook_timeout_ms: 120_000,
         },
@@ -461,7 +461,7 @@ describe('setup_hook passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         },
       },
     });
@@ -478,7 +478,7 @@ describe('setup_hook passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           setup_hook: 'echo hello',
         },
       },
@@ -498,13 +498,13 @@ describe('getValidTaskTypes', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         code_review: {
-          executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+          executors: [{ executor: 'claude', executor_model: 'opus' }],
         },
         deploy: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         },
         default: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         },
       },
     });
@@ -526,7 +526,7 @@ describe('system_prompt passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         code_review: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           system_prompt: 'You are a code reviewer. Focus on security.',
         },
       },
@@ -544,7 +544,7 @@ describe('system_prompt passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         },
       },
     });
@@ -559,7 +559,7 @@ describe('system_prompt passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           system_prompt: '',
         },
       },
@@ -575,7 +575,7 @@ describe('system_prompt passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           system_prompt: '   \n  ',
         },
       },
@@ -591,7 +591,7 @@ describe('system_prompt passthrough', () => {
     const service = EnrichmentService.fromObject({
       rules: {
         default: {
-          executors: [{ executor: 'claude_code', executor_model: 'sonnet' }],
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
           system_prompt: '  Be concise.  ',
         },
       },

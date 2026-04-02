@@ -312,7 +312,7 @@ describe('MessageHandler', () => {
 
     it('rejects /new with only one arg', async () => {
       await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/new cursor_agent' }),
+        content: JSON.stringify({ text: '/new cursor' }),
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
@@ -325,7 +325,7 @@ describe('MessageHandler', () => {
 
     it('rejects /new with more than two args', async () => {
       await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/new cursor_agent gpt-5.4-medium-fast extra' }),
+        content: JSON.stringify({ text: '/new cursor gpt-5.4-medium-fast extra' }),
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
@@ -335,13 +335,13 @@ describe('MessageHandler', () => {
 
     it('submits /new <executor> <model> as new_instance with structured payload', async () => {
       await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/new cursor_agent gpt-5.4-medium-fast' }),
+        content: JSON.stringify({ text: '/new cursor gpt-5.4-medium-fast' }),
       }));
 
       expect(submitter.submit).toHaveBeenCalledWith(
         'new_instance',
         JSON.stringify({
-          executor: 'cursor_agent',
+          executor: 'cursor',
           executor_model: 'gpt-5.4-medium-fast',
         }),
         { source: 'lark', message_id: 'om_msg1' },
