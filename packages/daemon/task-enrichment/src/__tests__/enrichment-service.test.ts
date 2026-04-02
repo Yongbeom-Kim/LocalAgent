@@ -38,7 +38,7 @@ describe('EnrichmentService', () => {
           default: {
             executors: [
               { executor: 'claude_code', executor_model: 'sonnet' },
-              { executor: 'ttadk', executor_model: 'gpt-5.4' },
+              { executor: 'claude-w', executor_model: 'gpt-5.4' },
             ],
           },
         },
@@ -131,19 +131,16 @@ describe('EnrichmentService', () => {
       expect(result.type).toBe('rejected');
     });
 
-    it('returns rejected result when any executor_model in array is invalid', () => {
+    it('returns rejected result when removed ttadk executor is configured', () => {
       const service = EnrichmentService.fromObject({
         rules: {
-          bad_model: {
-            executors: [
-              { executor: 'claude_code', executor_model: 'nonexistent' },
-            ],
+          bad_rule: {
+            executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
           },
         },
       });
 
-      const result = service.enrich(createTask({ task_type: 'bad_model' }), TEST_SESSION_ID);
-      expect(result.type).toBe('rejected');
+      expect(service.enrich(createTask({ task_type: 'bad_rule' }), TEST_SESSION_ID).type).toBe('rejected');
     });
 
     it('returns rejected result when executors array is empty', () => {

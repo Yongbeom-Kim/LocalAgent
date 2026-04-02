@@ -84,7 +84,7 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+        executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
       channel.get.mockResolvedValue({
@@ -97,7 +97,7 @@ describe('RabbitMQService', () => {
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+        executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
     });
@@ -140,7 +140,7 @@ describe('RabbitMQService', () => {
           task_id: 'duplicate-id',
           task_type: 'generic',
           payload: 'second',
-          executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+          executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
           submitted_at: '2026-03-26T00:00:01.000Z',
         })),
         fields: { deliveryTag: 2 },

@@ -13,9 +13,17 @@ describe('EXECUTOR_MODELS', () => {
     expect(EXECUTOR_MODELS.claude_code).toEqual(['opus', 'sonnet', 'haiku']);
   });
 
-  it('defines ttadk models', () => {
-    expect(EXECUTOR_MODELS.ttadk).toEqual([
-      'glm-5-ttadk', 'kimi-k2.5', 'glm-4.7-ttadk', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex',
+  it('defines claude-w models', () => {
+    expect(EXECUTOR_MODELS['claude-w']).toEqual([
+      'gpt-5.4',
+      'gpt-5.3-codex',
+      'gpt-5.2-codex',
+      'gpt-5.2',
+      'glm-5',
+      'glm-4.7',
+      'kimi-k2.5',
+      'minimax-2.5',
+      'minimax-2.7',
     ]);
   });
 
@@ -31,9 +39,9 @@ describe('isValidExecutorModel', () => {
     expect(isValidExecutorModel('claude_code', 'haiku')).toBe(true);
   });
 
-  it('returns true for valid ttadk model', () => {
-    expect(isValidExecutorModel('ttadk', 'gpt-5.4')).toBe(true);
-    expect(isValidExecutorModel('ttadk', 'kimi-k2.5')).toBe(true);
+  it('returns true for valid claude-w model', () => {
+    expect(isValidExecutorModel('claude-w', 'gpt-5.4')).toBe(true);
+    expect(isValidExecutorModel('claude-w', 'glm-5')).toBe(true);
   });
 
   it('returns true for valid builtin model', () => {
@@ -46,12 +54,19 @@ describe('isValidExecutorModel', () => {
 
   it('returns false for cross-executor mismatch', () => {
     expect(isValidExecutorModel('claude_code', 'gpt-5.4')).toBe(false);
-    expect(isValidExecutorModel('ttadk', 'opus')).toBe(false);
+    expect(isValidExecutorModel('claude-w', 'opus')).toBe(false);
+  });
+
+  it('returns false for removed ttadk executor and model names', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'ttadk', executor_model: 'gpt-5.4' },
+    ])).toBe(false);
+    expect(isValidExecutorModel('claude-w', 'glm-5-ttadk')).toBe(false);
   });
 
   it('returns false for unknown model strings', () => {
     expect(isValidExecutorModel('claude_code', 'gpt-4o')).toBe(false);
-    expect(isValidExecutorModel('ttadk', 'unknown')).toBe(false);
+    expect(isValidExecutorModel('claude-w', 'unknown')).toBe(false);
   });
 
   it('returns false for non-string values', () => {
@@ -66,9 +81,9 @@ describe('getExecutorModelOptions', () => {
     expect(getExecutorModelOptions('claude_code')).toBe('opus, sonnet, haiku');
   });
 
-  it('returns comma-separated list for ttadk', () => {
-    expect(getExecutorModelOptions('ttadk')).toBe(
-      'glm-5-ttadk, kimi-k2.5, glm-4.7-ttadk, gpt-5.3-codex, gpt-5.4, gpt-5.2-codex',
+  it('returns comma-separated list for claude-w', () => {
+    expect(getExecutorModelOptions('claude-w')).toBe(
+      'gpt-5.4, gpt-5.3-codex, gpt-5.2-codex, gpt-5.2, glm-5, glm-4.7, kimi-k2.5, minimax-2.5, minimax-2.7',
     );
   });
 
@@ -79,9 +94,6 @@ describe('getExecutorModelOptions', () => {
 
 describe('MarketplaceConfig', () => {
   it('accepts marketplaces field on Job', () => {
-    // This test verifies the MarketplaceConfig type and the marketplaces
-    // field are correctly defined by exercising them at compile time
-    // and asserting the runtime values.
     const marketplaces: MarketplaceConfig[] = [
       { url: 'https://github.com/example/repo.git', plugins: ['my-plugin'] },
     ];
@@ -99,6 +111,7 @@ describe('MarketplaceConfig', () => {
     expect(job.marketplaces).toHaveLength(1);
     expect(job.marketplaces![0].url).toBe('https://github.com/example/repo.git');
     expect(job.marketplaces![0].plugins).toEqual(['my-plugin']);
+    expect(marketplaces).toHaveLength(1);
   });
 
   it('allows Job without marketplaces field', () => {
@@ -120,7 +133,7 @@ describe('isValidExecutorPreferences', () => {
   it('returns true for valid non-empty array', () => {
     expect(isValidExecutorPreferences([
       { executor: 'claude_code', executor_model: 'sonnet' },
-      { executor: 'ttadk', executor_model: 'gpt-5.4' },
+      { executor: 'claude-w', executor_model: 'gpt-5.4' },
     ])).toBe(true);
   });
 
@@ -150,6 +163,9 @@ describe('isValidExecutorPreferences', () => {
     expect(isValidExecutorPreferences([
       { executor: 'claude_code', executor_model: 'sonnet' },
       { executor: 'nonexistent', executor_model: 'opus' },
+    ])).toBe(false);
+    expect(isValidExecutorPreferences([
+      { executor: 'ttadk', executor_model: 'gpt-5.4' },
     ])).toBe(false);
   });
 

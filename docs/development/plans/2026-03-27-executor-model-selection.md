@@ -2,7 +2,7 @@
 
 **Goal:** Add a required `executor_model` field so each task explicitly declares which model to use, validated per-executor at submission and passed through to the CLI invocation.
 
-**Architecture:** A static `EXECUTOR_MODELS` map in `shared/types.ts` defines valid models per executor. API and CLI cross-validate executor+model pairs at submission time. Each daemon executor reads `task.executor_model` and passes it as-is to its CLI flag (`--model` for Claude, `-m` for TTADK).
+**Architecture:** A static `EXECUTOR_MODELS` map in `shared/types.ts` defines valid models per executor. API and CLI cross-validate executor+model pairs at submission time. Each daemon executor reads `task.executor_model` and passes it as-is to its CLI flag (`--model` for Claude and `claude-w`).
 
 **Tech Stack:** TypeScript, Vitest, Commander.js, Express, RabbitMQ
 
@@ -20,9 +20,9 @@
 | `packages/cli/src/commands/submit.ts` | Modify | Add `-m, --model` option, cross-validation, include in body |
 | `packages/cli/src/__tests__/submit.test.ts` | Modify | Add model validation and request body tests |
 | `packages/daemon/src/adapters/claude-cli-executor.ts` | Modify | Add `--model` flag to execFile args, remove stale comment |
-| `packages/daemon/src/adapters/ttadk-executor.ts` | Modify | Replace hardcoded `gpt-5.4` with `task.executor_model`, remove stale comment |
+| `packages/daemon/src/adapters/claude-w-executor.ts` | Modify | Replace hardcoded `gpt-5.4` with `task.executor_model`, remove stale comment |
 | `packages/daemon/src/adapters/__tests__/claude-cli-executor.test.ts` | Modify | Verify `--model` in spawned args, add `executor_model` to fixture |
-| `packages/daemon/src/adapters/__tests__/ttadk-executor.test.ts` | Modify | Verify `-m` uses `task.executor_model`, add to fixture |
+| `packages/daemon/src/adapters/__tests__/claude-w-executor.test.ts` | Modify | Verify `-m` uses `task.executor_model`, add to fixture |
 | `packages/daemon/src/core/__tests__/task-orchestrator.test.ts` | Modify | Add `executor_model` to task fixtures |
 | `packages/daemon/src/__tests__/poller.test.ts` | Modify | Add `executor_model` to task fixtures |
 
@@ -51,9 +51,9 @@ describe('EXECUTOR_MODELS', () => {
     expect(EXECUTOR_MODELS.claude_code).toEqual(['opus', 'sonnet', 'haiku']);
   });
 
-  it('defines ttadk models', () => {
-    expect(EXECUTOR_MODELS.ttadk).toEqual([
-      'glm-5-ttadk', 'kimi-k2.5', 'glm-4.7-ttadk', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex',
+  it('defines claude-w models', () => {
+    expect(EXECUTOR_MODELS.claude-w).toEqual([
+      'glm-5', 'kimi-k2.5', 'glm-4.7', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex',
     ]);
   });
 });
@@ -65,19 +65,19 @@ describe('isValidExecutorModel', () => {
     expect(isValidExecutorModel('claude_code', 'haiku')).toBe(true);
   });
 
-  it('returns true for valid ttadk model', () => {
-    expect(isValidExecutorModel('ttadk', 'gpt-5.4')).toBe(true);
-    expect(isValidExecutorModel('ttadk', 'kimi-k2.5')).toBe(true);
+  it('returns true for valid claude-w model', () => {
+    expect(isValidExecutorModel('claude-w', 'gpt-5.4')).toBe(true);
+    expect(isValidExecutorModel('claude-w', 'kimi-k2.5')).toBe(true);
   });
 
   it('returns false for cross-executor mismatch', () => {
     expect(isValidExecutorModel('claude_code', 'gpt-5.4')).toBe(false);
-    expect(isValidExecutorModel('ttadk', 'opus')).toBe(false);
+    expect(isValidExecutorModel('claude-w', 'opus')).toBe(false);
   });
 
   it('returns false for unknown model strings', () => {
     expect(isValidExecutorModel('claude_code', 'gpt-4o')).toBe(false);
-    expect(isValidExecutorModel('ttadk', 'unknown')).toBe(false);
+    expect(isValidExecutorModel('claude-w', 'unknown')).toBe(false);
   });
 
   it('returns false for non-string values', () => {
@@ -92,9 +92,9 @@ describe('getExecutorModelOptions', () => {
     expect(getExecutorModelOptions('claude_code')).toBe('opus, sonnet, haiku');
   });
 
-  it('returns comma-separated list for ttadk', () => {
-    expect(getExecutorModelOptions('ttadk')).toBe(
-      'glm-5-ttadk, kimi-k2.5, glm-4.7-ttadk, gpt-5.3-codex, gpt-5.4, gpt-5.2-codex',
+  it('returns comma-separated list for claude-w', () => {
+    expect(getExecutorModelOptions('claude-w')).toBe(
+      'glm-5, kimi-k2.5, glm-4.7, gpt-5.3-codex, gpt-5.4, gpt-5.2-codex',
     );
   });
 });
@@ -109,7 +109,7 @@ Expected: FAIL — `isValidExecutorModel` and related exports do not exist yet.
 
 ```ts
 // packages/shared/src/types.ts — full replacement
-export const TASK_EXECUTORS = ['claude_code', 'ttadk'] as const;
+export const TASK_EXECUTORS = ['claude_code', 'claude-w'] as const;
 export const TASK_EXECUTOR_OPTIONS = TASK_EXECUTORS.join(', ');
 export type TaskExecutorType = (typeof TASK_EXECUTORS)[number];
 
@@ -119,7 +119,7 @@ export function isTaskExecutorType(value: unknown): value is TaskExecutorType {
 
 export const EXECUTOR_MODELS = {
   claude_code: ['opus', 'sonnet', 'haiku'],
-  ttadk: ['glm-5-ttadk', 'kimi-k2.5', 'glm-4.7-ttadk', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex'],
+  claude-w: ['glm-5', 'kimi-k2.5', 'glm-4.7', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex'],
 } as const satisfies Record<TaskExecutorType, readonly string[]>;
 
 export type ExecutorModelType<T extends TaskExecutorType = TaskExecutorType> =
@@ -204,7 +204,7 @@ Add the following tests to the `describe('POST /tasks', ...)` block in `packages
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
-      .send({ task_type: 'generic', payload: 'hello', executor: 'ttadk', executor_model: 'gpt-5.4' });
+      .send({ task_type: 'generic', payload: 'hello', executor: 'claude-w', executor_model: 'gpt-5.4' });
     expect(res.status).toBe(201);
     expect(res.body.executor_model).toBe('gpt-5.4');
     expect(mockRabbitMQ.publish).toHaveBeenCalledWith(
@@ -234,7 +234,7 @@ Add the following tests to the `describe('POST /tasks', ...)` block in `packages
 
 Also update the **existing** `'returns 201 with submitted task'` test to include `executor_model`:
 
-Change `.send({ task_type: 'generic', payload: 'hello', executor: 'ttadk' })` to `.send({ task_type: 'generic', payload: 'hello', executor: 'ttadk', executor_model: 'gpt-5.4' })` and add `expect(res.body.executor_model).toBe('gpt-5.4');`. Also update the `mockRabbitMQ.publish` assertion to include `executor_model: 'gpt-5.4'` in the expected object.
+Change `.send({ task_type: 'generic', payload: 'hello', executor: 'claude-w' })` to `.send({ task_type: 'generic', payload: 'hello', executor: 'claude-w', executor_model: 'gpt-5.4' })` and add `expect(res.body.executor_model).toBe('gpt-5.4');`. Also update the `mockRabbitMQ.publish` assertion to include `executor_model: 'gpt-5.4'` in the expected object.
 
 Update the existing `'returns 503'` test to include `executor_model: 'gpt-5.4'` in the send body.
 
@@ -324,7 +324,7 @@ Add to the `describe('submitTask', ...)` block:
         task_id: 'task-123',
         task_type: 'code-review',
         payload: 'review this',
-        executor: 'ttadk',
+        executor: 'claude-w',
         executor_model: 'gpt-5.4',
         submitted_at: '2026-03-26T10:00:00.000Z',
       }),
@@ -333,7 +333,7 @@ Add to the `describe('submitTask', ...)` block:
     await submitModule.submitTask({
       payload: 'review this',
       type: 'code-review',
-      executor: 'ttadk',
+      executor: 'claude-w',
       model: 'gpt-5.4',
       apiUrl: 'http://example.com:3000',
     });
@@ -344,7 +344,7 @@ Add to the `describe('submitTask', ...)` block:
       body: JSON.stringify({
         task_type: 'code-review',
         payload: 'review this',
-        executor: 'ttadk',
+        executor: 'claude-w',
         executor_model: 'gpt-5.4',
       }),
     });
@@ -380,7 +380,7 @@ Add to the `describe('registerSubmitCommand', ...)` block:
     submitModule.registerSubmitCommand(program, submitTaskSpy);
 
     await program.parseAsync(
-      ['submit', '--payload', 'test', '--executor', 'ttadk', '--model', 'gpt-5.4'],
+      ['submit', '--payload', 'test', '--executor', 'claude-w', '--model', 'gpt-5.4'],
       { from: 'user' },
     );
 
@@ -570,17 +570,17 @@ git commit -m "feat(daemon): pass --model flag in Claude CLI executor"
 
 ---
 
-### Task 5: Daemon — TTADK executor uses `task.executor_model`
+### Task 5: Daemon — Claude W executor uses `task.executor_model`
 
 **Files:**
-- Modify: `packages/daemon/src/adapters/ttadk-executor.ts`
-- Modify: `packages/daemon/src/adapters/__tests__/ttadk-executor.test.ts`
+- Modify: `packages/daemon/src/adapters/claude-w-executor.ts`
+- Modify: `packages/daemon/src/adapters/__tests__/claude-w-executor.test.ts`
 
-> **Note:** The existing `ttadk-executor.test.ts` has a pre-existing arg format mismatch with the source code. The test expects `['code', '-t', 'claude', '-a', '--dangerously-skip-permissions -p', 'What is 2+2?']` (no `-m` flag, `-a` value split across two args), but the source produces `['code', '-t', 'claude', '-m', 'gpt-5.4', '-a', '--dangerously-skip-permissions -p What is 2+2?']` (includes `-m`, `-a` value is one template-literal string). This task fixes both: (1) the pre-existing arg format bug and (2) dynamic model passthrough.
+> **Note:** The existing `claude-w-executor.test.ts` has a pre-existing arg format mismatch with the source code. The test expects `['code', '-t', 'claude', '-a', '--dangerously-skip-permissions -p', 'What is 2+2?']` (no `-m` flag, `-a` value split across two args), but the source produces `['code', '-t', 'claude', '-m', 'gpt-5.4', '-a', '--dangerously-skip-permissions -p What is 2+2?']` (includes `-m`, `-a` value is one template-literal string). This task fixes both: (1) the pre-existing arg format bug and (2) dynamic model passthrough.
 
 - [ ] **Step 1: Update test fixture and expected args**
 
-In `packages/daemon/src/adapters/__tests__/ttadk-executor.test.ts`:
+In `packages/daemon/src/adapters/__tests__/claude-w-executor.test.ts`:
 
 1. Add `executor_model` to the `createTask` fixture:
 
@@ -590,7 +590,7 @@ function createTask(overrides?: Partial<Task>): Task {
     task_id: 'test-123',
     task_type: 'generic',
     payload: 'What is 2+2?',
-    executor: 'ttadk',
+    executor: 'claude-w',
     executor_model: 'gpt-5.4',
     submitted_at: '2026-03-26T00:00:00.000Z',
     ...overrides,
@@ -598,11 +598,11 @@ function createTask(overrides?: Partial<Task>): Task {
 }
 ```
 
-2. Update the `'spawns ttadk with the exact task payload arguments'` test to expect the `-m` flag and correct `-a` arg format (single template-literal string matching the source):
+2. Update the `'spawns claude-w with the exact task payload arguments'` test to expect the `-m` flag and correct `-a` arg format (single template-literal string matching the source):
 
 ```ts
     expect(mockExecFile).toHaveBeenCalledWith(
-      'ttadk',
+      'claude-w',
       ['code', '-t', 'claude', '-m', 'gpt-5.4', '-a', '--dangerously-skip-permissions -p What is 2+2?'],
       { maxBuffer: 50 * 1024 * 1024 },
       expect.any(Function),
@@ -613,7 +613,7 @@ Note: This step fixes the pre-existing test/source mismatch _and_ adds `executor
 
 - [ ] **Step 2: Run tests to verify they pass with the corrected args format**
 
-Run: `cd packages/daemon && npx vitest run src/adapters/__tests__/ttadk-executor.test.ts`
+Run: `cd packages/daemon && npx vitest run src/adapters/__tests__/claude-w-executor.test.ts`
 Expected: PASS (the corrected arg format now matches the source, and `executor_model: 'gpt-5.4'` matches the hardcoded value)
 
 - [ ] **Step 3: Add a test that verifies the model comes from the task, not hardcoded**
@@ -630,7 +630,7 @@ Add this test to verify a _different_ model is passed through:
     await executor.execute(createTask({ executor_model: 'kimi-k2.5' }));
 
     expect(mockExecFile).toHaveBeenCalledWith(
-      'ttadk',
+      'claude-w',
       ['code', '-t', 'claude', '-m', 'kimi-k2.5', '-a', '--dangerously-skip-permissions -p What is 2+2?'],
       { maxBuffer: 50 * 1024 * 1024 },
       expect.any(Function),
@@ -640,17 +640,17 @@ Add this test to verify a _different_ model is passed through:
 
 - [ ] **Step 4: Run tests to verify the new test fails**
 
-Run: `cd packages/daemon && npx vitest run src/adapters/__tests__/ttadk-executor.test.ts`
+Run: `cd packages/daemon && npx vitest run src/adapters/__tests__/claude-w-executor.test.ts`
 Expected: FAIL — new test expects `kimi-k2.5` but executor hardcodes `gpt-5.4`.
 
 - [ ] **Step 5: Replace hardcoded model with `task.executor_model`**
 
-In `packages/daemon/src/adapters/ttadk-executor.ts`, replace the `execFileAsync` call inside the `try` block (and remove the stale `// Available models: ...` comment above it). The only change is replacing the hardcoded `'gpt-5.4'` with `task.executor_model`:
+In `packages/daemon/src/adapters/claude-w-executor.ts`, replace the `execFileAsync` call inside the `try` block (and remove the stale `// Available models: ...` comment above it). The only change is replacing the hardcoded `'gpt-5.4'` with `task.executor_model`:
 
 ```ts
     try {
       const { stdout, stderr } = await execFileAsync(
-        'ttadk',
+        'claude-w',
         ['code', '-t', 'claude', '-m', task.executor_model, '-a', `--dangerously-skip-permissions -p ${task.payload}`],
         {
           maxBuffer: 50 * 1024 * 1024,
@@ -660,14 +660,14 @@ In `packages/daemon/src/adapters/ttadk-executor.ts`, replace the `execFileAsync`
 
 - [ ] **Step 6: Run tests to verify they pass**
 
-Run: `cd packages/daemon && npx vitest run src/adapters/__tests__/ttadk-executor.test.ts`
+Run: `cd packages/daemon && npx vitest run src/adapters/__tests__/claude-w-executor.test.ts`
 Expected: ALL PASS
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add packages/daemon/src/adapters/ttadk-executor.ts packages/daemon/src/adapters/__tests__/ttadk-executor.test.ts
-git commit -m "feat(daemon): use task.executor_model in TTADK executor instead of hardcoded value"
+git add packages/daemon/src/adapters/claude-w-executor.ts packages/daemon/src/adapters/__tests__/claude-w-executor.test.ts
+git commit -m "feat(daemon): use task.executor_model in Claude W executor instead of hardcoded value"
 ```
 
 ---

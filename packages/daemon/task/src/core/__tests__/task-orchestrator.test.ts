@@ -57,7 +57,7 @@ const mockGcResultSubmission: TaskResultSubmission = {
 
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockGcExecute = vi.fn().mockReturnValue(mockGcResultSubmission);
-const mockTTADKExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockClaudeWExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockCleanupExecute = vi.fn().mockResolvedValue(mockCleanupResultSubmission);
 
 vi.mock('../../adapters/claude-cli-executor', () => ({
@@ -66,9 +66,9 @@ vi.mock('../../adapters/claude-cli-executor', () => ({
   }),
 }));
 
-vi.mock('../../adapters/ttadk-executor', () => ({
-  TTADKExecutor: vi.fn(function (this: { execute: typeof mockTTADKExecute }) {
-    this.execute = mockTTADKExecute;
+vi.mock('../../adapters/claude-w-executor', () => ({
+  ClaudeWExecutor: vi.fn(function (this: { execute: typeof mockClaudeWExecute }) {
+    this.execute = mockClaudeWExecute;
   }),
 }));
 
@@ -86,7 +86,7 @@ vi.mock('../../services/gc-executor', () => ({
 
 import { ClaudeCliExecutor } from '../../adapters/claude-cli-executor';
 import { CleanupExecutor } from '../../adapters/cleanup-executor';
-import { TTADKExecutor } from '../../adapters/ttadk-executor';
+import { ClaudeWExecutor } from '../../adapters/claude-w-executor';
 import { GcExecutor } from '../../services/gc-executor';
 import { TaskOrchestrator } from '../task-orchestrator';
 import { JobEnvironment } from '../../services/job-environment';
@@ -111,13 +111,13 @@ describe('TaskOrchestrator', () => {
 
   beforeEach(() => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
-    mockTTADKExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockClaudeWExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockCleanupExecute.mockClear().mockResolvedValue(mockCleanupResultSubmission);
     mockGcExecute.mockClear().mockReturnValue(mockGcResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
     vi.mocked(ClaudeCliExecutor).mockClear();
-    vi.mocked(TTADKExecutor).mockClear();
+    vi.mocked(ClaudeWExecutor).mockClear();
     vi.mocked(CleanupExecutor).mockClear();
     vi.mocked(GcExecutor).mockClear();
     jobEnv = new JobEnvironment(false);
@@ -153,7 +153,7 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(ClaudeCliExecutor).toHaveBeenCalledTimes(1);
-    expect(TTADKExecutor).not.toHaveBeenCalled();
+    expect(ClaudeWExecutor).not.toHaveBeenCalled();
     expect(CleanupExecutor).not.toHaveBeenCalled();
     expect(mockClaudeExecute).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -166,18 +166,18 @@ describe('TaskOrchestrator', () => {
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
-  it('returns TaskResultSubmission from TTADK executor for ttadk jobs', async () => {
+  it('returns TaskResultSubmission from ClaudeWExecutor for claude-w jobs', async () => {
     const job = createJob({
-      executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+      executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
     });
     const result = await orchestrator.handle(job);
 
-    expect(TTADKExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
     expect(ClaudeCliExecutor).not.toHaveBeenCalled();
     expect(CleanupExecutor).not.toHaveBeenCalled();
-    expect(mockTTADKExecute).toHaveBeenCalledWith(
+    expect(mockClaudeWExecute).toHaveBeenCalledWith(
       expect.objectContaining({
-        executor: 'ttadk',
+        executor: 'claude-w',
         executor_model: 'gpt-5.4',
       }),
       mockEnv,
@@ -197,7 +197,7 @@ describe('TaskOrchestrator', () => {
 
     expect(CleanupExecutor).toHaveBeenCalledTimes(1);
     expect(ClaudeCliExecutor).not.toHaveBeenCalled();
-    expect(TTADKExecutor).not.toHaveBeenCalled();
+    expect(ClaudeWExecutor).not.toHaveBeenCalled();
     expect(mockCleanupExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         task_type: 'cleanup',
@@ -284,12 +284,12 @@ describe('TaskOrchestrator', () => {
     };
 
     mockClaudeExecute.mockResolvedValueOnce(failResult);
-    mockTTADKExecute.mockResolvedValueOnce(successResult);
+    mockClaudeWExecute.mockResolvedValueOnce(successResult);
 
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     const result = await orchestrator.handle(job);
@@ -297,10 +297,10 @@ describe('TaskOrchestrator', () => {
     expect(result.status).toBe('success');
     expect(result.stdout).toBe('fallback output');
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
-    expect(mockTTADKExecute).toHaveBeenCalledTimes(1);
+    expect(mockClaudeWExecute).toHaveBeenCalledTimes(1);
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockClaudeExecute).toHaveBeenCalledWith(expect.anything(), mockEnv);
-    expect(mockTTADKExecute).toHaveBeenCalledWith(expect.anything(), mockEnv);
+    expect(mockClaudeWExecute).toHaveBeenCalledWith(expect.anything(), mockEnv);
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
@@ -325,12 +325,12 @@ describe('TaskOrchestrator', () => {
     };
 
     mockClaudeExecute.mockResolvedValueOnce(failResult1);
-    mockTTADKExecute.mockResolvedValueOnce(failResult2);
+    mockClaudeWExecute.mockResolvedValueOnce(failResult2);
 
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     const result = await orchestrator.handle(job);
@@ -345,14 +345,14 @@ describe('TaskOrchestrator', () => {
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     const result = await orchestrator.handle(job);
 
     expect(result.status).toBe('success');
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
-    expect(mockTTADKExecute).not.toHaveBeenCalled();
+    expect(mockClaudeWExecute).not.toHaveBeenCalled();
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockTeardown).not.toHaveBeenCalled();
   });
@@ -372,7 +372,7 @@ describe('TaskOrchestrator', () => {
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     await orchestrator.handle(job);
@@ -381,8 +381,8 @@ describe('TaskOrchestrator', () => {
       expect.objectContaining({ executor: 'claude_code', executor_model: 'opus' }),
       mockEnv,
     );
-    expect(mockTTADKExecute).toHaveBeenCalledWith(
-      expect.objectContaining({ executor: 'ttadk', executor_model: 'gpt-5.4' }),
+    expect(mockClaudeWExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ executor: 'claude-w', executor_model: 'gpt-5.4' }),
       mockEnv,
     );
     expect(mockSetup).toHaveBeenCalledTimes(1);
@@ -413,7 +413,7 @@ describe('TaskOrchestrator', () => {
     expect(mockGcExecute).toHaveBeenCalledWith(job);
     expect(mockSetup).not.toHaveBeenCalled();
     expect(mockClaudeExecute).not.toHaveBeenCalled();
-    expect(mockTTADKExecute).not.toHaveBeenCalled();
+    expect(mockClaudeWExecute).not.toHaveBeenCalled();
     expect(mockCleanupExecute).not.toHaveBeenCalled();
     expect(result).toEqual(mockGcResultSubmission);
   });

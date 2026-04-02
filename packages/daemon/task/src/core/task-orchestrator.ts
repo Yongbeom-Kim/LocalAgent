@@ -1,7 +1,7 @@
 import { Job, JobAttempt, TaskResultSubmission, TaskExecutorType, createLogger } from '@local-agent/shared';
 import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
 import { CleanupExecutor } from '../adapters/cleanup-executor';
-import { TTADKExecutor } from '../adapters/ttadk-executor';
+import { ClaudeWExecutor } from '../adapters/claude-w-executor';
 import { TaskExecutor } from '../ports/task-executor';
 import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
@@ -125,7 +125,7 @@ export class TaskOrchestrator {
 
   private resolveExecutor(executor: TaskExecutorType): TaskExecutor {
     if (executor === 'claude_code') return new ClaudeCliExecutor();
-    if (executor === 'ttadk') return new TTADKExecutor();
+    if (executor === 'claude-w') return new ClaudeWExecutor();
     if (executor === 'builtin') return new CleanupExecutor();
     throw new Error(`Unknown executor: ${executor}`);
   }

@@ -6,13 +6,13 @@
 
 ## 1. Context
 
-The daemon supports two executors (`claude_code` and `ttadk`), but model selection is not configurable per task. The Claude CLI executor uses the default model (no `--model` flag), and the TTADK executor hardcodes `-m gpt-5.4`.
+The daemon supports two executors (`claude_code` and `claude-w`), but model selection is not configurable per task. The Claude CLI executor uses the default model (no `--model` flag), and the Claude W executor invokes the `claude-w` binary and must pass an explicit `--model`.
 
 Current state:
 
-- `packages/shared/src/types.ts` defines `TaskExecutorType` as `'claude_code' | 'ttadk'` but has no model field.
+- `packages/shared/src/types.ts` defines `TaskExecutorType` as `'claude_code' | 'claude-w'` but has no model field.
 - `packages/daemon/src/adapters/claude-cli-executor.ts` spawns `claude --dangerously-skip-permissions -p <payload>` with no model flag.
-- `packages/daemon/src/adapters/ttadk-executor.ts` spawns `ttadk code -t claude -m gpt-5.4 -a ...` with a hardcoded model.
+- `packages/daemon/src/adapters/claude-w-executor.ts` spawns `claude-w --dangerously-skip-permissions --model <executor_model> -p -` with stdin prompt transport.
 - No validation or configuration exists for model selection.
 
 The requested feature adds a required `executor_model` field so each task explicitly declares which model to use, with executor-specific validation.
@@ -34,9 +34,9 @@ Add per-task model selection so submitters explicitly choose a model for their c
 - `executor_model` is a **required** field on `TaskSubmission` and `Task`.
 - Each executor has its own set of valid models (executor-specific).
 - **Claude CLI executor models:** `opus`, `sonnet`, `haiku`.
-- **TTADK executor models:** `glm-5-ttadk`, `kimi-k2.5`, `glm-4.7-ttadk`, `gpt-5.3-codex`, `gpt-5.4`, `gpt-5.2-codex`.
+- **Claude W executor models:** `gpt-5.4`, `gpt-5.3-codex`, `gpt-5.2-codex`, `gpt-5.2`, `glm-5`, `glm-4.7`, `kimi-k2.5`, `minimax-2.5`, `minimax-2.7`.
 - Validation happens at **both** submission time (API/CLI cross-validates executor+model) and execution time (executor/underlying tool).
-- Model values are passed **as-is** to each executor's model flag (`--model` for Claude CLI, `-m` for TTADK).
+- Model values are passed **as-is** to each executor's model flag (`--model` for Claude CLI and `claude-w`).
 - The executor-to-model mapping lives in `shared/types.ts` as a static map.
 - CLI exposes model as `-m, --model <value>` (required option).
 - Invalid model+executor combinations produce helpful errors listing valid models for that executor.
@@ -95,7 +95,7 @@ Update `packages/shared/src/types.ts` to define:
 ```ts
 export const EXECUTOR_MODELS = {
   claude_code: ['opus', 'sonnet', 'haiku'],
-  ttadk: ['glm-5-ttadk', 'kimi-k2.5', 'glm-4.7-ttadk', 'gpt-5.3-codex', 'gpt-5.4', 'gpt-5.2-codex'],
+  'claude-w': ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex', 'gpt-5.2', 'glm-5', 'glm-4.7', 'kimi-k2.5', 'minimax-2.5', 'minimax-2.7'],
 } as const satisfies Record<TaskExecutorType, readonly string[]>;
 
 export type ExecutorModelType<T extends TaskExecutorType = TaskExecutorType> =
@@ -167,7 +167,7 @@ Update `packages/cli/src/commands/submit.ts`:
 Updated command shape:
 
 ```bash
-submit --payload <string> --type <string> --executor <claude_code|ttadk> --model <string>
+submit --payload <string> --type <string> --executor <claude_code|claude-w> --model <string>
 ```
 
 ### 6.4 Daemon executor changes
@@ -186,15 +186,15 @@ await execFileAsync('claude', [
 });
 ```
 
-#### TTADK executor
+#### Claude W executor
 
-Replace hardcoded `-m gpt-5.4` with `task.executor_model`:
+Update command construction to include `--model`:
 
 ```ts
-await execFileAsync('ttadk', [
-  'code', '-t', 'claude',
-  '-m', task.executor_model,
-  '-a', `--dangerously-skip-permissions -p ${task.payload}`,
+await execFileAsync('claude-w', [
+  '--dangerously-skip-permissions',
+  '--model', task.executor_model,
+  '-p', '-',
 ], {
   maxBuffer: 50 * 1024 * 1024,
 });
@@ -213,11 +213,11 @@ No changes needed. The orchestrator routes by `task.executor` as before; `execut
 | `packages/api/src/routes/tasks.ts` | Modify | Validate `executor_model` against executor; include in task construction and response |
 | `packages/cli/src/commands/submit.ts` | Modify | Add `-m, --model` required option; cross-validate with executor; include in submission body |
 | `packages/daemon/src/adapters/claude-cli-executor.ts` | Modify | Add `--model task.executor_model` to `execFile` args |
-| `packages/daemon/src/adapters/ttadk-executor.ts` | Modify | Replace hardcoded `gpt-5.4` with `task.executor_model` in `-m` flag |
+| `packages/daemon/src/adapters/claude-w-executor.ts` | Modify | Pass `--model task.executor_model` to `claude-w` |
 | `packages/api/src/__tests__/routes/tasks.test.ts` | Modify | Add tests for executor_model validation (missing, invalid, valid) |
 | `packages/cli/src/__tests__/submit.test.ts` | Modify | Add tests for model option, cross-validation, request body |
 | `packages/daemon/src/adapters/__tests__/claude-cli-executor.test.ts` | Modify | Verify `--model` flag in spawned command args |
-| `packages/daemon/src/adapters/__tests__/ttadk-executor.test.ts` | Modify | Verify `-m` uses `task.executor_model` instead of hardcoded value |
+| `packages/daemon/src/adapters/__tests__/claude-w-executor.test.ts` | Modify | Verify `--model` is passed to `claude-w` with valid fixture values |
 | `packages/daemon/src/core/__tests__/task-orchestrator.test.ts` | Modify | Update task fixtures with `executor_model` |
 | `packages/daemon/src/__tests__/poller.test.ts` | Modify | Update task fixtures with `executor_model` |
 
@@ -242,7 +242,7 @@ No changes needed. The orchestrator routes by `task.executor` as before; `execut
 
 ### Daemon
 - `ClaudeCliExecutor` spawns `claude --dangerously-skip-permissions --model <executor_model> -p <payload>`.
-- `TTADKExecutor` spawns `ttadk code -t claude -m <executor_model> -a ...`.
+- `ClaudeWExecutor` spawns `claude-w --dangerously-skip-permissions --model <executor_model> -p -`.
 - Task fixtures across all daemon tests include `executor_model`.
 
 ## 9. Risks and Mitigations
@@ -262,6 +262,6 @@ No changes needed. The orchestrator routes by `task.executor` as before; `execut
 4. CLI requires `-m, --model` and cross-validates against executor before submission.
 5. RabbitMQ preserves `executor_model` end-to-end.
 6. `ClaudeCliExecutor` passes `executor_model` as `--model` flag to `claude` CLI.
-7. `TTADKExecutor` passes `executor_model` as `-m` flag to `ttadk`, replacing the hardcoded `gpt-5.4`.
+7. `ClaudeWExecutor` passes `executor_model` as `--model` to `claude-w`.
 8. Invalid model+executor errors list valid models for that executor.
 9. Updated tests cover shared/API/CLI/daemon changes.

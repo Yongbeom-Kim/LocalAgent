@@ -23,13 +23,13 @@
 | `packages/api/src/__tests__/services/rabbitmq.test.ts` | Modify | Update Job/JobSubmission fixtures |
 | `packages/daemon/task/src/ports/task-executor.ts` | Modify | Change parameter type from `Job` to `JobAttempt` |
 | `packages/daemon/task/src/adapters/claude-cli-executor.ts` | Modify | Update import and signature to `JobAttempt` |
-| `packages/daemon/task/src/adapters/ttadk-executor.ts` | Modify | Update import and signature to `JobAttempt` |
+| `packages/daemon/task/src/adapters/claude-w-executor.ts` | Modify | Update import and signature to `JobAttempt` |
 | `packages/daemon/task/src/core/task-orchestrator.ts` | Modify | Add fallback loop, `resolveExecutor()`, `JobAttempt` construction |
 | `packages/daemon/task/src/core/__tests__/task-orchestrator.test.ts` | Modify | Update fixtures; add fallback tests |
 | `packages/daemon/task/src/__tests__/task-poller.test.ts` | Modify | Update `createJob()` fixture |
 | `packages/daemon/task/src/services/__tests__/job-environment.test.ts` | Modify | Update `createJob()` fixture |
 | `packages/daemon/task/src/adapters/__tests__/claude-cli-executor.test.ts` | Modify | Update fixtures from `Job` to `JobAttempt` |
-| `packages/daemon/task/src/adapters/__tests__/ttadk-executor.test.ts` | Modify | Update fixtures from `Job` to `JobAttempt` |
+| `packages/daemon/task/src/adapters/__tests__/claude-w-executor.test.ts` | Modify | Update fixtures from `Job` to `JobAttempt` |
 
 ---
 
@@ -53,7 +53,7 @@ describe('isValidExecutorPreferences', () => {
   it('returns true for valid non-empty array', () => {
     expect(isValidExecutorPreferences([
       { executor: 'claude_code', executor_model: 'sonnet' },
-      { executor: 'ttadk', executor_model: 'gpt-5.4' },
+      { executor: 'claude-w', executor_model: 'gpt-5.4' },
     ])).toBe(true);
   });
 
@@ -242,7 +242,7 @@ describe('EnrichmentService', () => {
           default: {
             executors: [
               { executor: 'claude_code', executor_model: 'sonnet' },
-              { executor: 'ttadk', executor_model: 'gpt-5.4' },
+              { executor: 'claude-w', executor_model: 'gpt-5.4' },
             ],
           },
         },
@@ -269,7 +269,7 @@ describe('EnrichmentService', () => {
       expect(result).not.toBeNull();
       expect(result!.executors).toEqual([
         { executor: 'claude_code', executor_model: 'sonnet' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ]);
     });
 
@@ -676,7 +676,7 @@ Replace the `getNext` test message content (lines 83-90):
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+        executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
 ```
@@ -688,7 +688,7 @@ And the corresponding assertion (lines 97-104):
         task_id: 'task-123',
         task_type: 'generic',
         payload: 'hello',
-        executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+        executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
         submitted_at: '2026-03-26T00:00:00.000Z',
       });
 ```
@@ -721,7 +721,7 @@ Update the duplicate task second message (lines 144-150):
           task_id: 'duplicate-id',
           task_type: 'generic',
           payload: 'second',
-          executors: [{ executor: 'ttadk', executor_model: 'gpt-5.4' }],
+          executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
           submitted_at: '2026-03-26T00:00:01.000Z',
 ```
 
@@ -756,7 +756,7 @@ git commit -m "test(api): update RabbitMQ test fixtures for executors array"
 **Files:**
 - Modify: `packages/daemon/task/src/ports/task-executor.ts`
 - Modify: `packages/daemon/task/src/adapters/claude-cli-executor.ts`
-- Modify: `packages/daemon/task/src/adapters/ttadk-executor.ts`
+- Modify: `packages/daemon/task/src/adapters/claude-w-executor.ts`
 
 - [ ] **Step 1: Update TaskExecutor port**
 
@@ -785,9 +785,9 @@ Update the `execute` method signature (line 9):
   async execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
 ```
 
-- [ ] **Step 3: Update TTADKExecutor signature**
+- [ ] **Step 3: Update ClaudeWExecutor signature**
 
-In `packages/daemon/task/src/adapters/ttadk-executor.ts`, apply the same import and signature changes:
+In `packages/daemon/task/src/adapters/claude-w-executor.ts`, apply the same import and signature changes:
 
 Update import to use `JobAttempt` instead of `Job`.
 Update `execute` method signature to `execute(job: JobAttempt, ...)`.
@@ -800,7 +800,7 @@ Expected: May have errors in orchestrator (fixed in Task 7) and tests (fixed in 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/daemon/task/src/ports/task-executor.ts packages/daemon/task/src/adapters/claude-cli-executor.ts packages/daemon/task/src/adapters/ttadk-executor.ts
+git add packages/daemon/task/src/ports/task-executor.ts packages/daemon/task/src/adapters/claude-cli-executor.ts packages/daemon/task/src/adapters/claude-w-executor.ts
 git commit -m "refactor(task-daemon): update TaskExecutor port and adapters from Job to JobAttempt"
 ```
 
@@ -876,12 +876,12 @@ Then add new tests:
     };
 
     mockClaudeExecute.mockResolvedValueOnce(failResult);
-    mockTTADKExecute.mockResolvedValueOnce(successResult);
+    mockClaudeWExecute.mockResolvedValueOnce(successResult);
 
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     const result = await orchestrator.handle(job);
@@ -889,7 +889,7 @@ Then add new tests:
     expect(result.status).toBe('success');
     expect(result.stdout).toBe('fallback output');
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
-    expect(mockTTADKExecute).toHaveBeenCalledTimes(1);
+    expect(mockClaudeWExecute).toHaveBeenCalledTimes(1);
     expect(mockSetup).toHaveBeenCalledTimes(2);
     expect(mockTeardown).toHaveBeenCalledTimes(2);
   });
@@ -913,12 +913,12 @@ Then add new tests:
     };
 
     mockClaudeExecute.mockResolvedValueOnce(failResult1);
-    mockTTADKExecute.mockResolvedValueOnce(failResult2);
+    mockClaudeWExecute.mockResolvedValueOnce(failResult2);
 
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     const result = await orchestrator.handle(job);
@@ -931,14 +931,14 @@ Then add new tests:
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     const result = await orchestrator.handle(job);
 
     expect(result.status).toBe('success');
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
-    expect(mockTTADKExecute).not.toHaveBeenCalled();
+    expect(mockClaudeWExecute).not.toHaveBeenCalled();
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockTeardown).toHaveBeenCalledTimes(1);
   });
@@ -957,7 +957,7 @@ Then add new tests:
     const job = createJob({
       executors: [
         { executor: 'claude_code', executor_model: 'opus' },
-        { executor: 'ttadk', executor_model: 'gpt-5.4' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
       ],
     });
     await orchestrator.handle(job);
@@ -966,8 +966,8 @@ Then add new tests:
       expect.objectContaining({ executor: 'claude_code', executor_model: 'opus' }),
       mockEnv,
     );
-    expect(mockTTADKExecute).toHaveBeenCalledWith(
-      expect.objectContaining({ executor: 'ttadk', executor_model: 'gpt-5.4' }),
+    expect(mockClaudeWExecute).toHaveBeenCalledWith(
+      expect.objectContaining({ executor: 'claude-w', executor_model: 'gpt-5.4' }),
       mockEnv,
     );
   });
@@ -985,7 +985,7 @@ Replace `packages/daemon/task/src/core/task-orchestrator.ts`:
 ```ts
 import { Job, JobAttempt, TaskResultSubmission, TaskExecutorType, createLogger } from '@local-agent/shared';
 import { ClaudeCliExecutor } from '../adapters/claude-cli-executor';
-import { TTADKExecutor } from '../adapters/ttadk-executor';
+import { ClaudeWExecutor } from '../adapters/claude-w-executor';
 import { TaskExecutor } from '../ports/task-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
 
@@ -1075,7 +1075,7 @@ export class TaskOrchestrator {
 
   private resolveExecutor(executor: TaskExecutorType): TaskExecutor {
     if (executor === 'claude_code') return new ClaudeCliExecutor();
-    if (executor === 'ttadk') return new TTADKExecutor();
+    if (executor === 'claude-w') return new ClaudeWExecutor();
     throw new Error(`Unknown executor: ${executor}`);
   }
 }
@@ -1101,7 +1101,7 @@ git commit -m "feat(task-daemon): add executor fallback loop in TaskOrchestrator
 - Modify: `packages/daemon/task/src/__tests__/task-poller.test.ts`
 - Modify: `packages/daemon/task/src/services/__tests__/job-environment.test.ts`
 - Modify: `packages/daemon/task/src/adapters/__tests__/claude-cli-executor.test.ts`
-- Modify: `packages/daemon/task/src/adapters/__tests__/ttadk-executor.test.ts`
+- Modify: `packages/daemon/task/src/adapters/__tests__/claude-w-executor.test.ts`
 
 - [ ] **Step 1: Update task-poller.test.ts `createJob` fixture**
 
@@ -1165,9 +1165,9 @@ function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
 
 Update all references from `createJob()` to `createJobAttempt()` in the test.
 
-- [ ] **Step 4: Update ttadk-executor.test.ts fixture**
+- [ ] **Step 4: Update claude-w-executor.test.ts fixture**
 
-Same pattern as Step 3, but with `executor: 'ttadk'` and `executor_model: 'gpt-5.4'`:
+Same pattern as Step 3, but with `executor: 'claude-w'` and `executor_model: 'gpt-5.4'`:
 
 ```ts
 import { JobAttempt, TaskResultSubmission } from '@local-agent/shared';
@@ -1178,7 +1178,7 @@ function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
     task_id: 'test-123',
     task_type: 'generic',
     payload: 'What is 2+2?',
-    executor: 'ttadk',
+    executor: 'claude-w',
     executor_model: 'gpt-5.4',
     submitted_at: '2026-03-26T00:00:00.000Z',
     enriched_at: '2026-03-26T00:00:01.000Z',

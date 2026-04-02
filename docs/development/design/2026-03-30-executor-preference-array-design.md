@@ -176,7 +176,7 @@ rules:
     executors:
       - executor: claude_code
         executor_model: sonnet
-      - executor: ttadk
+      - executor: claude-w
         executor_model: gpt-5.4
 ```
 
@@ -295,7 +295,7 @@ Note: The orchestrator constructs a `JobAttempt` (defined in section 6.1) for ea
 ```ts
 private resolveExecutor(executor: TaskExecutorType): TaskExecutor {
   if (executor === 'claude_code') return new ClaudeCliExecutor();
-  if (executor === 'ttadk') return new TTADKExecutor();
+  if (executor === 'claude-w') return new ClaudeWExecutor();
   throw new Error(`Unknown executor: ${executor}`);
 }
 ```
@@ -310,7 +310,7 @@ export interface TaskExecutor {
 }
 ```
 
-Individual executors (`ClaudeCliExecutor`, `TTADKExecutor`) require no logic changes — `JobAttempt` has the same scalar `executor`/`executor_model` fields they already use. Only the import and type annotation change.
+Individual executors (`ClaudeCliExecutor`, `ClaudeWExecutor`) require no logic changes — `JobAttempt` has the same scalar `executor`/`executor_model` fields they already use. Only the import and type annotation change.
 
 ### 6.7 Enrichment poller — no changes
 
@@ -327,11 +327,11 @@ The poller POSTs `JobSubmission` to `/jobs`. The shape change (array instead of 
 | `packages/api/src/routes/jobs.ts` | Modify | Replace scalar validation with `isValidExecutorPreferences()`; construct `Job` with `executors` array |
 | `packages/daemon/task/src/ports/task-executor.ts` | Modify | Change `execute()` parameter type from `Job` to `JobAttempt` |
 | `packages/daemon/task/src/adapters/claude-cli-executor.ts` | Modify | Update `execute()` signature from `Job` to `JobAttempt` (no logic change) |
-| `packages/daemon/task/src/adapters/ttadk-executor.ts` | Modify | Update `execute()` signature from `Job` to `JobAttempt` (no logic change) |
+| `packages/daemon/task/src/adapters/claude-w-executor.ts` | Modify | Update `execute()` signature from `Job` to `JobAttempt` (no logic change) |
 | `packages/daemon/task/src/core/task-orchestrator.ts` | Modify | Add fallback loop over `executors` array; construct `JobAttempt` per attempt; extract `resolveExecutor()` helper; fresh env per attempt |
 | `packages/daemon/task/src/services/__tests__/job-environment.test.ts` | Modify | Update `Job` test fixtures to use `executors` array instead of scalar fields |
 | `packages/daemon/task/src/adapters/__tests__/claude-cli-executor.test.ts` | Modify | Update test fixtures from `Job` to `JobAttempt` type (no logic changes) |
-| `packages/daemon/task/src/adapters/__tests__/ttadk-executor.test.ts` | Modify | Update test fixtures from `Job` to `JobAttempt` type (no logic changes) |
+| `packages/daemon/task/src/adapters/__tests__/claude-w-executor.test.ts` | Modify | Update test fixtures from `Job` to `JobAttempt` type (no logic changes) |
 | `packages/daemon/task/src/__tests__/task-poller.test.ts` | Modify | Update `Job` test fixtures to use `executors` array |
 | `packages/daemon/task-enrichment/src/__tests__/enrichment-service.test.ts` | Modify | Update tests for array-based rules and validation |
 | `packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts` | Modify | Update `JobSubmission` test fixtures to use `executors` array |
