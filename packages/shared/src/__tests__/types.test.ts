@@ -8,6 +8,93 @@ import {
   isValidExecutorPreferences,
 } from '../types';
 
+/** Exact static allowlist order for `cursor_agent` (must match `EXECUTOR_MODELS.cursor_agent`). */
+const CURSOR_AGENT_MODELS_EXPECTED = [
+  'auto',
+  'composer-2-fast',
+  'composer-2',
+  'composer-1.5',
+  'gpt-5.3-codex-low',
+  'gpt-5.3-codex-low-fast',
+  'gpt-5.3-codex',
+  'gpt-5.3-codex-fast',
+  'gpt-5.3-codex-high',
+  'gpt-5.3-codex-high-fast',
+  'gpt-5.3-codex-xhigh',
+  'gpt-5.3-codex-xhigh-fast',
+  'gpt-5.2',
+  'gpt-5.3-codex-spark-preview-low',
+  'gpt-5.3-codex-spark-preview',
+  'gpt-5.3-codex-spark-preview-high',
+  'gpt-5.3-codex-spark-preview-xhigh',
+  'gpt-5.2-codex-low',
+  'gpt-5.2-codex-low-fast',
+  'gpt-5.2-codex',
+  'gpt-5.2-codex-fast',
+  'gpt-5.2-codex-high',
+  'gpt-5.2-codex-high-fast',
+  'gpt-5.2-codex-xhigh',
+  'gpt-5.2-codex-xhigh-fast',
+  'gpt-5.1-codex-max-low',
+  'gpt-5.1-codex-max-low-fast',
+  'gpt-5.1-codex-max-medium',
+  'gpt-5.1-codex-max-medium-fast',
+  'gpt-5.1-codex-max-high',
+  'gpt-5.1-codex-max-high-fast',
+  'gpt-5.1-codex-max-xhigh',
+  'gpt-5.1-codex-max-xhigh-fast',
+  'gpt-5.4-high',
+  'gpt-5.4-high-fast',
+  'gpt-5.4-xhigh-fast',
+  'claude-4.6-opus-high-thinking',
+  'gpt-5.4-low',
+  'gpt-5.4-medium',
+  'gpt-5.4-medium-fast',
+  'gpt-5.4-xhigh',
+  'claude-4.6-sonnet-medium',
+  'claude-4.6-sonnet-medium-thinking',
+  'claude-4.6-opus-high',
+  'claude-4.6-opus-max',
+  'claude-4.6-opus-max-thinking',
+  'claude-4.5-opus-high',
+  'claude-4.5-opus-high-thinking',
+  'gpt-5.2-low',
+  'gpt-5.2-low-fast',
+  'gpt-5.2-fast',
+  'gpt-5.2-high',
+  'gpt-5.2-high-fast',
+  'gpt-5.2-xhigh',
+  'gpt-5.2-xhigh-fast',
+  'gemini-3.1-pro',
+  'gpt-5.4-mini-none',
+  'gpt-5.4-mini-low',
+  'gpt-5.4-mini-medium',
+  'gpt-5.4-mini-high',
+  'gpt-5.4-mini-xhigh',
+  'gpt-5.4-nano-none',
+  'gpt-5.4-nano-low',
+  'gpt-5.4-nano-medium',
+  'gpt-5.4-nano-high',
+  'gpt-5.4-nano-xhigh',
+  'grok-4-20',
+  'grok-4-20-thinking',
+  'claude-4.5-sonnet',
+  'claude-4.5-sonnet-thinking',
+  'gpt-5.1-low',
+  'gpt-5.1',
+  'gpt-5.1-high',
+  'gemini-3-flash',
+  'gpt-5.1-codex-mini-low',
+  'gpt-5.1-codex-mini',
+  'gpt-5.1-codex-mini-high',
+  'claude-4-sonnet',
+  'claude-4-sonnet-1m',
+  'claude-4-sonnet-thinking',
+  'claude-4-sonnet-1m-thinking',
+  'gpt-5-mini',
+  'kimi-k2.5',
+] as const;
+
 describe('EXECUTOR_MODELS', () => {
   it('defines claude_code models', () => {
     expect(EXECUTOR_MODELS.claude_code).toEqual(['opus', 'sonnet', 'haiku']);
@@ -31,8 +118,8 @@ describe('EXECUTOR_MODELS', () => {
     expect(EXECUTOR_MODELS.builtin).toEqual(['none']);
   });
 
-  it('defines cursor_agent example models', () => {
-    expect(EXECUTOR_MODELS.cursor_agent).toEqual(['auto', 'composer-2-fast', 'gpt-5.4-medium']);
+  it('defines cursor_agent static allowlist', () => {
+    expect(EXECUTOR_MODELS.cursor_agent).toEqual(CURSOR_AGENT_MODELS_EXPECTED);
   });
 });
 
@@ -79,13 +166,13 @@ describe('isValidExecutorModel', () => {
     expect(isValidExecutorModel('claude_code', null)).toBe(false);
   });
 
-  it('validates cursor_agent model ids by pattern', () => {
+  it('validates cursor_agent models against the static allowlist', () => {
     expect(isValidExecutorModel('cursor_agent', 'auto')).toBe(true);
-    expect(isValidExecutorModel('cursor_agent', 'gpt-5.3-codex-high-fast')).toBe(true);
+    expect(isValidExecutorModel('cursor_agent', 'gpt-5.4-medium-fast')).toBe(true);
     expect(isValidExecutorModel('cursor_agent', 'claude-4.6-sonnet-medium-thinking')).toBe(true);
-    expect(isValidExecutorModel('cursor_agent', '')).toBe(false);
-    expect(isValidExecutorModel('cursor_agent', 'bad id')).toBe(false);
-    expect(isValidExecutorModel('cursor_agent', 'x'.repeat(200))).toBe(false);
+    expect(isValidExecutorModel('cursor_agent', 'not-a-real-model')).toBe(false);
+    expect(isValidExecutorModel('cursor_agent', 'bad id with spaces')).toBe(false);
+    expect(isValidExecutorModel('cursor_agent', 'gpt-5.4-medium-ultra')).toBe(false);
   });
 });
 
@@ -104,9 +191,8 @@ describe('getExecutorModelOptions', () => {
     expect(getExecutorModelOptions('builtin')).toBe('none');
   });
 
-  it('returns descriptive options string for cursor_agent', () => {
-    expect(getExecutorModelOptions('cursor_agent')).toContain('auto');
-    expect(getExecutorModelOptions('cursor_agent')).toMatch(/agent models/i);
+  it('returns comma-separated list for cursor_agent', () => {
+    expect(getExecutorModelOptions('cursor_agent')).toBe(EXECUTOR_MODELS.cursor_agent.join(', '));
   });
 });
 
@@ -167,10 +253,16 @@ describe('isValidExecutorPreferences', () => {
     ])).toBe(true);
   });
 
-  it('returns true for cursor_agent with pattern-valid model', () => {
+  it('returns true for cursor_agent with allowlisted model', () => {
     expect(isValidExecutorPreferences([
       { executor: 'cursor_agent', executor_model: 'auto' },
     ])).toBe(true);
+  });
+
+  it('returns false for cursor_agent with unlisted model', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'cursor_agent', executor_model: 'not-a-real-model' },
+    ])).toBe(false);
   });
 
   it('returns false for empty array', () => {

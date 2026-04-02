@@ -153,6 +153,35 @@ describe('EnrichmentService', () => {
       const result = service.enrich(createTask({ task_type: 'empty' }), TEST_SESSION_ID);
       expect(result.type).toBe('rejected');
     });
+
+    it('enriches when cursor_agent uses allowlisted model gpt-5.4-medium-fast', () => {
+      const service = EnrichmentService.fromObject({
+        rules: {
+          cursor_task: {
+            executors: [{ executor: 'cursor_agent', executor_model: 'gpt-5.4-medium-fast' }],
+          },
+        },
+      });
+
+      const result = service.enrich(createTask({ task_type: 'cursor_task' }), TEST_SESSION_ID);
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
+        { executor: 'cursor_agent', executor_model: 'gpt-5.4-medium-fast' },
+      ]);
+    });
+
+    it('returns rejected result when cursor_agent uses unlisted model not-a-real-model', () => {
+      const service = EnrichmentService.fromObject({
+        rules: {
+          bad_cursor: {
+            executors: [{ executor: 'cursor_agent', executor_model: 'not-a-real-model' }],
+          },
+        },
+      });
+
+      const result = service.enrich(createTask({ task_type: 'bad_cursor' }), TEST_SESSION_ID);
+      expect(result.type).toBe('rejected');
+    });
   });
 
   describe('fromFile', () => {

@@ -149,6 +149,36 @@ describe('POST /jobs', () => {
       expect.objectContaining({ setup_hook: 'npm ci', setup_hook_timeout_ms: 60000 }),
     );
   });
+
+  it('returns 201 when executors use cursor_agent with allowlisted model gpt-5.4-medium-fast', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send({
+        ...validJobSubmission(),
+        executors: [{ executor: 'cursor_agent', executor_model: 'gpt-5.4-medium-fast' }],
+      });
+    expect(res.status).toBe(201);
+    expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executors: [{ executor: 'cursor_agent', executor_model: 'gpt-5.4-medium-fast' }],
+      }),
+    );
+  });
+
+  it('returns 400 when cursor_agent uses unlisted model not-a-real-model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send({
+        ...validJobSubmission(),
+        executors: [{ executor: 'cursor_agent', executor_model: 'not-a-real-model' }],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(
+      'executors must be a non-empty array of valid {executor, executor_model} pairs',
+    );
+  });
 });
 
 describe('POST /jobs/:id/nack', () => {
