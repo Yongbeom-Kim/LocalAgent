@@ -1,4 +1,4 @@
-export const TASK_EXECUTORS = ['claude', 'claude-w', 'builtin', 'cursor'] as const;
+export const TASK_EXECUTORS = ['claude', 'claude-w', 'builtin', 'cursor', 'ttcodex'] as const;
 export const TASK_EXECUTOR_OPTIONS = TASK_EXECUTORS.join(', ');
 export type TaskExecutorType = (typeof TASK_EXECUTORS)[number];
 
@@ -105,6 +105,7 @@ export const EXECUTOR_MODELS = {
     'gpt-5-mini',
     'kimi-k2.5',
   ],
+  ttcodex: ['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex'],
 } as const satisfies Record<TaskExecutorType, readonly string[]>;
 
 export type ExecutorModelType<T extends TaskExecutorType = TaskExecutorType> =
@@ -153,7 +154,7 @@ export function isControlTaskType(value: unknown): value is ControlTaskType {
 export interface TaskSubmission {
   task_type: string;
   payload: string;
-  executor?: TaskExecutorType;
+  executor?: string;
   executor_model?: string;
   task_source?: TaskSource;
 }
@@ -162,7 +163,7 @@ export interface Task {
   task_id: string;
   task_type: string;
   payload: string;
-  executor?: TaskExecutorType;
+  executor?: string;
   executor_model?: string;
   submitted_at: string;
   task_source?: TaskSource;

@@ -28,9 +28,18 @@ export {
   MAX_RESULT_OUTPUT_BYTES,
 } from './types';
 export {
+  TASK_COMMAND_USAGE,
   type RoutingCommandLabel,
+  formatMissingTaskTypeMessage,
+  formatUnknownTaskTypeMessage,
+  formatMissingExecutorMessage,
+  formatMissingModelMessage,
+  formatMissingPayloadMessage,
   formatInvalidExecutorMessage,
   formatInvalidModelMessage,
+  formatThreadReplyHelpMessage,
+  formatThreadTaskCommandRejectedMessage,
+  formatThreadOnlyCommandMessage,
 } from './routing-errors';
 export { loadApiConfig, loadDaemonConfig, loadEnvFromRoot, ApiConfig, DaemonConfig } from './config';
 export { createLogger } from './logger';

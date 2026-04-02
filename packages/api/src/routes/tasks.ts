@@ -16,7 +16,7 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
     try {
       const { task_type, payload, task_source, executor, executor_model } = req.body;
 
-      if (typeof task_type !== 'string' || !task_type) {
+      if (typeof task_type !== 'string') {
         res.status(400).json({ error: 'task_type is required and must be a string' });
         return;
       }
@@ -30,31 +30,21 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         return;
       }
 
+      if (executor_model !== undefined && executor === undefined) {
+        res.status(400).json({ error: 'executor_model requires executor' });
+        return;
+      }
+
       const isControl = isControlTaskType(task_type);
 
-      if ((executor === undefined) !== (executor_model === undefined)) {
-        res.status(400).json({ error: 'executor and executor_model must be provided together' });
-        return;
-      }
-
-      const shouldDeferRoutingValidation = task_source?.source === 'lark';
-
       if (
+        isControl &&
         executor !== undefined &&
-        !shouldDeferRoutingValidation &&
-        (!isTaskExecutorType(executor) || !isValidExecutorModel(executor, executor_model))
+        (!isTaskExecutorType(executor) ||
+          executor_model === undefined ||
+          !isValidExecutorModel(executor, executor_model))
       ) {
         res.status(400).json({ error: 'executor and executor_model must be a valid pair' });
-        return;
-      }
-
-      if (!isControl && executor === undefined) {
-        res.status(400).json({ error: 'executor and executor_model are required for non-control tasks' });
-        return;
-      }
-
-      if (!isControl && payload.trim() === '') {
-        res.status(400).json({ error: 'payload must be non-empty for non-control tasks' });
         return;
       }
 
@@ -63,8 +53,8 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         task_type,
         payload,
         submitted_at: new Date().toISOString(),
-        ...(executor !== undefined ? { executor } : {}),
-        ...(executor_model !== undefined ? { executor_model } : {}),
+        ...(typeof executor === 'string' ? { executor } : {}),
+        ...(typeof executor_model === 'string' ? { executor_model } : {}),
         ...(task_source ? { task_source } : {}),
       };
       const buffered = rabbitmq.publish(task);

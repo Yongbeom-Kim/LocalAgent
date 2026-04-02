@@ -63,6 +63,7 @@ const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockGcExecute = vi.fn().mockReturnValue(mockGcResultSubmission);
 const mockClaudeWExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockCursorExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockTTCodexExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockCleanupExecute = vi.fn().mockResolvedValue(mockCleanupResultSubmission);
 
 vi.mock('../../adapters/claude-executor', () => ({
@@ -89,6 +90,12 @@ vi.mock('../../adapters/cursor-executor', () => ({
   }),
 }));
 
+vi.mock('../../adapters/ttcodex-executor', () => ({
+  TTCodexExecutor: vi.fn(function (this: { execute: typeof mockTTCodexExecute }) {
+    this.execute = mockTTCodexExecute;
+  }),
+}));
+
 vi.mock('../../services/gc-executor', () => ({
   GcExecutor: vi.fn(function (this: { execute: typeof mockGcExecute }) {
     this.execute = mockGcExecute;
@@ -99,6 +106,7 @@ import { ClaudeExecutor } from '../../adapters/claude-executor';
 import { CleanupExecutor } from '../../adapters/cleanup-executor';
 import { ClaudeWExecutor } from '../../adapters/claude-w-executor';
 import { CursorExecutor } from '../../adapters/cursor-executor';
+import { TTCodexExecutor } from '../../adapters/ttcodex-executor';
 import { GcExecutor } from '../../services/gc-executor';
 import { TaskOrchestrator } from '../task-orchestrator';
 import { JobEnvironment } from '../../services/job-environment';
@@ -125,6 +133,7 @@ describe('TaskOrchestrator', () => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockClaudeWExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockCursorExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockTTCodexExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockCleanupExecute.mockClear().mockResolvedValue(mockCleanupResultSubmission);
     mockGcExecute.mockClear().mockReturnValue(mockGcResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
@@ -132,6 +141,7 @@ describe('TaskOrchestrator', () => {
     vi.mocked(ClaudeExecutor).mockClear();
     vi.mocked(ClaudeWExecutor).mockClear();
     vi.mocked(CursorExecutor).mockClear();
+    vi.mocked(TTCodexExecutor).mockClear();
     vi.mocked(CleanupExecutor).mockClear();
     vi.mocked(GcExecutor).mockClear();
     jobEnv = new JobEnvironment(false);
@@ -252,6 +262,28 @@ describe('TaskOrchestrator', () => {
       mockEnv,
     );
     expect(result).toEqual({ ...mockResultSubmission, executor: 'cursor', executor_model: 'auto' });
+    expect(mockTeardown).not.toHaveBeenCalled();
+  });
+
+  it('returns TaskResultSubmission from TTCodexExecutor for ttcodex jobs', async () => {
+    const job = createJob({
+      executors: [{ executor: 'ttcodex', executor_model: 'gpt-5.4' }],
+    });
+    const result = await orchestrator.handle(job);
+
+    expect(TTCodexExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeExecutor).not.toHaveBeenCalled();
+    expect(ClaudeWExecutor).not.toHaveBeenCalled();
+    expect(CursorExecutor).not.toHaveBeenCalled();
+    expect(CleanupExecutor).not.toHaveBeenCalled();
+    expect(mockTTCodexExecute).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executor: 'ttcodex',
+        executor_model: 'gpt-5.4',
+      }),
+      mockEnv,
+    );
+    expect(result).toEqual({ ...mockResultSubmission, executor: 'ttcodex', executor_model: 'gpt-5.4' });
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 

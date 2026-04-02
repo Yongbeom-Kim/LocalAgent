@@ -1,5 +1,7 @@
 # Design: `/new` Executor and Model Inheritance in Lark Threads
 
+> Refinement note: for the current Lark contract, `/new` and `/new <executor> <model>` are thread-only commands. Root-message behavior and natural-language thread continuation are refined in `docs/development/design/2026-04-02-lark-thread-natural-language-continuation-design.md`.
+
 > **Naming note:** The current executor naming contract uses `claude` and `cursor`. For the live rename spec, see `docs/development/design/2026-04-02-executor-rename-claude-and-cursor-design.md` and `docs/development/plans/2026-04-02-executor-rename-claude-and-cursor.md`.
 
 > The current normal-task routing contract is defined in `docs/development/design/2026-04-02-task-explicit-routing-contract-design.md` and `docs/development/plans/2026-04-02-task-explicit-routing-contract.md`.

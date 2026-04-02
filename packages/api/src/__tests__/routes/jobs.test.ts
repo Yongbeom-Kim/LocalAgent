@@ -180,6 +180,36 @@ describe('POST /jobs', () => {
     );
   });
 
+  it('returns 201 when executors use ttcodex with an allowlisted model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send({
+        ...validJobSubmission(),
+        executors: [{ executor: 'ttcodex', executor_model: 'gpt-5.4' }],
+      });
+    expect(res.status).toBe(201);
+    expect(mockRabbitMQ.publishJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executors: [{ executor: 'ttcodex', executor_model: 'gpt-5.4' }],
+      }),
+    );
+  });
+
+  it('returns 400 when ttcodex uses an unallowlisted model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/jobs')
+      .send({
+        ...validJobSubmission(),
+        executors: [{ executor: 'ttcodex', executor_model: 'gpt-5.1' }],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe(
+      'executors must be a non-empty array of valid {executor, executor_model} pairs',
+    );
+  });
+
   it('returns 400 when executors use legacy executor names', async () => {
     const app = buildApp();
     const res = await request(app)

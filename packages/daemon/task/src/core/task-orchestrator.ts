@@ -3,6 +3,7 @@ import { ClaudeExecutor } from '../adapters/claude-executor';
 import { CleanupExecutor } from '../adapters/cleanup-executor';
 import { ClaudeWExecutor } from '../adapters/claude-w-executor';
 import { CursorExecutor } from '../adapters/cursor-executor';
+import { TTCodexExecutor } from '../adapters/ttcodex-executor';
 import { TaskExecutor } from '../ports/task-executor';
 import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
@@ -163,6 +164,7 @@ export class TaskOrchestrator {
     if (executor === 'claude-w') return new ClaudeWExecutor();
     if (executor === 'builtin') return new CleanupExecutor();
     if (executor === 'cursor') return new CursorExecutor();
+    if (executor === 'ttcodex') return new TTCodexExecutor();
     throw new Error(`Unknown executor: ${executor}`);
   }
 }

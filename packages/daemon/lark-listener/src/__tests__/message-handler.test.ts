@@ -44,12 +44,18 @@ describe('MessageHandler', () => {
     );
   });
 
-  it('rejects plain text messages with the usage hint', async () => {
+  it('submits plain text messages as thread_reply', async () => {
     await handler.handle(makeEvent());
 
-    expect(submitter.submit).not.toHaveBeenCalled();
-    expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
-    expect(reactor.react).not.toHaveBeenCalled();
+    expect(submitter.submit).toHaveBeenCalledWith(
+      'thread_reply',
+      'fix the CI pipeline',
+      { source: 'lark', message_id: 'om_msg1' },
+      undefined,
+      undefined,
+    );
+    expect(replier.reply).not.toHaveBeenCalled();
+    expect(reactor.react).toHaveBeenCalledWith('om_msg1');
   });
 
   it('skips duplicate messages', async () => {
@@ -61,7 +67,7 @@ describe('MessageHandler', () => {
     expect(reactor.react).not.toHaveBeenCalled();
   });
 
-  it('rejects non-text messages with the usage hint', async () => {
+  it('submits non-text messages as normalized thread_reply', async () => {
     await handler.handle(
       makeEvent({
         message_type: 'image',
@@ -69,8 +75,15 @@ describe('MessageHandler', () => {
       }),
     );
 
-    expect(submitter.submit).not.toHaveBeenCalled();
-    expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    expect(submitter.submit).toHaveBeenCalledWith(
+      'thread_reply',
+      '[Image: img_v3_abc]',
+      { source: 'lark', message_id: 'om_msg1' },
+      undefined,
+      undefined,
+    );
+    expect(replier.reply).not.toHaveBeenCalled();
+    expect(reactor.react).toHaveBeenCalledWith('om_msg1');
   });
 
   it('still reacts even if submit returns null (failure)', async () => {

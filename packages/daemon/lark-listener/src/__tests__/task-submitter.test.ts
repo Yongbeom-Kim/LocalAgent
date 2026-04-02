@@ -108,4 +108,21 @@ describe('TaskSubmitter', () => {
     expect(body.executor).toBe('cursor');
     expect(body.executor_model).toBe('auto');
   });
+
+  it('posts raw executor and model tokens for partial routing', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ task_id: 'task-abc' }),
+    });
+
+    await submitter.submit('localagent', '', undefined, 'foo', 'bar');
+
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toEqual({
+      task_type: 'localagent',
+      payload: '',
+      executor: 'foo',
+      executor_model: 'bar',
+    });
+  });
 });

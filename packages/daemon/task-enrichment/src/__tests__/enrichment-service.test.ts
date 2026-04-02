@@ -8,6 +8,11 @@ import {
   GLOBAL_SYSTEM_PROMPT,
   formatInvalidExecutorMessage,
   formatInvalidModelMessage,
+  formatMissingTaskTypeMessage,
+  formatUnknownTaskTypeMessage,
+  formatMissingExecutorMessage,
+  formatMissingModelMessage,
+  formatMissingPayloadMessage,
 } from '@local-agent/shared';
 import { EnrichmentService } from '../enrichment-service';
 
@@ -135,7 +140,10 @@ describe('EnrichmentService', () => {
         createTask({ executor: undefined, executor_model: undefined }),
         TEST_SESSION_ID,
       );
-      expect(result.type).toBe('rejected');
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatMissingExecutorMessage('code_review'),
+      });
     });
 
     it('enriches when cursor uses allowlisted model gpt-5.4-medium-fast', () => {
@@ -153,6 +161,40 @@ describe('EnrichmentService', () => {
       expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
         { executor: 'cursor', executor_model: 'gpt-5.4-medium-fast' },
       ]);
+    });
+
+    it('enriches when ttcodex uses an allowlisted model', () => {
+      const service = EnrichmentService.fromObject({
+        rules: {
+          codex_task: {},
+        },
+      });
+
+      const result = service.enrich(
+        createTask({ task_type: 'codex_task', executor: 'ttcodex', executor_model: 'gpt-5.4' }),
+        TEST_SESSION_ID,
+      );
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
+        { executor: 'ttcodex', executor_model: 'gpt-5.4' },
+      ]);
+    });
+
+    it('returns rejected result when ttcodex uses an unlisted model', () => {
+      const service = EnrichmentService.fromObject({
+        rules: {
+          bad_ttcodex: {},
+        },
+      });
+
+      const result = service.enrich(
+        createTask({ task_type: 'bad_ttcodex', executor: 'ttcodex', executor_model: 'gpt-5.1' }),
+        TEST_SESSION_ID,
+      );
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidModelMessage('/task', 'ttcodex', 'gpt-5.1'),
+      });
     });
 
     it('returns rejected result when cursor uses unlisted model', () => {
@@ -257,7 +299,7 @@ describe('EnrichmentService', () => {
 
       expect(result).toEqual({
         type: 'rejected',
-        reason: expect.stringContaining('Unknown task type "missing"'),
+        reason: formatUnknownTaskTypeMessage('missing', ['code_review']),
       });
     });
 
@@ -274,6 +316,129 @@ describe('EnrichmentService', () => {
           TEST_SESSION_ID,
         ),
       ).not.toThrow();
+    });
+  });
+
+  describe('progressive /task routing help', () => {
+    it('returns syntax plus valid task types when task_type is missing', () => {
+      const service = EnrichmentService.fromObject({ rules: { generic: {}, localagent: {} } });
+      const result = service.enrich(
+        createTask({ task_type: '', executor: undefined, executor_model: undefined, payload: '' }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatMissingTaskTypeMessage(['generic', 'localagent']),
+      });
+    });
+
+    it('keeps invalid task type precedence over later routing tokens', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'foo',
+          executor: 'cursor',
+          executor_model: 'auto',
+          payload: 'hello',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatUnknownTaskTypeMessage('foo', ['localagent']),
+      });
+    });
+
+    it('returns missing executor help for known task type', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'localagent',
+          executor: undefined,
+          executor_model: undefined,
+          payload: '',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatMissingExecutorMessage('localagent'),
+      });
+    });
+
+    it('returns missing model help when executor is valid but model missing', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'localagent',
+          executor: 'cursor',
+          executor_model: undefined,
+          payload: '',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatMissingModelMessage('cursor'),
+      });
+    });
+
+    it('returns invalid executor help before considering an invalid model token', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'localagent',
+          executor: 'foo',
+          executor_model: 'bar',
+          payload: 'hello',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidExecutorMessage('/task', 'foo'),
+      });
+    });
+
+    it('returns invalid model help when executor is valid but model is not', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'localagent',
+          executor: 'cursor',
+          executor_model: 'not-a-model',
+          payload: 'hello',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidModelMessage('/task', 'cursor', 'not-a-model'),
+      });
+    });
+
+    it('returns payload-required help after valid type/executor/model', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'localagent',
+          executor: 'cursor',
+          executor_model: 'auto',
+          payload: '   ',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatMissingPayloadMessage(),
+      });
     });
   });
 
@@ -491,7 +656,7 @@ describe('rejection for unknown types (no default fallback)', () => {
 
     expect(result).toEqual({
       type: 'rejected',
-      reason: expect.stringContaining('Unknown task type "nonexistent"'),
+      reason: formatUnknownTaskTypeMessage('nonexistent', service.getValidTypes()),
     });
   });
 

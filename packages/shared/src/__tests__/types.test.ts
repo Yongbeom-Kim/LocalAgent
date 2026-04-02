@@ -125,6 +125,10 @@ describe('EXECUTOR_MODELS', () => {
   it('defines cursor static allowlist', () => {
     expect(EXECUTOR_MODELS.cursor).toEqual(CURSOR_AGENT_MODELS_EXPECTED);
   });
+
+  it('defines ttcodex models', () => {
+    expect(EXECUTOR_MODELS.ttcodex).toEqual(['gpt-5.4', 'gpt-5.3-codex', 'gpt-5.2-codex']);
+  });
 });
 
 describe('isTaskExecutorType', () => {
@@ -133,6 +137,7 @@ describe('isTaskExecutorType', () => {
     expect(isTaskExecutorType('claude-w')).toBe(true);
     expect(isTaskExecutorType('builtin')).toBe(true);
     expect(isTaskExecutorType('cursor')).toBe(true);
+    expect(isTaskExecutorType('ttcodex')).toBe(true);
   });
 
   it('rejects legacy executor names', () => {
@@ -180,6 +185,13 @@ describe('isValidExecutorModel', () => {
     expect(isValidExecutorModel('claude-w', 'glm-5-ttadk')).toBe(false);
   });
 
+  it('returns true for valid ttcodex models and false for invalid ones', () => {
+    expect(isValidExecutorModel('ttcodex', 'gpt-5.4')).toBe(true);
+    expect(isValidExecutorModel('ttcodex', 'gpt-5.3-codex')).toBe(true);
+    expect(isValidExecutorModel('ttcodex', 'gpt-5.2-codex')).toBe(true);
+    expect(isValidExecutorModel('ttcodex', 'gpt-5.1')).toBe(false);
+  });
+
   it('returns false for unknown model strings', () => {
     expect(isValidExecutorModel('claude', 'gpt-4o')).toBe(false);
     expect(isValidExecutorModel('claude-w', 'unknown')).toBe(false);
@@ -218,6 +230,10 @@ describe('getExecutorModelOptions', () => {
 
   it('returns comma-separated list for cursor', () => {
     expect(getExecutorModelOptions('cursor')).toBe(EXECUTOR_MODELS.cursor.join(', '));
+  });
+
+  it('returns comma-separated list for ttcodex', () => {
+    expect(getExecutorModelOptions('ttcodex')).toBe('gpt-5.4, gpt-5.3-codex, gpt-5.2-codex');
   });
 });
 
@@ -281,6 +297,12 @@ describe('isValidExecutorPreferences', () => {
   it('returns true for cursor with allowlisted model', () => {
     expect(isValidExecutorPreferences([
       { executor: 'cursor', executor_model: 'auto' },
+    ])).toBe(true);
+  });
+
+  it('returns true for ttcodex with allowlisted model', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'ttcodex', executor_model: 'gpt-5.4' },
     ])).toBe(true);
   });
 

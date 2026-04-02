@@ -12,6 +12,11 @@ import {
   isControlTaskType,
   formatInvalidExecutorMessage,
   formatInvalidModelMessage,
+  formatMissingTaskTypeMessage,
+  formatUnknownTaskTypeMessage,
+  formatMissingExecutorMessage,
+  formatMissingModelMessage,
+  formatMissingPayloadMessage,
 } from '@local-agent/shared';
 
 const logger = createLogger('enrichment-daemon:service');
@@ -91,17 +96,24 @@ export class EnrichmentService {
   }
 
   enrich(task: Task, sessionId: string, history?: string): EnrichmentResult {
-    const rule = this.rules[task.task_type];
+    const normalizedTaskType = task.task_type.trim();
 
-    if (!rule) {
-      const validTypes = this.getValidTypes().join(', ');
+    if (!normalizedTaskType) {
       return {
         type: 'rejected',
-        reason: `Unknown task type "${task.task_type}". Available types: ${validTypes}`,
+        reason: formatMissingTaskTypeMessage(this.getValidTypes()),
       };
     }
 
-    if (task.task_type === 'gc') {
+    const rule = this.rules[normalizedTaskType];
+    if (!rule) {
+      return {
+        type: 'rejected',
+        reason: formatUnknownTaskTypeMessage(normalizedTaskType, this.getValidTypes()),
+      };
+    }
+
+    if (normalizedTaskType === 'gc') {
       logger.error({ task_id: task.task_id }, 'gc task reached enrichment — invalid configuration');
       return {
         type: 'rejected',
@@ -111,32 +123,50 @@ export class EnrichmentService {
 
     let executors: ExecutorPreference[];
 
-    if (!isControlTaskType(task.task_type)) {
-      if (!task.executor || !task.executor_model) {
+    if (!isControlTaskType(normalizedTaskType)) {
+      if (!task.executor || task.executor.trim() === '') {
         return {
           type: 'rejected',
-          reason: `Task type "${task.task_type}" requires explicit executor routing.`,
+          reason: formatMissingExecutorMessage(normalizedTaskType),
         };
       }
-      const routingRejection = getRoutingRejection('/task', task.executor, task.executor_model);
-      if (routingRejection) {
-        return { type: 'rejected', reason: routingRejection };
+      if (!isTaskExecutorType(task.executor)) {
+        return { type: 'rejected', reason: formatInvalidExecutorMessage('/task', task.executor) };
       }
-      executors = [{ executor: task.executor, executor_model: task.executor_model }];
-    } else if (task.task_type === 'cleanup') {
+      const exec = task.executor;
+      if (!task.executor_model || task.executor_model.trim() === '') {
+        return {
+          type: 'rejected',
+          reason: formatMissingModelMessage(exec),
+        };
+      }
+      if (!isValidExecutorModel(exec, task.executor_model)) {
+        return {
+          type: 'rejected',
+          reason: formatInvalidModelMessage('/task', exec, task.executor_model),
+        };
+      }
+      if (task.payload.trim() === '') {
+        return { type: 'rejected', reason: formatMissingPayloadMessage() };
+      }
+      executors = [{ executor: exec, executor_model: task.executor_model }];
+    } else if (normalizedTaskType === 'cleanup') {
       executors = [{ executor: 'builtin', executor_model: 'none' }];
-    } else if (task.task_type === 'new_instance') {
+    } else if (normalizedTaskType === 'new_instance') {
       if (task.executor && task.executor_model) {
         const routingRejection = getRoutingRejection('/new', task.executor, task.executor_model);
         if (routingRejection) {
           return { type: 'rejected', reason: routingRejection };
+        }
+        if (!isTaskExecutorType(task.executor)) {
+          return { type: 'rejected', reason: formatInvalidExecutorMessage('/new', task.executor) };
         }
         executors = [{ executor: task.executor, executor_model: task.executor_model }];
       } else {
         executors = [{ executor: 'claude', executor_model: 'sonnet' }];
       }
     } else {
-      return { type: 'rejected', reason: `Unsupported control task type "${task.task_type}".` };
+      return { type: 'rejected', reason: `Unsupported control task type "${normalizedTaskType}".` };
     }
 
     const rulePrompt = rule.system_prompt?.trim() || '';
@@ -148,7 +178,7 @@ export class EnrichmentService {
       type: 'enriched',
       job: {
         task_id: task.task_id,
-        task_type: task.task_type,
+        task_type: normalizedTaskType,
         session_id: sessionId,
         payload: task.payload,
         ...(history ? { history } : {}),

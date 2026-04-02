@@ -151,16 +151,72 @@ describe('POST /tasks', () => {
     expect(res.status).toBe(201);
   });
 
-  it('returns 400 when non-control task omits executor/model', async () => {
+  it('accepts non-control task with empty task_type for pipeline help', async () => {
+    const res = await request(buildApp())
+      .post('/tasks')
+      .send({ task_type: '', payload: '' });
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts non-control task with task_type only', async () => {
+    const res = await request(buildApp())
+      .post('/tasks')
+      .send({ task_type: 'localagent', payload: '' });
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts non-control task with executor but no model', async () => {
+    const res = await request(buildApp())
+      .post('/tasks')
+      .send({ task_type: 'localagent', payload: '', executor: 'cursor' });
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts non-control task with invalid executor/model pair so enrichment can explain it', async () => {
+    const res = await request(buildApp())
+      .post('/tasks')
+      .send({
+        task_type: 'localagent',
+        payload: '',
+        executor: 'foo',
+        executor_model: 'bar',
+      });
+    expect(res.status).toBe(201);
+  });
+
+  it('rejects executor_model without executor', async () => {
+    const res = await request(buildApp())
+      .post('/tasks')
+      .send({
+        task_type: 'localagent',
+        payload: '',
+        executor_model: 'auto',
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/executor_model/);
+  });
+
+  it('keeps explicit /new validation strict', async () => {
+    const res = await request(buildApp())
+      .post('/tasks')
+      .send({
+        task_type: 'new_instance',
+        payload: '',
+        executor: 'foo',
+        executor_model: 'bar',
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('accepts non-control task when executor is omitted (partial routing)', async () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
       .send({ task_type: 'code_review', payload: 'review this diff' });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/executor/);
+    expect(res.status).toBe(201);
   });
 
-  it('returns 400 when non-control task payload is empty', async () => {
+  it('accepts non-control task when payload is whitespace-only', async () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
@@ -170,8 +226,7 @@ describe('POST /tasks', () => {
         executor: 'claude',
         executor_model: 'sonnet',
       });
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/payload/);
+    expect(res.status).toBe(201);
   });
 
   it('returns 201 when control task omits executor/model', async () => {
@@ -195,7 +250,20 @@ describe('POST /tasks', () => {
     expect(res.status).toBe(201);
   });
 
-  it('returns 400 when only one routing field is present', async () => {
+  it('returns 201 when control task uses ttcodex with an allowlisted model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'new_instance',
+        payload: '',
+        executor: 'ttcodex',
+        executor_model: 'gpt-5.4',
+      });
+    expect(res.status).toBe(201);
+  });
+
+  it('accepts non-control task when executor is present without model', async () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
@@ -204,7 +272,7 @@ describe('POST /tasks', () => {
         payload: 'review this diff',
         executor: 'claude',
       });
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
   });
 
   it('returns 201 for lark task with invalid model so enrichment can reject it later', async () => {
@@ -229,7 +297,7 @@ describe('POST /tasks', () => {
     );
   });
 
-  it('returns 201 for explicit /new-style lark task with invalid executor so enrichment can reject it later', async () => {
+  it('returns 400 for control /new task with invalid executor/model pair even with lark source', async () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
@@ -241,10 +309,11 @@ describe('POST /tasks', () => {
         task_source: { source: 'lark', message_id: 'om_msg1' },
       });
 
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/valid pair/);
   });
 
-  it('returns 400 for non-lark task with invalid executor', async () => {
+  it('accepts non-lark non-control task with invalid executor for enrichment', async () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
@@ -255,11 +324,10 @@ describe('POST /tasks', () => {
         executor_model: 'bar',
       });
 
-    expect(res.status).toBe(400);
-    expect(res.body.error).toMatch(/valid pair/);
+    expect(res.status).toBe(201);
   });
 
-  it('returns 400 for non-lark task with invalid model', async () => {
+  it('accepts non-lark non-control task with invalid model for enrichment', async () => {
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
@@ -270,7 +338,7 @@ describe('POST /tasks', () => {
         executor_model: 'xyz',
       });
 
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(201);
   });
 
 });

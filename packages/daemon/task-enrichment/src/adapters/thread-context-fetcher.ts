@@ -30,6 +30,8 @@ const EXECUTOR_LINE_REGEX = /^executor: .*\n?/m;
 const MODEL_LINE_REGEX = /^model: .*\n?/m;
 
 export interface ThreadContextResult {
+  kind: 'thread' | 'not_thread' | 'error';
+  reason?: string;
   threadContext: string | null;
   inheritedTaskType: string | null;
   inheritedSessionId: string | null;
@@ -50,7 +52,7 @@ export class ThreadContextFetcher {
     private readonly appSecret: string,
   ) {}
 
-  async fetchThreadContext(messageId: string, validTaskTypes?: Set<string>): Promise<ThreadContextResult | null> {
+  async fetchThreadContext(messageId: string, validTaskTypes?: Set<string>): Promise<ThreadContextResult> {
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         return await this.doFetch(messageId, validTaskTypes);
@@ -61,17 +63,33 @@ export class ThreadContextFetcher {
         }
       }
     }
-    logger.warn({ messageId }, `Thread context fetch failed after ${MAX_RETRIES} retries — proceeding without context`);
-    return null;
+    const reason = `Failed to fetch thread context after ${MAX_RETRIES} retries.`;
+    logger.warn({ messageId }, reason);
+    return {
+      kind: 'error',
+      reason,
+      threadContext: null,
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
+    };
   }
 
-  private async doFetch(messageId: string, validTaskTypes?: Set<string>): Promise<ThreadContextResult | null> {
+  private async doFetch(messageId: string, validTaskTypes?: Set<string>): Promise<ThreadContextResult> {
     // Step 1: Get token and check if message is in a thread
     const token = await this.getToken();
     const threadId = await this.getThreadId(messageId, token);
 
     if (!threadId) {
-      return null;
+      return {
+        kind: 'not_thread',
+        threadContext: null,
+        inheritedTaskType: null,
+        inheritedSessionId: null,
+        inheritedExecutor: null,
+        inheritedExecutorModel: null,
+      };
     }
 
     // Step 2: Get fresh token and fetch thread messages
@@ -128,6 +146,7 @@ export class ThreadContextFetcher {
 
     if (filtered.length === 0) {
       return {
+        kind: 'thread',
         threadContext: null,
         inheritedTaskType,
         inheritedSessionId,
@@ -149,6 +168,7 @@ export class ThreadContextFetcher {
       .join('\n');
 
     return {
+      kind: 'thread',
       threadContext: threadContext || null,
       inheritedTaskType,
       inheritedSessionId,

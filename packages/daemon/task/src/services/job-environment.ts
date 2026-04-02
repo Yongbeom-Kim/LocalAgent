@@ -1,10 +1,12 @@
-import { mkdirSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, rmSync, existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
 import { Job, DEFAULT_SETUP_HOOK_TIMEOUT_MS, SESSION_BASE_DIR, createLogger } from '@local-agent/shared';
 import { SetupHookRunner } from './setup-hook-runner';
 
 const logger = createLogger('task-daemon:job-environment');
+const WORKSPACE_READY_FILE = '.workspace-ready';
+const SESSION_LOCK_FILE = '.lock';
 
 export interface ExecutionEnvironment {
   workDir: string;
@@ -21,13 +23,18 @@ export class JobEnvironment {
   async setup(job: Job): Promise<ExecutionEnvironment> {
     const workDir = join(SESSION_BASE_DIR, job.session_id);
 
-    if (existsSync(workDir)) {
+    if (this.isWorkspaceReady(workDir)) {
       const pluginDirs = this.collectPluginDirs(job, workDir);
       logger.info({ job_id: job.job_id, session_id: job.session_id, workDir, pluginDirs }, 'Reusing session workspace');
       return { workDir, pluginDirs, isExistingWorkspace: true };
     }
 
+    const workDirExisted = existsSync(workDir);
     mkdirSync(workDir, { recursive: true });
+
+    if (workDirExisted) {
+      this.resetUninitializedWorkspace(workDir);
+    }
 
     try {
       if (job.marketplaces && job.marketplaces.length > 0) {
@@ -64,11 +71,13 @@ export class JobEnvironment {
         );
       }
 
+      this.markWorkspaceReady(workDir);
+
       logger.info({ job_id: job.job_id, session_id: job.session_id, workDir, pluginDirs }, 'Job environment ready');
       return { workDir, pluginDirs, isExistingWorkspace: false };
     } catch (error) {
       if (!this.debug) {
-        rmSync(workDir, { recursive: true, force: true });
+        this.cleanupFailedWorkspace(workDir);
       }
       throw error;
     }
@@ -94,6 +103,41 @@ export class JobEnvironment {
     }
 
     return pluginDirs;
+  }
+
+  private isWorkspaceReady(workDir: string): boolean {
+    return existsSync(join(workDir, WORKSPACE_READY_FILE));
+  }
+
+  private markWorkspaceReady(workDir: string): void {
+    writeFileSync(join(workDir, WORKSPACE_READY_FILE), 'ready\n');
+  }
+
+  private cleanupFailedWorkspace(workDir: string): void {
+    if (this.hasSessionLock(workDir)) {
+      this.resetUninitializedWorkspace(workDir);
+      return;
+    }
+
+    rmSync(workDir, { recursive: true, force: true });
+  }
+
+  private hasSessionLock(workDir: string): boolean {
+    return existsSync(join(workDir, SESSION_LOCK_FILE));
+  }
+
+  private resetUninitializedWorkspace(workDir: string): void {
+    if (!existsSync(workDir)) {
+      return;
+    }
+
+    for (const entry of readdirSync(workDir)) {
+      if (entry === SESSION_LOCK_FILE) {
+        continue;
+      }
+
+      rmSync(join(workDir, entry), { recursive: true, force: true });
+    }
   }
 
   private deriveRepoName(url: string): string {

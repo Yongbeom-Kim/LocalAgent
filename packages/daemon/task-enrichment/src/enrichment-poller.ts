@@ -4,6 +4,9 @@ import {
   createLogger,
   generateSessionId,
   isControlTaskType,
+  TASK_COMMAND_USAGE,
+  formatThreadOnlyCommandMessage,
+  formatThreadTaskCommandRejectedMessage,
   type TaskExecutorType,
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
@@ -14,25 +17,36 @@ const CLEANUP_TASK_TYPE = 'cleanup';
 const GC_TASK_TYPE = 'gc';
 const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an inherited session_id from the thread root.';
 const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
-const CLEANUP_MISSING_THREAD_REASON = 'Cleanup tasks require an existing thread with an inherited session_id.';
 const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
+const THREAD_REPLY_TASK_TYPE = 'thread_reply';
 const NEW_INSTANCE_PROMPT = 'Respond with: New session instance started.';
 const NEW_INSTANCE_MISSING_SOURCE_REASON = 'The /new command requires a Lark source.';
-const NEW_INSTANCE_MISSING_THREAD_REASON = 'The /new command can only be used inside a thread.';
 const NEW_INSTANCE_MISSING_SESSION_REASON = 'The /new command requires an existing session in this thread.';
+const THREAD_LOOKUP_ERROR_REASON = 'Failed to recover thread state. Please retry in the thread.';
+const THREAD_REPLY_INCOMPLETE_METADATA_REASON =
+  'Cannot continue this thread because the inherited thread metadata is incomplete.';
+const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /end (in a thread)`;
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
 
-const THREADED_NON_CONTROL_TASK_REJECTION =
-  'Cannot use /task in a thread. Remove the /task prefix or start a new conversation.';
+type LegacyThreadContextResult = {
+  threadContext: string | null;
+  inheritedTaskType: string | null;
+  inheritedSessionId: string | null;
+  inheritedExecutor: TaskExecutorType | null;
+  inheritedExecutorModel: string | null;
+};
 
 function resolveNewInstancePair(task: Task, threadResult: ThreadContextResult): {
   executor: TaskExecutorType;
   executor_model: string;
 } {
   if (task.executor && task.executor_model) {
-    return { executor: task.executor, executor_model: task.executor_model };
+    return {
+      executor: task.executor as TaskExecutorType,
+      executor_model: task.executor_model,
+    };
   }
   if (threadResult.inheritedExecutor && threadResult.inheritedExecutorModel) {
     return {
@@ -41,6 +55,34 @@ function resolveNewInstancePair(task: Task, threadResult: ThreadContextResult): 
     };
   }
   return { executor: 'claude', executor_model: 'sonnet' };
+}
+
+function normalizeThreadResult(
+  result: ThreadContextResult | LegacyThreadContextResult | null | undefined,
+): ThreadContextResult {
+  if (result === undefined || result === null) {
+    return {
+      kind: 'not_thread',
+      threadContext: null,
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
+    };
+  }
+
+  if ('kind' in result) {
+    return result;
+  }
+
+  return {
+    kind: 'thread',
+    threadContext: result.threadContext,
+    inheritedTaskType: result.inheritedTaskType,
+    inheritedSessionId: result.inheritedSessionId,
+    inheritedExecutor: result.inheritedExecutor,
+    inheritedExecutorModel: result.inheritedExecutorModel,
+  };
 }
 
 export class EnrichmentPoller {
@@ -73,7 +115,8 @@ export class EnrichmentPoller {
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
       const isGcTask = task.task_type === GC_TASK_TYPE;
       const isNewInstanceTask = task.task_type === NEW_INSTANCE_TASK_TYPE;
-      let threadResult: ThreadContextResult | null | undefined;
+      const isThreadReplyTask = task.task_type === THREAD_REPLY_TASK_TYPE;
+      let threadResult: ThreadContextResult | undefined;
 
       if (isCleanupTask && task.task_source?.source !== 'lark') {
         logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected cleanup task without lark task_source');
@@ -84,27 +127,53 @@ export class EnrichmentPoller {
 
       if (this.threadContextFetcher && task.task_source?.source === 'lark') {
         const validTaskTypes = this.enrichmentService.getValidTaskTypes();
-        threadResult = await this.threadContextFetcher.fetchThreadContext(task.task_source.message_id, validTaskTypes);
+        threadResult = normalizeThreadResult(
+          (await this.threadContextFetcher.fetchThreadContext(
+            task.task_source.message_id,
+            validTaskTypes,
+          )) as ThreadContextResult | LegacyThreadContextResult | null | undefined,
+        );
 
-        if (isCleanupTask && !threadResult) {
-          logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without thread context');
-          await this.publishRejection(task, CLEANUP_MISSING_THREAD_REASON);
+        if (threadResult.kind === 'error') {
+          logger.warn({ task_id: task.task_id, reason: threadResult.reason }, 'Rejected lark task after thread lookup failure');
+          await this.publishRejection(task, threadResult.reason ?? THREAD_LOOKUP_ERROR_REASON);
           await this.ackTask(task.task_id);
           return;
         }
 
-        if (threadResult !== null && threadResult !== undefined && !isControlTaskType(task.task_type)) {
+        if (isThreadReplyTask && threadResult.kind === 'not_thread') {
+          logger.warn({ task_id: task.task_id }, 'Rejected root thread_reply continuation candidate');
+          await this.publishRejection(task, ROOT_TASK_USAGE_HINT);
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        if (isCleanupTask && threadResult.kind === 'not_thread') {
+          logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without thread context');
+          await this.publishRejection(task, formatThreadOnlyCommandMessage('/end'));
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        if (isNewInstanceTask && threadResult.kind === 'not_thread') {
+          logger.warn({ task_id: task.task_id }, 'Rejected new_instance task outside thread');
+          await this.publishRejection(task, formatThreadOnlyCommandMessage('/new'));
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        if (threadResult.kind === 'thread' && !isControlTaskType(task.task_type) && !isThreadReplyTask) {
           logger.warn(
             { task_id: task.task_id, task_type: task.task_type },
             'Rejected non-control Lark task in a thread',
           );
-          await this.publishRejection(task, THREADED_NON_CONTROL_TASK_REJECTION);
+          await this.publishRejection(task, formatThreadTaskCommandRejectedMessage());
           await this.ackTask(task.task_id);
           return;
         }
       }
 
-      if (isGcTask && threadResult) {
+      if (isGcTask && threadResult?.kind === 'thread') {
         logger.warn({ task_id: task.task_id }, 'Rejected gc task inside thread');
         await this.publishRejection(task, GC_THREAD_REJECTION_REASON);
         await this.ackTask(task.task_id);
@@ -148,14 +217,7 @@ export class EnrichmentPoller {
         return;
       }
 
-      if (isNewInstanceTask && !threadResult) {
-        logger.warn({ task_id: task.task_id }, 'Rejected new_instance task outside thread');
-        await this.publishRejection(task, NEW_INSTANCE_MISSING_THREAD_REASON);
-        await this.ackTask(task.task_id);
-        return;
-      }
-
-      if (isNewInstanceTask && !threadResult?.inheritedSessionId) {
+      if (isNewInstanceTask && threadResult?.kind === 'thread' && !threadResult.inheritedSessionId) {
         logger.warn({ task_id: task.task_id }, 'Rejected new_instance task without inherited session_id');
         await this.publishRejection(task, NEW_INSTANCE_MISSING_SESSION_REASON);
         await this.ackTask(task.task_id);
@@ -163,7 +225,7 @@ export class EnrichmentPoller {
       }
 
       if (isNewInstanceTask) {
-        const inheritedType = threadResult!.inheritedTaskType ?? task.task_type;
+        const inheritedType = threadResult?.kind === 'thread' ? (threadResult.inheritedTaskType ?? task.task_type) : task.task_type;
 
         const enrichmentResult = this.enrichmentService.enrich(
           { ...task, task_type: NEW_INSTANCE_TASK_TYPE, payload: NEW_INSTANCE_PROMPT },
@@ -201,21 +263,76 @@ export class EnrichmentPoller {
         return;
       }
 
-      if (isCleanupTask && !threadResult?.inheritedSessionId) {
+      if (isThreadReplyTask && threadResult?.kind === 'thread') {
+        if (
+          !threadResult.inheritedTaskType ||
+          !threadResult.inheritedSessionId ||
+          !threadResult.inheritedExecutor ||
+          !threadResult.inheritedExecutorModel
+        ) {
+          logger.warn({ task_id: task.task_id, threadResult }, 'Rejected thread_reply with incomplete inherited metadata');
+          await this.publishRejection(task, THREAD_REPLY_INCOMPLETE_METADATA_REASON);
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        const rewrittenTask: Task = {
+          ...task,
+          task_type: threadResult.inheritedTaskType,
+          executor: threadResult.inheritedExecutor,
+          executor_model: threadResult.inheritedExecutorModel,
+        };
+        const enrichmentResult = this.enrichmentService.enrich(
+          rewrittenTask,
+          threadResult.inheritedSessionId,
+          threadResult.threadContext ?? undefined,
+        );
+
+        if (enrichmentResult.type === 'rejected') {
+          logger.warn({ task_id: task.task_id, task_type: rewrittenTask.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected rewritten thread_reply task');
+          await this.publishRejection(task, enrichmentResult.reason);
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        try {
+          const jobRes = await fetch(`${this.apiUrl}/jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(enrichmentResult.job),
+          });
+          if (jobRes.status !== 201) {
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for thread_reply rewrite — not acking task');
+            return;
+          }
+        } catch (jobErr) {
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for thread_reply rewrite — not acking task');
+          return;
+        }
+
+        await this.ackTask(task.task_id);
+        return;
+      }
+
+      if (isCleanupTask && threadResult?.kind === 'thread' && !threadResult.inheritedSessionId) {
         logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without inherited session_id');
         await this.publishRejection(task, CLEANUP_REJECTION_REASON);
         await this.ackTask(task.task_id);
         return;
       }
 
-      const sessionId = threadResult?.inheritedSessionId ?? generateSessionId();
-      if (threadResult?.inheritedSessionId) {
+      const sessionId = threadResult?.kind === 'thread' && threadResult.inheritedSessionId
+        ? threadResult.inheritedSessionId
+        : generateSessionId();
+      if (threadResult?.kind === 'thread' && threadResult.inheritedSessionId) {
         logger.info({ task_id: task.task_id, inherited_session_id: sessionId }, 'Inherited session_id from thread root');
       } else {
         logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated new session_id for enrichment');
       }
 
-      const threadHistory = isCleanupTask ? undefined : (threadResult?.threadContext ?? undefined);
+      const threadHistory = isCleanupTask || threadResult?.kind !== 'thread'
+        ? undefined
+        : (threadResult.threadContext ?? undefined);
       const enrichmentResult = this.enrichmentService.enrich(task, sessionId, threadHistory);
 
       if (enrichmentResult.type === 'rejected') {

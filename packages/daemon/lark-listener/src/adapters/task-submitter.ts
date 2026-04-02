@@ -1,4 +1,4 @@
-import { createLogger, type TaskSubmission, type TaskSource, type TaskExecutorType } from '@local-agent/shared';
+import { createLogger, type TaskSubmission, type TaskSource } from '@local-agent/shared';
 import { DEFAULT_MAX_RETRIES } from '../constants';
 
 const logger = createLogger('lark-listener:submitter');
@@ -17,7 +17,7 @@ export class TaskSubmitter {
     taskType: string,
     payload: string,
     taskSource?: TaskSource,
-    executor?: TaskExecutorType,
+    executor?: string,
     executorModel?: string,
   ): Promise<string | null> {
     const body: TaskSubmission = {

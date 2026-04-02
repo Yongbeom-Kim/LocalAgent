@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Task, JobSubmission } from '@local-agent/shared';
+import {
+  Task,
+  JobSubmission,
+  formatUnknownTaskTypeMessage,
+  formatMissingTaskTypeMessage,
+  formatMissingPayloadMessage,
+  formatThreadTaskCommandRejectedMessage,
+  formatThreadOnlyCommandMessage,
+} from '@local-agent/shared';
 import { EnrichmentService, EnrichmentResult } from '../enrichment-service';
 import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
 
@@ -14,6 +22,10 @@ vi.mock('@local-agent/shared', async () => {
   return {
     ...actual,
     generateSessionId: mockGenerateSessionId,
+    formatThreadTaskCommandRejectedMessage: () =>
+      'Cannot use /task in a thread. Reply with natural language, /new, or /end.\nUse /task only as a new root message.',
+    formatThreadOnlyCommandMessage: (command: '/new' | '/end') =>
+      `The ${command} command can only be used inside a thread.`,
   };
 });
 
@@ -60,6 +72,11 @@ describe('EnrichmentPoller', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockEnrich.mockReset();
+    mockGetValidTaskTypes.mockReset();
+    mockGetValidTaskTypes.mockReturnValue(new Set(['deploy', 'code_review', 'default']));
+    mockGenerateSessionId.mockReset();
     mockGenerateSessionId.mockReturnValue('generated-session-id');
     const service = new EnrichmentService() as any;
     poller = new EnrichmentPoller('http://localhost:3000', service);
@@ -112,7 +129,10 @@ describe('EnrichmentPoller', () => {
 
   it('publishes failed result and acks task when enrichment rejects (no task_source)', async () => {
     const task = createTask();
-    const rejectedResult: EnrichmentResult = { type: 'rejected', reason: 'Unknown task type "code_review"' };
+    const rejectedResult: EnrichmentResult = {
+      type: 'rejected',
+      reason: formatUnknownTaskTypeMessage('code_review', ['deploy', 'code_review', 'default']),
+    };
     mockEnrich.mockReturnValue(rejectedResult);
 
     mockFetch
@@ -141,7 +161,7 @@ describe('EnrichmentPoller', () => {
         task_type: 'code_review',
         status: 'failure',
         exit_code: null,
-        stdout: 'Unknown task type "code_review"',
+        stdout: formatUnknownTaskTypeMessage('code_review', ['deploy', 'code_review', 'default']),
         stderr: '',
       }),
     });
@@ -156,7 +176,7 @@ describe('EnrichmentPoller', () => {
     });
     mockEnrich.mockReturnValue({
       type: 'rejected',
-      reason: 'Unknown task type "bad". Available types: generic, code_review',
+      reason: formatUnknownTaskTypeMessage('bad', ['generic', 'code_review']),
     });
 
     mockFetch
@@ -185,7 +205,7 @@ describe('EnrichmentPoller', () => {
         task_type: 'code_review',
         status: 'failure',
         exit_code: null,
-        stdout: 'Unknown task type "bad". Available types: generic, code_review',
+        stdout: formatUnknownTaskTypeMessage('bad', ['generic', 'code_review']),
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
@@ -235,6 +255,96 @@ describe('EnrichmentPoller', () => {
         status: 'failure',
         exit_code: null,
         stdout: 'Invalid model "xyz" for executor "cursor". Available models: auto, composer-2-fast',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('publishes missing-task-type help verbatim for lark tasks', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      task_type: '',
+      payload: '',
+    });
+
+    mockEnrich.mockReturnValue({
+      type: 'rejected',
+      reason: formatMissingTaskTypeMessage(['generic', 'localagent']),
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve(task),
+      })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: () => Promise.resolve({ result_id: 'res-1' }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ acknowledged: true }),
+      });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: '',
+        status: 'failure',
+        exit_code: null,
+        stdout: formatMissingTaskTypeMessage(['generic', 'localagent']),
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('publishes payload-required help verbatim for lark tasks', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      task_type: 'localagent',
+      executor: 'cursor',
+      executor_model: 'auto',
+      payload: '',
+    });
+
+    mockEnrich.mockReturnValue({
+      type: 'rejected',
+      reason: formatMissingPayloadMessage(),
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve(task),
+      })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: () => Promise.resolve({ result_id: 'res-1' }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ acknowledged: true }),
+      });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'localagent',
+        status: 'failure',
+        exit_code: null,
+        stdout: formatMissingPayloadMessage(),
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
@@ -339,6 +449,11 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockEnrich.mockReset();
+    mockGetValidTaskTypes.mockReset();
+    mockGetValidTaskTypes.mockReturnValue(new Set(['deploy', 'code_review', 'default']));
+    mockGenerateSessionId.mockReset();
     mockGenerateSessionId.mockReturnValue('generated-session-id');
     const service = new EnrichmentService() as any;
     mockThreadFetcher = { fetchThreadContext: vi.fn() };
@@ -359,6 +474,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       payload: 'review this diff',
     });
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'thread-session-id',
@@ -384,7 +500,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         task_type: 'code_review',
         status: 'failure',
         exit_code: null,
-        stdout: 'Cannot use /task in a thread. Remove the /task prefix or start a new conversation.',
+        stdout: formatThreadTaskCommandRejectedMessage(),
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
@@ -418,7 +534,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -438,7 +554,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -458,7 +574,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -478,6 +594,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       task_source: { source: 'lark', message_id: 'om_msg1' },
     });
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'user: please run cleanup',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'thread-session-id',
@@ -519,6 +636,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       task_source: { source: 'lark', message_id: 'om_msg1' },
     });
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'assistant: earlier response',
       inheritedTaskType: null,
       inheritedSessionId: null,
@@ -560,7 +678,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       payload: '',
       task_source: { source: 'lark', message_id: 'om_msg1' },
     });
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -592,7 +710,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       payload: '',
       task_source: { source: 'lark', message_id: 'om_msg1' },
     });
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue(null);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -613,7 +731,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         task_type: 'cleanup',
         status: 'failure',
         exit_code: null,
-        stdout: 'Cleanup tasks require an existing thread with an inherited session_id.',
+        stdout: formatThreadOnlyCommandMessage('/end'),
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
@@ -627,6 +745,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       task_source: { source: 'lark', message_id: 'om_msg1' },
     });
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'user: please end this session\nassistant: acknowledged',
       inheritedTaskType: 'deploy',
       inheritedSessionId: null,
@@ -673,6 +792,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'inherited-session-id',
@@ -722,6 +842,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       }),
     } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'assistant: earlier',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'thread-session-id',
@@ -758,6 +879,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       }),
     } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'assistant: earlier',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'thread-session-id',
@@ -794,6 +916,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       }),
     } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
       threadContext: 'assistant: earlier',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'thread-session-id',

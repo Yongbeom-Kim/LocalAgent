@@ -1,4 +1,4 @@
-import { createLogger, type TaskSource, extractLarkMessageContent, type TaskExecutorType } from '@local-agent/shared';
+import { createLogger, type TaskSource, extractLarkMessageContent } from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
 import type { LarkReplier } from './adapters/lark-replier';
@@ -22,7 +22,7 @@ interface LarkMessageEvent {
 }
 
 type ParsedSubmit =
-  | { kind: 'submit'; taskType: string; taskPayload: string; executor?: TaskExecutorType; executorModel?: string }
+  | { kind: 'submit'; taskType: string; taskPayload: string; executor?: string; executorModel?: string }
   | { kind: 'usage' };
 
 export class MessageHandler {
@@ -49,12 +49,7 @@ export class MessageHandler {
       'Processing message',
     );
 
-    if (message_type !== 'text') {
-      await this.replier.reply(message_id, USAGE_HINT);
-      return;
-    }
-
-    const text = this.extractText(message.content);
+    const text = this.extractText(message_type, message.content);
     const parsed = this.parseCommand(text);
 
     if (parsed.kind === 'usage') {
@@ -98,7 +93,7 @@ export class MessageHandler {
           kind: 'submit',
           taskType: 'new_instance',
           taskPayload: '',
-          executor: args[0] as TaskExecutorType,
+          executor: args[0],
           executorModel: args[1],
         };
       }
@@ -114,56 +109,62 @@ export class MessageHandler {
       return { kind: 'usage' };
     }
 
-    if (!payload.startsWith('/task ') && !payload.startsWith('/task\n') && payload !== '/task') {
+    if (payload === '/task' || payload.startsWith('/task ') || payload.startsWith('/task\n')) {
+      const taskParse = this.parseTaskCommand(payload);
+      if (taskParse === null) {
+        return { kind: 'usage' };
+      }
+
+      return {
+        kind: 'submit',
+        taskType: taskParse.taskType,
+        taskPayload: taskParse.taskPayload,
+        executor: taskParse.executor,
+        executorModel: taskParse.executorModel,
+      };
+    }
+
+    if (payload.startsWith('/task')) {
       return { kind: 'usage' };
     }
 
-    const taskParse = this.parseTaskCommand(payload);
-    if (taskParse === null) {
+    if (payload.startsWith('/new') || payload.startsWith('/end') || payload.startsWith('/gc')) {
       return { kind: 'usage' };
     }
 
     return {
       kind: 'submit',
-      taskType: taskParse.taskType,
-      taskPayload: taskParse.taskPayload,
-      executor: taskParse.executor,
-      executorModel: taskParse.executorModel,
+      taskType: 'thread_reply',
+      taskPayload: payload,
     };
   }
 
   private parseTaskCommand(text: string): {
     taskType: string;
     taskPayload: string;
-    executor: TaskExecutorType;
+    executor: string;
     executorModel: string;
   } | null {
     const firstNl = text.indexOf('\n');
     const firstLine = firstNl === -1 ? text : text.substring(0, firstNl);
     const restAfterFirstLine = firstNl === -1 ? '' : text.substring(firstNl + 1);
-
     if (!firstLine.startsWith('/task ')) {
       return null;
     }
 
     const afterCmd = firstLine.slice('/task'.length).trimStart();
-    const m = /^(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(afterCmd);
-    if (!m) {
+    const parsed = /^(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(afterCmd);
+    if (!parsed) {
       return null;
     }
 
-    const [, taskType, executorToken, modelToken, payloadStart] = m;
-    const fullPayload = restAfterFirstLine ? `${payloadStart}\n${restAfterFirstLine}` : payloadStart;
+    const [, taskType, executor, executorModel, payloadStart] = parsed;
+    const taskPayload = restAfterFirstLine ? `${payloadStart}\n${restAfterFirstLine}` : payloadStart;
 
-    return {
-      taskType,
-      taskPayload: fullPayload,
-      executor: executorToken as TaskExecutorType,
-      executorModel: modelToken,
-    };
+    return { taskType, taskPayload, executor, executorModel };
   }
 
-  private extractText(content: string): string {
-    return extractLarkMessageContent('text', content);
+  private extractText(messageType: string, content: string): string {
+    return extractLarkMessageContent(messageType, content);
   }
 }

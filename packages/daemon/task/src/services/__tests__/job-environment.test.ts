@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Job } from '@local-agent/shared';
 
@@ -93,6 +93,33 @@ describe('JobEnvironment', () => {
   });
 
   describe('setup', () => {
+    it('does not treat a lock-only session directory as a reusable workspace', async () => {
+      const job = createJob({
+        session_id: 'session-lock-only-001',
+        marketplaces: [
+          {
+            url: 'https://github.com/anthropics/claude-plugins-official.git',
+            plugins: ['superpowers'],
+          },
+        ],
+      });
+      const workDir = join(sessionRootDir, job.session_id);
+      mkdirSync(workDir, { recursive: true });
+      mkdirSync(join(workDir, 'stale-dir'), { recursive: true });
+      mkdirSync(join(workDir, 'marketplaces'), { recursive: true });
+      createdDirs.push(workDir);
+
+      const env = await jobEnv.setup(job);
+
+      expect(env.isExistingWorkspace).toBe(false);
+      expect(mockExecFileSync).toHaveBeenCalledTimes(1);
+      expect(existsSync(join(workDir, '.workspace-ready'))).toBe(true);
+      expect(existsSync(join(workDir, 'stale-dir'))).toBe(false);
+      expect(env.pluginDirs).toEqual([
+        join(workDir, 'marketplaces', 'claude-plugins-official', 'superpowers'),
+      ]);
+    });
+
     it('creates a deterministic session workspace directory', async () => {
       const env = await jobEnv.setup(createJob());
       createdDirs.push(env.workDir);
@@ -178,6 +205,7 @@ describe('JobEnvironment', () => {
       const workDir = join(sessionRootDir, job.session_id);
       const pluginDir = join(workDir, 'marketplaces', 'claude-plugins-official', 'superpowers');
       mkdirSync(pluginDir, { recursive: true });
+      writeFileSync(join(workDir, '.workspace-ready'), 'ready\n');
       createdDirs.push(workDir);
 
       const env = await jobEnv.setup(job);
@@ -251,6 +279,25 @@ describe('JobEnvironment', () => {
 
       await expect(debugJobEnv.setup(job)).rejects.toThrow('Setup hook failed');
       expect(existsSync(workDir)).toBe(true);
+    });
+
+    it('preserves the lock file but clears other contents when setup fails after lock acquisition', async () => {
+      mockRunner.run.mockRejectedValueOnce(new Error('Setup hook failed: npm not found'));
+      const job = createJob({
+        session_id: 'session-locked-failure-001',
+        setup_hook: 'npm ci',
+      });
+      const workDir = join(sessionRootDir, job.session_id);
+      mkdirSync(workDir, { recursive: true });
+      writeFileSync(join(workDir, '.lock'), '{"pid":1}');
+      mkdirSync(join(workDir, 'stale-dir'), { recursive: true });
+      createdDirs.push(workDir);
+
+      await expect(jobEnv.setup(job)).rejects.toThrow('Setup hook failed');
+      expect(existsSync(workDir)).toBe(true);
+      expect(existsSync(join(workDir, '.lock'))).toBe(true);
+      expect(existsSync(join(workDir, 'stale-dir'))).toBe(false);
+      expect(existsSync(join(workDir, '.workspace-ready'))).toBe(false);
     });
   });
 

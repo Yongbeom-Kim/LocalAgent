@@ -1,5 +1,7 @@
 # Design: Explicit `/task` Routing Contract
 
+> Refinement note: this document still defines the root-message contract. Thread continuation behavior for plain replies is refined separately in `docs/development/design/2026-04-02-lark-thread-natural-language-continuation-design.md`, where root `/task` remains explicit but in-thread natural-language replies continue the current conversation automatically.
+
 **Date:** 2026-04-02
 **Status:** Ready for implementation
 **Type:** Breaking change / command contract redesign

@@ -66,7 +66,7 @@ describe('ThreadContextFetcher', () => {
     fetcher = new ThreadContextFetcher(APP_ID, APP_SECRET);
   });
 
-  it('returns null when message has no root_id (not a thread reply)', async () => {
+  it('returns kind not_thread when message has no root_id (not a thread reply)', async () => {
     mockFetch
       .mockResolvedValueOnce(mockTokenResponse())
       .mockResolvedValueOnce({
@@ -88,10 +88,10 @@ describe('ThreadContextFetcher', () => {
       });
 
     const result = await fetcher.fetchThreadContext('om_msg1');
-    expect(result).toBeNull();
+    expect(result).toMatchObject({ kind: 'not_thread' });
   });
 
-  it('returns null when root_id equals message_id (message is the thread root)', async () => {
+  it('returns kind not_thread when root_id equals message_id (message is the thread root)', async () => {
     mockFetch
       .mockResolvedValueOnce(mockTokenResponse())
       .mockResolvedValueOnce({
@@ -114,7 +114,7 @@ describe('ThreadContextFetcher', () => {
       });
 
     const result = await fetcher.fetchThreadContext('om_msg1');
-    expect(result).toBeNull();
+    expect(result).toMatchObject({ kind: 'not_thread' });
   });
 
   it('fetches thread messages and formats as chat context', async () => {
@@ -250,26 +250,27 @@ describe('ThreadContextFetcher', () => {
     expect(result!.threadContext).toBe('user: [Image: img_v3_abc]');
   });
 
-  it('returns null on API failure after retries', async () => {
+  it('returns kind error on API failure after retries', async () => {
     mockFetch.mockRejectedValue(new Error('Network error'));
 
     const result = await fetcher.fetchThreadContext('om_msg1');
-    expect(result).toBeNull();
+    expect(result).toMatchObject({ kind: 'error' });
+    expect(result.reason).toMatch(/failed/i);
     // 3 retries x 1 fetch per retry attempt (token fetch fails each time)
     expect(mockFetch.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('returns null when token request returns non-zero code', async () => {
+  it('returns kind error when token request returns non-zero code', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ code: 99, msg: 'invalid credentials' }),
     });
 
     const result = await fetcher.fetchThreadContext('om_msg1');
-    expect(result).toBeNull();
+    expect(result).toMatchObject({ kind: 'error' });
   });
 
-  it('returns null when token request returns non-OK HTTP status', async () => {
+  it('returns kind error when token request returns non-OK HTTP status', async () => {
     mockFetch.mockResolvedValue({
       ok: false,
       status: 500,
@@ -277,7 +278,7 @@ describe('ThreadContextFetcher', () => {
     });
 
     const result = await fetcher.fetchThreadContext('om_msg1');
-    expect(result).toBeNull();
+    expect(result).toMatchObject({ kind: 'error' });
   });
 });
 
