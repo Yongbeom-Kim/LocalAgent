@@ -1,0 +1,154 @@
+import { spawn } from 'node:child_process';
+import { JobAttempt, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
+import { TaskExecutor } from '../ports/task-executor';
+import { ExecutionEnvironment } from '../services/job-environment';
+
+const logger = createLogger('task-daemon:cursor-agent');
+
+export class CursorAgentExecutor implements TaskExecutor {
+  async execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
+    logger.info({ job_id: job.job_id, task_id: job.task_id, task_type: job.task_type }, 'Spawning Cursor agent CLI');
+
+    if (!job.payload) {
+      logger.error({ job_id: job.job_id, task_id: job.task_id }, 'Job payload is missing or empty — skipping');
+      return {
+        job_id: job.job_id,
+        task_id: job.task_id,
+        task_type: job.task_type,
+        status: 'failure',
+        exit_code: null,
+        stdout: '',
+        stderr: 'Job payload is missing or empty',
+      };
+    }
+
+    if (env.pluginDirs.length > 0) {
+      logger.debug(
+        { job_id: job.job_id, task_id: job.task_id, plugin_count: env.pluginDirs.length },
+        'cursor_agent executor ignores plugin directories in v1',
+      );
+    }
+
+    if (env.isExistingWorkspace) {
+      const continueResult = await this.spawnAgent(job, env, {
+        mode: 'continue',
+        input: job.payload,
+      });
+
+      if (continueResult.status === 'success') {
+        return continueResult;
+      }
+
+      logger.warn(
+        { job_id: job.job_id, task_id: job.task_id, exit_code: continueResult.exit_code, stderr: continueResult.stderr },
+        'Cursor agent continue failed, falling back to fresh session',
+      );
+    }
+
+    return this.spawnAgent(job, env, {
+      mode: 'fresh',
+      input: this.buildFreshInput(job),
+    });
+  }
+
+  private buildFreshInput(job: JobAttempt): string {
+    if (!job.history) {
+      return job.payload;
+    }
+
+    return `--- Thread Context ---\n${job.history}\n--- Current Message ---\n${job.payload}`;
+  }
+
+  private buildPromptForArgv(job: JobAttempt, input: string): string {
+    if (job.system_prompt) {
+      return `--- System ---\n${job.system_prompt}\n--- User ---\n${input}`;
+    }
+    return input;
+  }
+
+  private spawnAgent(
+    job: JobAttempt,
+    env: ExecutionEnvironment,
+    options: { mode: 'continue' | 'fresh'; input: string },
+  ): Promise<TaskResultSubmission> {
+    const promptString = this.buildPromptForArgv(job, options.input);
+    const args = [
+      '--print',
+      '--trust',
+      '--force',
+      '--workspace',
+      env.workDir,
+      '--model',
+      job.executor_model,
+      '--output-format',
+      'text',
+      ...(options.mode === 'continue' ? ['--continue'] : []),
+      '--',
+      promptString,
+    ];
+
+    return new Promise((resolve) => {
+      const child = spawn('agent', args, { cwd: env.workDir, shell: false });
+
+      const stdoutChunks: Buffer[] = [];
+      const stderrChunks: Buffer[] = [];
+
+      child.stdout.on('data', (chunk: Buffer) => stdoutChunks.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
+
+      child.on('close', (code) => {
+        const stdout = Buffer.concat(stdoutChunks).toString();
+        const stderr = Buffer.concat(stderrChunks).toString();
+
+        if (code !== 0) {
+          logger.error(
+            { job_id: job.job_id, task_id: job.task_id, mode: options.mode, exit_code: code },
+            'Cursor agent failed',
+          );
+
+          resolve({
+            job_id: job.job_id,
+            task_id: job.task_id,
+            task_type: job.task_type,
+            status: 'failure',
+            exit_code: code,
+            stdout: truncate(stdout, MAX_RESULT_OUTPUT_BYTES),
+            stderr: truncate(stderr, MAX_RESULT_OUTPUT_BYTES),
+          });
+        } else {
+          logger.info(
+            { job_id: job.job_id, task_id: job.task_id, mode: options.mode },
+            'Cursor agent completed',
+          );
+
+          resolve({
+            job_id: job.job_id,
+            task_id: job.task_id,
+            task_type: job.task_type,
+            status: 'success',
+            exit_code: 0,
+            stdout: truncate(stdout, MAX_RESULT_OUTPUT_BYTES),
+            stderr: truncate(stderr, MAX_RESULT_OUTPUT_BYTES),
+          });
+        }
+      });
+
+      child.on('error', (err) => {
+        logger.error(
+          { job_id: job.job_id, task_id: job.task_id, mode: options.mode, error: err.message },
+          'Failed to spawn Cursor agent',
+        );
+
+        resolve({
+          job_id: job.job_id,
+          task_id: job.task_id,
+          task_type: job.task_type,
+          status: 'failure',
+          exit_code: null,
+          stdout: '',
+          stderr: err.message,
+        });
+      });
+    });
+  }
+}
