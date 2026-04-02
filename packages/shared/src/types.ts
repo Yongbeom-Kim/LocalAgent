@@ -1,6 +1,9 @@
-export const TASK_EXECUTORS = ['claude_code', 'claude-w', 'builtin'] as const;
+export const TASK_EXECUTORS = ['claude_code', 'claude-w', 'builtin', 'cursor_agent'] as const;
 export const TASK_EXECUTOR_OPTIONS = TASK_EXECUTORS.join(', ');
 export type TaskExecutorType = (typeof TASK_EXECUTORS)[number];
+
+export const CURSOR_AGENT_MODEL_MAX_LEN = 128;
+export const CURSOR_AGENT_MODEL_ID = /^[a-zA-Z0-9._-]+$/;
 
 export function isTaskExecutorType(value: unknown): value is TaskExecutorType {
   return typeof value === 'string' && TASK_EXECUTORS.includes(value as TaskExecutorType);
@@ -20,22 +23,31 @@ export const EXECUTOR_MODELS = {
     'minimax-2.7',
   ],
   builtin: ['none'],
+  cursor_agent: ['auto', 'composer-2-fast', 'gpt-5.4-medium'],
 } as const satisfies Record<TaskExecutorType, readonly string[]>;
 
 export type ExecutorModelType<T extends TaskExecutorType = TaskExecutorType> =
-  (typeof EXECUTOR_MODELS)[T][number];
+  T extends 'cursor_agent' ? string : (typeof EXECUTOR_MODELS)[T][number];
 
 export function isValidExecutorModel(
   executor: TaskExecutorType,
   model: unknown,
 ): model is ExecutorModelType {
-  return (
-    typeof model === 'string' &&
-    (EXECUTOR_MODELS[executor] as readonly string[]).includes(model)
-  );
+  if (typeof model !== 'string') return false;
+  if (executor === 'cursor_agent') {
+    return (
+      model.length > 0 &&
+      model.length <= CURSOR_AGENT_MODEL_MAX_LEN &&
+      CURSOR_AGENT_MODEL_ID.test(model)
+    );
+  }
+  return (EXECUTOR_MODELS[executor] as readonly string[]).includes(model);
 }
 
 export function getExecutorModelOptions(executor: TaskExecutorType): string {
+  if (executor === 'cursor_agent') {
+    return `${EXECUTOR_MODELS.cursor_agent.join(', ')}, … (any id from agent models; pattern-validated)`;
+  }
   return EXECUTOR_MODELS[executor].join(', ');
 }
 

@@ -30,6 +30,10 @@ describe('EXECUTOR_MODELS', () => {
   it('defines builtin models', () => {
     expect(EXECUTOR_MODELS.builtin).toEqual(['none']);
   });
+
+  it('defines cursor_agent example models', () => {
+    expect(EXECUTOR_MODELS.cursor_agent).toEqual(['auto', 'composer-2-fast', 'gpt-5.4-medium']);
+  });
 });
 
 describe('isValidExecutorModel', () => {
@@ -74,6 +78,15 @@ describe('isValidExecutorModel', () => {
     expect(isValidExecutorModel('claude_code', undefined)).toBe(false);
     expect(isValidExecutorModel('claude_code', null)).toBe(false);
   });
+
+  it('validates cursor_agent model ids by pattern', () => {
+    expect(isValidExecutorModel('cursor_agent', 'auto')).toBe(true);
+    expect(isValidExecutorModel('cursor_agent', 'gpt-5.3-codex-high-fast')).toBe(true);
+    expect(isValidExecutorModel('cursor_agent', 'claude-4.6-sonnet-medium-thinking')).toBe(true);
+    expect(isValidExecutorModel('cursor_agent', '')).toBe(false);
+    expect(isValidExecutorModel('cursor_agent', 'bad id')).toBe(false);
+    expect(isValidExecutorModel('cursor_agent', 'x'.repeat(200))).toBe(false);
+  });
 });
 
 describe('getExecutorModelOptions', () => {
@@ -89,6 +102,11 @@ describe('getExecutorModelOptions', () => {
 
   it('returns comma-separated list for builtin', () => {
     expect(getExecutorModelOptions('builtin')).toBe('none');
+  });
+
+  it('returns descriptive options string for cursor_agent', () => {
+    expect(getExecutorModelOptions('cursor_agent')).toContain('auto');
+    expect(getExecutorModelOptions('cursor_agent')).toMatch(/agent models/i);
   });
 });
 
@@ -146,6 +164,12 @@ describe('isValidExecutorPreferences', () => {
   it('returns true for builtin executor with none model', () => {
     expect(isValidExecutorPreferences([
       { executor: 'builtin', executor_model: 'none' },
+    ])).toBe(true);
+  });
+
+  it('returns true for cursor_agent with pattern-valid model', () => {
+    expect(isValidExecutorPreferences([
+      { executor: 'cursor_agent', executor_model: 'auto' },
     ])).toBe(true);
   });
 
