@@ -37,8 +37,11 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         return;
       }
 
+      const shouldDeferRoutingValidation = task_source?.source === 'lark';
+
       if (
         executor !== undefined &&
+        !shouldDeferRoutingValidation &&
         (!isTaskExecutorType(executor) || !isValidExecutorModel(executor, executor_model))
       ) {
         res.status(400).json({ error: 'executor and executor_model must be a valid pair' });

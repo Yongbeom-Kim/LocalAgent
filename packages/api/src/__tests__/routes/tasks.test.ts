@@ -207,6 +207,72 @@ describe('POST /tasks', () => {
     expect(res.status).toBe(400);
   });
 
+  it('returns 201 for lark task with invalid model so enrichment can reject it later', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'localagent',
+        payload: 'test',
+        executor: 'cursor',
+        executor_model: 'xyz',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      });
+
+    expect(res.status).toBe(201);
+    expect(mockRabbitMQ.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executor: 'cursor',
+        executor_model: 'xyz',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    );
+  });
+
+  it('returns 201 for explicit /new-style lark task with invalid executor so enrichment can reject it later', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'new_instance',
+        payload: '',
+        executor: 'foo',
+        executor_model: 'bar',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      });
+
+    expect(res.status).toBe(201);
+  });
+
+  it('returns 400 for non-lark task with invalid executor', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'foo',
+        executor_model: 'bar',
+      });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/valid pair/);
+  });
+
+  it('returns 400 for non-lark task with invalid model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'cursor',
+        executor_model: 'xyz',
+      });
+
+    expect(res.status).toBe(400);
+  });
+
 });
 
 describe('GET /tasks/next', () => {

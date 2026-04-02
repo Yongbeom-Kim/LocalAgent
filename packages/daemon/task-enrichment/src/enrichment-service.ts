@@ -6,14 +6,29 @@ import {
   JobSubmission,
   isTaskExecutorType,
   isValidExecutorModel,
-  TaskExecutorType,
   ExecutorPreference,
   createLogger,
   GLOBAL_SYSTEM_PROMPT,
   isControlTaskType,
+  formatInvalidExecutorMessage,
+  formatInvalidModelMessage,
 } from '@local-agent/shared';
 
 const logger = createLogger('enrichment-daemon:service');
+
+function getRoutingRejection(
+  command: '/task' | '/new',
+  executor: unknown,
+  executorModel: unknown,
+): string | null {
+  if (!isTaskExecutorType(executor)) {
+    return formatInvalidExecutorMessage(command, String(executor));
+  }
+  if (!isValidExecutorModel(executor, executorModel)) {
+    return formatInvalidModelMessage(command, executor, String(executorModel));
+  }
+  return null;
+}
 
 interface EnrichmentRule {
   system_prompt?: string;
@@ -103,22 +118,18 @@ export class EnrichmentService {
           reason: `Task type "${task.task_type}" requires explicit executor routing.`,
         };
       }
-      if (!isValidExecutorModel(task.executor, task.executor_model)) {
-        return {
-          type: 'rejected',
-          reason: `Task type "${task.task_type}" has invalid executor routing.`,
-        };
+      const routingRejection = getRoutingRejection('/task', task.executor, task.executor_model);
+      if (routingRejection) {
+        return { type: 'rejected', reason: routingRejection };
       }
       executors = [{ executor: task.executor, executor_model: task.executor_model }];
     } else if (task.task_type === 'cleanup') {
       executors = [{ executor: 'builtin', executor_model: 'none' }];
     } else if (task.task_type === 'new_instance') {
       if (task.executor && task.executor_model) {
-        if (!isTaskExecutorType(task.executor) || !isValidExecutorModel(task.executor, task.executor_model)) {
-          return {
-            type: 'rejected',
-            reason: `Task type "new_instance" has invalid executor routing.`,
-          };
+        const routingRejection = getRoutingRejection('/new', task.executor, task.executor_model);
+        if (routingRejection) {
+          return { type: 'rejected', reason: routingRejection };
         }
         executors = [{ executor: task.executor, executor_model: task.executor_model }];
       } else {

@@ -27,6 +27,11 @@ export {
   RESULT_STATUSES,
   MAX_RESULT_OUTPUT_BYTES,
 } from './types';
+export {
+  type RoutingCommandLabel,
+  formatInvalidExecutorMessage,
+  formatInvalidModelMessage,
+} from './routing-errors';
 export { loadApiConfig, loadDaemonConfig, loadEnvFromRoot, ApiConfig, DaemonConfig } from './config';
 export { createLogger } from './logger';
 export {

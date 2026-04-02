@@ -196,6 +196,51 @@ describe('EnrichmentPoller', () => {
     });
   });
 
+  it('publishes invalid-model rejection text verbatim for lark tasks', async () => {
+    const task = createTask({
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      task_type: 'localagent',
+      executor: 'cursor',
+      executor_model: 'xyz',
+    });
+
+    mockEnrich.mockReturnValue({
+      type: 'rejected',
+      reason: 'Invalid model "xyz" for executor "cursor". Available models: auto, composer-2-fast',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve(task),
+      })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: () => Promise.resolve({ result_id: 'res-1' }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ acknowledged: true }),
+      });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'localagent',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Invalid model "xyz" for executor "cursor". Available models: auto, composer-2-fast',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
   it('rejects cleanup task without lark source', async () => {
     const task = createTask({
       task_type: 'cleanup',

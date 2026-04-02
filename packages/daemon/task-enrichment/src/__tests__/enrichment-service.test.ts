@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { Task, JobSubmission, GLOBAL_SYSTEM_PROMPT } from '@local-agent/shared';
+import {
+  Task,
+  JobSubmission,
+  GLOBAL_SYSTEM_PROMPT,
+  formatInvalidExecutorMessage,
+  formatInvalidModelMessage,
+} from '@local-agent/shared';
 import { EnrichmentService } from '../enrichment-service';
 
 const TEST_SESSION_ID = 'session-123';
@@ -117,7 +123,10 @@ describe('EnrichmentService', () => {
         createTask({ task_type: 'bad_rule', executor: 'claude', executor_model: 'not-a-valid-model' }),
         TEST_SESSION_ID,
       );
-      expect(result.type).toBe('rejected');
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidModelMessage('/task', 'claude', 'not-a-valid-model'),
+      });
     });
 
     it('returns rejected when non-control task omits executor', () => {
@@ -157,7 +166,114 @@ describe('EnrichmentService', () => {
         createTask({ task_type: 'bad_cursor', executor: 'cursor', executor_model: 'not-a-real-model' }),
         TEST_SESSION_ID,
       );
-      expect(result.type).toBe('rejected');
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidModelMessage('/task', 'cursor', 'not-a-real-model'),
+      });
+    });
+  });
+
+  describe('routing error messages for deferred lark validation', () => {
+    it('returns exact /task invalid executor message', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'localagent',
+          executor: 'foo' as any,
+          executor_model: 'bar',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidExecutorMessage('/task', 'foo'),
+      });
+    });
+
+    it('returns exact /task invalid model message', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'localagent',
+          executor: 'cursor',
+          executor_model: 'xyz',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidModelMessage('/task', 'cursor', 'xyz'),
+      });
+    });
+
+    it('returns exact /new invalid executor message', () => {
+      const service = EnrichmentService.fromObject({ rules: { new_instance: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'new_instance',
+          payload: '',
+          executor: 'foo' as any,
+          executor_model: 'bar',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidExecutorMessage('/new', 'foo'),
+      });
+    });
+
+    it('returns exact /new invalid model message', () => {
+      const service = EnrichmentService.fromObject({ rules: { new_instance: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'new_instance',
+          payload: '',
+          executor: 'cursor',
+          executor_model: 'xyz',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: formatInvalidModelMessage('/new', 'cursor', 'xyz'),
+      });
+    });
+
+    it('keeps unknown task type precedence over routing-help messages', () => {
+      const service = EnrichmentService.fromObject({ rules: { code_review: {} } });
+      const result = service.enrich(
+        createTask({
+          task_type: 'missing',
+          executor: 'cursor',
+          executor_model: 'xyz',
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: expect.stringContaining('Unknown task type "missing"'),
+      });
+    });
+
+    it('does not throw when non-control task carries unknown executor string', () => {
+      const service = EnrichmentService.fromObject({ rules: { localagent: {} } });
+
+      expect(() =>
+        service.enrich(
+          createTask({
+            task_type: 'localagent',
+            executor: 'not-real' as any,
+            executor_model: 'xyz',
+          }),
+          TEST_SESSION_ID,
+        ),
+      ).not.toThrow();
     });
   });
 
