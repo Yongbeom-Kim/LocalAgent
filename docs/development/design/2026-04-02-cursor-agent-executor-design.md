@@ -4,6 +4,8 @@
 **Status:** Reviewed (approve with changes incorporated below)  
 **Packages:** `@local-agent/shared`, `@local-agent/task-daemon` (primary); optional later: `@local-agent/task-enrichment-daemon` (YAML examples)
 
+> **Note:** The `cursor_agent` **model-validation** guidance in this document (freeform/regex, conditional `ExecutorModelType`, `getExecutorModelOptions` copy, and related bullets) has been superseded by `docs/development/design/2026-04-02-cursor-agent-model-selection-design.md`, which defines the current static-allowlist contract. Sections on executor mechanics (CLI flags, spawn argv, orchestrator routing, tests) remain useful as historical context; **do not** implement or cite the model-validation bullets in **Clarifications** or **Proposed design → Shared types** as the live contract without first consulting that newer design document.
+
 ## Problem
 
 The task daemon runs coding agents via pluggable executors (`claude_code`, `claude-w`, `builtin`). Operators who standardize on [Cursor’s `agent` CLI](https://cursor.com/docs/cli/overview) cannot select it in `ExecutorPreference` / enrichment rules today.

@@ -1,12 +1,16 @@
 # Cursor Agent CLI executor — implementation plan
 
-**Goal:** Add `cursor_agent` to `TaskExecutorType`, validate dynamic Cursor model ids in `@local-agent/shared`, and implement `CursorAgentExecutor` in the task daemon with orchestrator routing and tests, per `docs/development/design/2026-04-02-cursor-agent-executor-design.md`.
+**Goal (original executor rollout):** Add `cursor_agent` to `TaskExecutorType`, validate dynamic Cursor model ids in `@local-agent/shared`, and implement `CursorAgentExecutor` in the task daemon with orchestrator routing and tests, per `docs/development/design/2026-04-02-cursor-agent-executor-design.md`.
 
-**Architecture:** A thin `spawn('agent', ...)` adapter mirroring `ClaudeCliExecutor` (continue vs fresh, payload/history, truncation, logging). Shared package uses a regex-bounded model id for `cursor_agent` plus a conditional `ExecutorModelType` so typing stays sound.
+**Architecture (same rollout):** A thin `spawn('agent', ...)` adapter mirroring `ClaudeCliExecutor` (continue vs fresh, payload/history, truncation, logging). Shared package uses a regex-bounded model id for `cursor_agent` plus a conditional `ExecutorModelType` so typing stays sound.
 
 **Tech stack:** Node `child_process.spawn`, Vitest, existing `@local-agent/shared` types.
 
 **Design doc:** `docs/development/design/2026-04-02-cursor-agent-executor-design.md`
+
+> **Historical note:** The regex/pattern-validation steps in this plan were part of the original `cursor_agent` executor rollout and should not be used as the current model-selection specification. For the active contract, see `docs/development/design/2026-04-02-cursor-agent-model-selection-design.md` and `docs/development/plans/2026-04-02-cursor-agent-model-selection.md`.
+
+For **model-selection** (static allowlist, `ExecutorModelType`, shared validation), the **file map** and **Task 1** checklist below are superseded—use the model-selection design and plan linked above.
 
 ---
 
