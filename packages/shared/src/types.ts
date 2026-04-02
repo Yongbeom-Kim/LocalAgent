@@ -240,6 +240,8 @@ export interface TaskResultSubmission {
   task_id: string;
   task_type: string;
   session_id?: string;
+  executor?: TaskExecutorType;
+  executor_model?: string;
   status: ResultStatus;
   exit_code: number | null;
   stdout: string;

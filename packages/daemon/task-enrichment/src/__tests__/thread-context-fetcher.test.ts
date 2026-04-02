@@ -772,3 +772,187 @@ describe('session_id extraction and stripping from thread messages', () => {
     expect(result!.threadContext).toContain('session_id: 018f6b7e-1234-6abc-8def-1234567890ab');
   });
 });
+
+describe('executor/model extraction from thread messages', () => {
+  let fetcher: ThreadContextFetcher;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    fetcher = new ThreadContextFetcher(APP_ID, APP_SECRET);
+  });
+
+  it('extracts the most recent valid executor/model pair from bot replies', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_old',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'executor: claude_code\nmodel: sonnet\nJob old',
+              }),
+            },
+          },
+          {
+            message_id: 'om_bot_new',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'executor: cursor_agent\nmodel: gpt-5.4-medium-fast\nJob new',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow up' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+    expect(result!.inheritedExecutor).toBe('cursor_agent');
+    expect(result!.inheritedExecutorModel).toBe('gpt-5.4-medium-fast');
+  });
+
+  it('trims executor/model values before validation', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'executor: claude_code\nmodel:   sonnet  \nJob',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+    expect(result!.inheritedExecutor).toBe('claude_code');
+    expect(result!.inheritedExecutorModel).toBe('sonnet');
+  });
+
+  it('strips executor/model lines from formatted threadContext', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'hello' }) },
+          },
+          {
+            message_id: 'om_bot_reply',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'executor: claude_code\nmodel: sonnet\nbody text',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'follow' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+    expect(result!.threadContext).not.toContain('executor:');
+    expect(result!.threadContext).not.toContain('model:');
+  });
+
+  it('extracts executor/model from the full message list before applying the /new fence', async () => {
+    mockFetch
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(mockMessageResponse())
+      .mockResolvedValueOnce(mockTokenResponse())
+      .mockResolvedValueOnce(
+        mockThreadMessagesResponse([
+          {
+            message_id: 'om_root_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'start' }) },
+          },
+          {
+            message_id: 'om_bot_pair',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'executor: claude_code\nmodel: sonnet\nearlier reply',
+              }),
+            },
+          },
+          {
+            message_id: 'om_user_new',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: '/new' }) },
+          },
+          {
+            message_id: 'om_bot_fence',
+            sender: { sender_type: 'app' },
+            msg_type: 'text',
+            body: {
+              content: JSON.stringify({
+                text: 'New session instance started.',
+              }),
+            },
+          },
+          {
+            message_id: 'om_new_msg',
+            sender: { sender_type: 'user' },
+            msg_type: 'text',
+            body: { content: JSON.stringify({ text: 'after fence' }) },
+          },
+        ]),
+      );
+
+    const result = await fetcher.fetchThreadContext('om_new_msg');
+    expect(result!.inheritedExecutor).toBe('claude_code');
+    expect(result!.inheritedExecutorModel).toBe('sonnet');
+    expect(result!.threadContext).toBe('assistant: New session instance started.');
+  });
+});

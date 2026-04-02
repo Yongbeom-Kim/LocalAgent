@@ -76,6 +76,20 @@ export class MessageHandler {
     }
 
     if (payload.startsWith('/new ') || payload.startsWith('/new\n')) {
+      const rest = payload.slice('/new'.length).trim();
+      const args = rest.split(/\s+/);
+
+      if (args.length === 2) {
+        return {
+          taskType: 'new_instance',
+          taskPayload: JSON.stringify({
+            executor: args[0],
+            executor_model: args[1],
+          }),
+          isCommand: true,
+        };
+      }
+
       return { taskType: null, taskPayload: '', isCommand: true };
     }
 

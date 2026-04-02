@@ -1,4 +1,10 @@
-import { createLogger, extractLarkMessageContent } from '@local-agent/shared';
+import {
+  createLogger,
+  extractLarkMessageContent,
+  isTaskExecutorType,
+  isValidExecutorModel,
+  type TaskExecutorType,
+} from '@local-agent/shared';
 
 const logger = createLogger('enrichment-daemon:thread-context');
 
@@ -18,10 +24,17 @@ const UUID_V7_PATTERN = '[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-
 const SESSION_ID_REGEX = new RegExp(`^session_id: (${UUID_V7_PATTERN})$`, 'm');
 const SESSION_ID_LINE_REGEX = new RegExp(`^session_id: ${UUID_V7_PATTERN}\\n?`, 'm');
 
+const EXECUTOR_REGEX = /^executor: ([a-zA-Z0-9_-]+)$/m;
+const MODEL_REGEX = /^model: ([^\n]+)$/m;
+const EXECUTOR_LINE_REGEX = /^executor: .*\n?/m;
+const MODEL_LINE_REGEX = /^model: .*\n?/m;
+
 export interface ThreadContextResult {
   threadContext: string | null;
   inheritedTaskType: string | null;
   inheritedSessionId: string | null;
+  inheritedExecutor: TaskExecutorType | null;
+  inheritedExecutorModel: string | null;
 }
 
 interface LarkMessage {
@@ -90,12 +103,37 @@ export class ThreadContextFetcher {
       }
     }
 
+    let inheritedExecutor: TaskExecutorType | null = null;
+    let inheritedExecutorModel: string | null = null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.sender.sender_type === 'user') continue;
+      const content = extractLarkMessageContent(m.msg_type, m.body.content);
+      const executorMatch = content.match(EXECUTOR_REGEX);
+      const modelMatch = content.match(MODEL_REGEX);
+      if (!executorMatch || !modelMatch) continue;
+
+      const executor = executorMatch[1].trim();
+      const executorModel = modelMatch[1].trim();
+      if (isTaskExecutorType(executor) && isValidExecutorModel(executor, executorModel)) {
+        inheritedExecutor = executor;
+        inheritedExecutorModel = executorModel;
+        break;
+      }
+    }
+
     // Step 4: Apply /new fence for thread context, then format
     const fencedMessages = this.applyNewInstanceFence(messages);
     const filtered = fencedMessages.filter((m) => m.message_id !== messageId);
 
     if (filtered.length === 0) {
-      return { threadContext: null, inheritedTaskType, inheritedSessionId };
+      return {
+        threadContext: null,
+        inheritedTaskType,
+        inheritedSessionId,
+        inheritedExecutor,
+        inheritedExecutorModel,
+      };
     }
 
     const threadContext = filtered
@@ -104,11 +142,19 @@ export class ThreadContextFetcher {
         let content = extractLarkMessageContent(m.msg_type, m.body.content);
         content = content.replace(TASK_TYPE_LINE_REGEX, '');
         content = content.replace(SESSION_ID_LINE_REGEX, '');
+        content = content.replace(EXECUTOR_LINE_REGEX, '');
+        content = content.replace(MODEL_LINE_REGEX, '');
         return `${role}: ${content}`;
       })
       .join('\n');
 
-    return { threadContext: threadContext || null, inheritedTaskType, inheritedSessionId };
+    return {
+      threadContext: threadContext || null,
+      inheritedTaskType,
+      inheritedSessionId,
+      inheritedExecutor,
+      inheritedExecutorModel,
+    };
   }
 
   private async getToken(): Promise<string> {

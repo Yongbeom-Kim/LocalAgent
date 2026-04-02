@@ -1,4 +1,12 @@
-import { Task, JobSubmission, createLogger, generateSessionId } from '@local-agent/shared';
+import {
+  Task,
+  JobSubmission,
+  createLogger,
+  generateSessionId,
+  isTaskExecutorType,
+  isValidExecutorModel,
+  type TaskExecutorType,
+} from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
 
@@ -14,6 +22,33 @@ const NEW_INSTANCE_PROMPT = 'Respond with: New session instance started.';
 const NEW_INSTANCE_MISSING_SOURCE_REASON = 'The /new command requires a Lark source.';
 const NEW_INSTANCE_MISSING_THREAD_REASON = 'The /new command can only be used inside a thread.';
 const NEW_INSTANCE_MISSING_SESSION_REASON = 'The /new command requires an existing session in this thread.';
+const NEW_INSTANCE_INVALID_OVERRIDE_REASON =
+  'Invalid /new executor and model: use a valid JSON object with executor and executor_model that pass validation.';
+
+function parseNewInstanceOverride(
+  payload: string,
+): { executor: TaskExecutorType; executor_model: string } | null {
+  if (!payload.trim()) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(payload);
+  } catch {
+    return null;
+  }
+  if (
+    typeof parsed === 'object' &&
+    parsed !== null &&
+    isTaskExecutorType((parsed as { executor?: unknown }).executor) &&
+    isValidExecutorModel(
+      (parsed as { executor: TaskExecutorType }).executor,
+      (parsed as { executor_model?: unknown }).executor_model,
+    )
+  ) {
+    const p = parsed as { executor: TaskExecutorType; executor_model: string };
+    return { executor: p.executor, executor_model: p.executor_model };
+  }
+  return null;
+}
 
 export class EnrichmentPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
@@ -145,6 +180,17 @@ export class EnrichmentPoller {
       }
 
       if (isNewInstanceTask) {
+        let explicitOverride: { executor: TaskExecutorType; executor_model: string } | null = null;
+        if (task.payload.trim() !== '') {
+          explicitOverride = parseNewInstanceOverride(task.payload);
+          if (!explicitOverride) {
+            logger.warn({ task_id: task.task_id }, 'Rejected new_instance task with invalid explicit executor override');
+            await this.publishRejection(task, NEW_INSTANCE_INVALID_OVERRIDE_REASON);
+            await this.ackTask(task.task_id);
+            return;
+          }
+        }
+
         const inheritedType = threadResult!.inheritedTaskType ?? task.task_type;
 
         const enrichmentResult = this.enrichmentService.enrich(
@@ -162,6 +208,16 @@ export class EnrichmentPoller {
 
         enrichmentResult.job.skipContinue = true;
         enrichmentResult.job.task_type = inheritedType;
+        enrichmentResult.job.executors = explicitOverride
+          ? [explicitOverride]
+          : threadResult!.inheritedExecutor && threadResult!.inheritedExecutorModel
+            ? [
+                {
+                  executor: threadResult.inheritedExecutor,
+                  executor_model: threadResult.inheritedExecutorModel,
+                },
+              ]
+            : enrichmentResult.job.executors;
 
         try {
           const jobRes = await fetch(`${this.apiUrl}/jobs`, {
@@ -204,6 +260,20 @@ export class EnrichmentPoller {
         await this.publishRejection(task, enrichmentResult.reason);
         await this.ackTask(task.task_id);
         return;
+      }
+
+      if (
+        !isGcTask &&
+        !isCleanupTask &&
+        threadResult?.inheritedExecutor &&
+        threadResult?.inheritedExecutorModel
+      ) {
+        enrichmentResult.job.executors = [
+          {
+            executor: threadResult.inheritedExecutor,
+            executor_model: threadResult.inheritedExecutorModel,
+          },
+        ];
       }
 
       try {

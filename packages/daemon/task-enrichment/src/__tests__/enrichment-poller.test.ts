@@ -314,7 +314,13 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     const originalPayload = task.payload;
     const jobSubmission = createJobSubmission({ payload: originalPayload });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
-    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ threadContext: 'user: fix CI', inheritedTaskType: null, inheritedSessionId: null });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: fix CI',
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
+    });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
@@ -362,6 +368,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: null,
       inheritedTaskType: null,
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -386,6 +394,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: null,
       inheritedTaskType: null,
       inheritedSessionId: 'inherited-session-id',
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -430,6 +440,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: null,
       inheritedTaskType: null,
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -459,6 +471,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -495,6 +509,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -525,6 +541,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -565,6 +583,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'user: please run cleanup',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -604,6 +624,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'assistant: earlier response',
       inheritedTaskType: null,
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -710,6 +732,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'user: please end this session\nassistant: acknowledged',
       inheritedTaskType: 'deploy',
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -754,6 +778,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'user: deploy the app\nassistant: Job abc — success',
       inheritedTaskType: 'deploy',
       inheritedSessionId: 'inherited-session-id',
+      inheritedExecutor: 'cursor_agent',
+      inheritedExecutorModel: 'auto',
     });
 
     mockFetch
@@ -773,6 +799,11 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       'inherited-session-id',
       undefined,
     );
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(jobSubmission),
+    });
   });
 
   it('keeps current behavior when no inherited type found', async () => {
@@ -787,6 +818,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       threadContext: 'user: hello\nassistant: Job abc — success',
       inheritedTaskType: null,
       inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
 
     mockFetch
@@ -801,5 +834,132 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       'generated-session-id',
       'user: hello\nassistant: Job abc — success',
     );
+  });
+
+  it('uses explicit /new executor override from structured payload', async () => {
+    const task = createTask({
+      task_type: 'new_instance',
+      payload: JSON.stringify({ executor: 'cursor_agent', executor_model: 'auto' }),
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockEnrich.mockReturnValue({
+      type: 'enriched',
+      job: createJobSubmission({
+        task_type: 'deploy',
+        payload: 'Respond with: New session instance started.',
+        session_id: 'thread-session-id',
+        executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+      }),
+    } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'assistant: earlier',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: 'claude_code',
+      inheritedExecutorModel: 'sonnet',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    const posted = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    expect(posted.executors).toEqual([{ executor: 'cursor_agent', executor_model: 'auto' }]);
+  });
+
+  it('rejects explicit /new override when executor pair is invalid', async () => {
+    const task = createTask({
+      task_type: 'new_instance',
+      payload: JSON.stringify({ executor: 'claude_code', executor_model: 'gpt-5.4' }),
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'assistant: earlier',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    const rejectionBody = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    expect(rejectionBody.task_type).toBe('new_instance');
+    expect(rejectionBody.status).toBe('failure');
+    expect(rejectionBody.stdout).toContain('Invalid');
+  });
+
+  it('uses inherited executor pair for bare /new when available', async () => {
+    const task = createTask({
+      task_type: 'new_instance',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockEnrich.mockReturnValue({
+      type: 'enriched',
+      job: createJobSubmission({
+        task_type: 'deploy',
+        payload: 'Respond with: New session instance started.',
+        session_id: 'thread-session-id',
+        executors: [{ executor: 'claude_code', executor_model: 'opus' }],
+      }),
+    } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'assistant: earlier',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: 'cursor_agent',
+      inheritedExecutorModel: 'auto',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    const posted = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    expect(posted.executors).toEqual([{ executor: 'cursor_agent', executor_model: 'auto' }]);
+  });
+
+  it('replaces enriched executors with inherited pair for ordinary threaded messages', async () => {
+    const task = createTask({
+      task_type: 'generic',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      payload: 'fix tests',
+    });
+    const jobSubmission = createJobSubmission({
+      task_type: 'generic',
+      payload: 'fix tests',
+      session_id: 'inherited-session-id',
+    });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      threadContext: 'user: hi',
+      inheritedTaskType: null,
+      inheritedSessionId: 'inherited-session-id',
+      inheritedExecutor: 'cursor_agent',
+      inheritedExecutorModel: 'gpt-5.4-medium-fast',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    const posted = JSON.parse(mockFetch.mock.calls[1][1].body as string);
+    expect(posted.executors).toEqual([{ executor: 'cursor_agent', executor_model: 'gpt-5.4-medium-fast' }]);
   });
 });

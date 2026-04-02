@@ -1,6 +1,13 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { TaskResult, RESULT_STATUSES, DEFAULT_RESULTS_EXCHANGE_NAME, isValidTaskSource } from '@local-agent/shared';
+import {
+  TaskResult,
+  RESULT_STATUSES,
+  DEFAULT_RESULTS_EXCHANGE_NAME,
+  isValidTaskSource,
+  isTaskExecutorType,
+  isValidExecutorModel,
+} from '@local-agent/shared';
 import { RabbitMQService } from '../services/rabbitmq';
 
 export function createResultRoutes(rabbitmq: RabbitMQService): Router {
@@ -8,7 +15,19 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { job_id, task_id, status, exit_code, stdout, stderr, task_source, task_type, session_id } = req.body;
+      const {
+        job_id,
+        task_id,
+        status,
+        exit_code,
+        stdout,
+        stderr,
+        task_source,
+        task_type,
+        session_id,
+        executor,
+        executor_model,
+      } = req.body;
 
       if (typeof job_id !== 'string' || !job_id) {
         res.status(400).json({ error: 'job_id is required and must be a string' });
@@ -34,6 +53,17 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'session_id must be a string if provided' });
         return;
       }
+      if ((executor === undefined) !== (executor_model === undefined)) {
+        res.status(400).json({ error: 'executor and executor_model must be provided together' });
+        return;
+      }
+      if (
+        executor !== undefined &&
+        (!isTaskExecutorType(executor) || !isValidExecutorModel(executor, executor_model))
+      ) {
+        res.status(400).json({ error: 'executor and executor_model must be a valid pair' });
+        return;
+      }
 
       const result: TaskResult = {
         result_id: uuidv4(),
@@ -47,6 +77,8 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         completed_at: new Date().toISOString(),
         ...(task_source ? { task_source } : {}),
         ...(session_id !== undefined ? { session_id } : {}),
+        ...(executor !== undefined ? { executor } : {}),
+        ...(executor_model !== undefined ? { executor_model } : {}),
       };
 
       const buffered = rabbitmq.publishToExchange(DEFAULT_RESULTS_EXCHANGE_NAME, result);

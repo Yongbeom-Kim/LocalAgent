@@ -154,6 +154,43 @@ describe('POST /results', () => {
       .send({ ...validSubmission(), task_source: { source: 'unknown' } });
     expect(res.status).toBe(400);
   });
+
+  it('returns 201 with executor metadata when a valid pair is provided', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({
+        ...validSubmission(),
+        executor: 'claude_code',
+        executor_model: 'sonnet',
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.executor).toBe('claude_code');
+    expect(res.body.executor_model).toBe('sonnet');
+  });
+
+  it('returns 400 when executor is provided without executor_model', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({
+        ...validSubmission(),
+        executor: 'claude_code',
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when executor/model pair is invalid', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({
+        ...validSubmission(),
+        executor: 'claude_code',
+        executor_model: 'gpt-5.4',
+      });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('GET /results/next/:queueName', () => {

@@ -28,6 +28,8 @@ const mockResultSubmission: TaskResultSubmission = {
   exit_code: 0,
   stdout: 'result output',
   stderr: '',
+  executor: 'claude_code',
+  executor_model: 'opus',
 };
 
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
@@ -279,6 +281,31 @@ describe('TaskPoller', () => {
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(resultPostBody.task_type).toBe('deploy');
+    });
+
+    it('forwards executor metadata from orchestrator result to POST /results', async () => {
+      const job = createJob();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+      await poller.drain();
+
+      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(resultPostBody.executor).toBe('claude_code');
+      expect(resultPostBody.executor_model).toBe('opus');
     });
 
     it('omits task_source from result when job has none', async () => {

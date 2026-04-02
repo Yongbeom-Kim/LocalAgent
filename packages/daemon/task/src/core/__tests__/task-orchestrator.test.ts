@@ -32,6 +32,8 @@ const mockResultSubmission: TaskResultSubmission = {
   exit_code: 0,
   stdout: 'output',
   stderr: '',
+  executor: 'claude_code',
+  executor_model: 'opus',
 };
 
 const mockCleanupResultSubmission: TaskResultSubmission = {
@@ -43,6 +45,8 @@ const mockCleanupResultSubmission: TaskResultSubmission = {
   exit_code: 0,
   stdout: 'cleanup complete',
   stderr: '',
+  executor: 'builtin',
+  executor_model: 'none',
 };
 
 const mockGcResultSubmission: TaskResultSubmission = {
@@ -177,6 +181,40 @@ describe('TaskOrchestrator', () => {
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
+  it('annotates final failure with executor metadata from the last attempted preference', async () => {
+    const failResult: TaskResultSubmission = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      task_type: 'generic',
+      status: 'failure',
+      exit_code: 1,
+      stdout: '',
+      stderr: 'first failure',
+    };
+    const failResult2: TaskResultSubmission = {
+      job_id: 'job-456',
+      task_id: 'test-123',
+      task_type: 'generic',
+      status: 'failure',
+      exit_code: 1,
+      stdout: '',
+      stderr: 'second failure',
+    };
+
+    mockClaudeExecute.mockResolvedValueOnce(failResult);
+    mockClaudeWExecute.mockResolvedValueOnce(failResult2);
+
+    const result = await orchestrator.handle(createJob({
+      executors: [
+        { executor: 'claude_code', executor_model: 'opus' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
+      ],
+    }));
+
+    expect(result.executor).toBe('claude-w');
+    expect(result.executor_model).toBe('gpt-5.4');
+  });
+
   it('returns TaskResultSubmission from ClaudeWExecutor for claude-w jobs', async () => {
     const job = createJob({
       executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
@@ -194,7 +232,7 @@ describe('TaskOrchestrator', () => {
       }),
       mockEnv,
     );
-    expect(result).toEqual(mockResultSubmission);
+    expect(result).toEqual({ ...mockResultSubmission, executor: 'claude-w', executor_model: 'gpt-5.4' });
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
@@ -215,7 +253,7 @@ describe('TaskOrchestrator', () => {
       }),
       mockEnv,
     );
-    expect(result).toEqual(mockResultSubmission);
+    expect(result).toEqual({ ...mockResultSubmission, executor: 'cursor_agent', executor_model: 'auto' });
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
@@ -329,6 +367,8 @@ describe('TaskOrchestrator', () => {
 
     expect(result.status).toBe('success');
     expect(result.stdout).toBe('fallback output');
+    expect(result.executor).toBe('claude-w');
+    expect(result.executor_model).toBe('gpt-5.4');
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
     expect(mockClaudeWExecute).toHaveBeenCalledTimes(1);
     expect(mockSetup).toHaveBeenCalledTimes(1);
@@ -370,6 +410,8 @@ describe('TaskOrchestrator', () => {
 
     expect(result.status).toBe('failure');
     expect(result.stderr).toBe('second failure');
+    expect(result.executor).toBe('claude-w');
+    expect(result.executor_model).toBe('gpt-5.4');
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockTeardown).not.toHaveBeenCalled();
   });

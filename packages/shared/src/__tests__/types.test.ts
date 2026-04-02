@@ -6,6 +6,7 @@ import {
   type Job,
   type MarketplaceConfig,
   isValidExecutorPreferences,
+  type TaskResultSubmission,
 } from '../types';
 
 /** Exact static allowlist order for `cursor_agent` (must match `EXECUTOR_MODELS.cursor_agent`). */
@@ -293,5 +294,24 @@ describe('isValidExecutorPreferences', () => {
 
   it('returns false for array with non-object elements', () => {
     expect(isValidExecutorPreferences(['claude_code'])).toBe(false);
+  });
+});
+
+describe('TaskResultSubmission executor metadata', () => {
+  it('accepts optional executor metadata on TaskResultSubmission shape', () => {
+    const result: TaskResultSubmission = {
+      job_id: 'job-1',
+      task_id: 'task-1',
+      task_type: 'generic',
+      status: 'success',
+      exit_code: 0,
+      stdout: 'done',
+      stderr: '',
+      executor: 'claude_code',
+      executor_model: 'sonnet',
+    };
+
+    expect(result.executor).toBe('claude_code');
+    expect(result.executor_model).toBe('sonnet');
   });
 });

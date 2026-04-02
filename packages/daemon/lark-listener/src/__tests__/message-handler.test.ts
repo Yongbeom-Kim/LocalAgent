@@ -310,9 +310,9 @@ describe('MessageHandler', () => {
       expect(reactor.react).toHaveBeenCalledWith('om_msg1');
     });
 
-    it('replies with usage hint for /new with args and does not submit', async () => {
+    it('rejects /new with only one arg', async () => {
       await handler.handle(makeEvent({
-        content: JSON.stringify({ text: '/new something' }),
+        content: JSON.stringify({ text: '/new cursor_agent' }),
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
@@ -321,6 +321,33 @@ describe('MessageHandler', () => {
         'om_msg1',
         'Usage: /task <type> <payload> or /end (in a thread)',
       );
+    });
+
+    it('rejects /new with more than two args', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/new cursor_agent gpt-5.4-medium-fast extra' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(reactor.react).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalled();
+    });
+
+    it('submits /new <executor> <model> as new_instance with structured payload', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/new cursor_agent gpt-5.4-medium-fast' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'new_instance',
+        JSON.stringify({
+          executor: 'cursor_agent',
+          executor_model: 'gpt-5.4-medium-fast',
+        }),
+        { source: 'lark', message_id: 'om_msg1' },
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
     });
 
     it('does not treat /newfoo as a /new command', async () => {

@@ -104,6 +104,51 @@ describe('LarkNotifier', () => {
     expect(content.text).toContain('task_type: deploy');
   });
 
+  it('prepends executor and model lines when both are present', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    await notifier.notify(
+      createResult({
+        executor: 'cursor_agent',
+        executor_model: 'gpt-5.4-medium-fast',
+      }),
+    );
+
+    const sendCall = mockFetch.mock.calls[1];
+    const body = JSON.parse(sendCall[1].body);
+    const content = JSON.parse(body.content);
+    expect(content.text).toContain('executor: cursor_agent');
+    expect(content.text).toContain('model: gpt-5.4-medium-fast');
+  });
+
+  it('omits executor and model lines when executor metadata is absent', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    await notifier.notify(createResult({ executor: undefined, executor_model: undefined }));
+
+    const sendCall = mockFetch.mock.calls[1];
+    const body = JSON.parse(sendCall[1].body);
+    const content = JSON.parse(body.content);
+    expect(content.text).not.toContain('executor:');
+    expect(content.text).not.toContain('model:');
+  });
+
   it('includes session_id line when session_id is present', async () => {
     mockFetch
       .mockResolvedValueOnce({

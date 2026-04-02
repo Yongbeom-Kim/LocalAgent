@@ -56,10 +56,13 @@ export class LarkNotifier {
     }
 
     const text = [
-      `Task ID: ${result.task_id}`,
-      `Job ID: ${result.job_id}`,
+      ...(result.executor && result.executor_model
+        ? [`executor: ${result.executor}`, `model: ${result.executor_model}`]
+        : []),
       `task_type: ${result.task_type}`,
       ...(result.session_id ? [`session_id: ${result.session_id}`] : []),
+      `Task ID: ${result.task_id}`,
+      `Job ID: ${result.job_id}`,
       `status: ${result.status}`,
       `Exit code: ${result.exit_code ?? 'N/A'}`,
       result.stdout ? `Output:\n${result.stdout}` : 'No output',

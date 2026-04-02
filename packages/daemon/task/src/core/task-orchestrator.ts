@@ -115,7 +115,12 @@ export class TaskOrchestrator {
           skipContinue: job.skipContinue,
         };
 
-        lastResult = await executor.execute(attempt, env);
+        const executorResult = await executor.execute(attempt, env);
+        lastResult = {
+          ...executorResult,
+          executor: pref.executor,
+          executor_model: pref.executor_model,
+        };
 
         if (lastResult.status === 'success') {
           return lastResult;
@@ -137,6 +142,8 @@ export class TaskOrchestrator {
           exit_code: null,
           stdout: '',
           stderr: `Job execution failed: ${error instanceof Error ? error.message : String(error)}`,
+          executor: pref.executor,
+          executor_model: pref.executor_model,
         };
 
         if (!isLast) {
