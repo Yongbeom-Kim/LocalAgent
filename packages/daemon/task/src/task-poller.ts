@@ -74,9 +74,12 @@ export class TaskPoller {
     try {
       const result = await this.orchestrator.handle(job);
 
-      // Truncate stdout
+      // Snippet-sized fields for API / Lark (executors may capture up to MAX_RESULT_OUTPUT_BYTES per stream)
       if (result.stdout.length > MAX_SNIPPET_CHARS) {
         result.stdout = result.stdout.substring(0, MAX_SNIPPET_CHARS);
+      }
+      if (result.stderr.length > MAX_SNIPPET_CHARS) {
+        result.stderr = result.stderr.substring(0, MAX_SNIPPET_CHARS);
       }
 
       // Attach routing fields

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Job, TaskResultSubmission } from '@local-agent/shared';
+import { Job, TaskResultSubmission, MAX_SNIPPET_CHARS } from '@local-agent/shared';
 import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ClaudeExecutor } from '../adapters/claude-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
@@ -306,6 +306,35 @@ describe('TaskPoller', () => {
       const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
       expect(resultPostBody.executor).toBe('claude');
       expect(resultPostBody.executor_model).toBe('opus');
+    });
+
+    it('truncates stderr to MAX_SNIPPET_CHARS before POST /results', async () => {
+      const longStderr = 'e'.repeat(MAX_SNIPPET_CHARS + 500);
+      mockClaudeExecute.mockResolvedValueOnce({
+        ...mockResultSubmission,
+        stderr: longStderr,
+      });
+      const job = createJob();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+      await poller.drain();
+
+      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(resultPostBody.stderr.length).toBe(MAX_SNIPPET_CHARS);
     });
 
     it('omits task_source from result when job has none', async () => {

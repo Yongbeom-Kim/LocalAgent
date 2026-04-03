@@ -60,6 +60,7 @@ export {
   DEFAULT_MAX_CONCURRENT_SESSIONS,
   DEFAULT_REQUEUE_DELAY_MS,
   MAX_SNIPPET_CHARS,
+  MAX_API_JSON_BODY_BYTES,
   GLOBAL_SYSTEM_PROMPT,
 } from './constants';
 export { truncate } from './truncate';
