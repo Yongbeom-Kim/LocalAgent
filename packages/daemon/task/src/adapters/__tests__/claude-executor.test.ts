@@ -150,7 +150,7 @@ describe('ClaudeExecutor', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'claude',
       ['--dangerously-skip-permissions', '--model', 'opus', '-p', '-'],
-      { cwd: '/tmp/localagent-job-test' },
+      { cwd: '/tmp/localagent-job-test', detached: true },
     );
     expect(child.stdinData).toBe('What is 2+2?');
   });
@@ -177,7 +177,7 @@ describe('ClaudeExecutor', () => {
         '--plugin-dir', '/tmp/job/marketplaces/repo2/plugin-b',
         '-p', '-',
       ],
-      { cwd: '/tmp/job' },
+      { cwd: '/tmp/job', detached: true },
     );
   });
 
@@ -201,7 +201,7 @@ describe('ClaudeExecutor', () => {
         '--append-system-prompt', 'You are a helpful assistant that speaks like a pirate.',
         '-p', '-',
       ],
-      { cwd: '/tmp/localagent-job-test' },
+      { cwd: '/tmp/localagent-job-test', detached: true },
     );
   });
 
@@ -266,7 +266,7 @@ describe('ClaudeExecutor', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'claude',
       ['--dangerously-skip-permissions', '--model', 'opus', '-p', '-'],
-      { cwd: '/tmp/localagent-job-test' },
+      { cwd: '/tmp/localagent-job-test', detached: true },
     );
     expect(child.stdinData).toBe('--- Thread Context ---\nuser: previous context\n--- Current Message ---\ncurrent payload');
   });
@@ -286,7 +286,7 @@ describe('ClaudeExecutor', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'claude',
       ['--dangerously-skip-permissions', '--model', 'opus', '--continue', '-p', '-'],
-      { cwd: '/tmp/localagent-job-test' },
+      { cwd: '/tmp/localagent-job-test', detached: true },
     );
     expect(child.stdinData).toBe('What is 2+2?');
   });

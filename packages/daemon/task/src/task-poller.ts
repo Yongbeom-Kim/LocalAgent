@@ -10,11 +10,17 @@ import { SessionLockManager } from './services/session-lock';
 
 const logger = createLogger('task-daemon:poller');
 
+interface SessionDescriptor {
+  session_id: string;
+  queue_name: string;
+}
+
 export class TaskPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
   private inFlightJobs = new Map<string, Promise<void>>();
   private activeSessions = new Set<string>();
+  private knownSessions = new Set<string>();
   private basePollInterval = 0;
   private currentPollInterval = 0;
 
@@ -31,6 +37,9 @@ export class TaskPoller {
 
   async pollOnce(): Promise<void> {
     try {
+      const sessions = await this.fetchActiveSessions();
+      this.knownSessions = new Set(sessions.map((session) => session.session_id));
+
       if (this.inFlightJobs.size >= this.maxConcurrency) {
         this.increasePollInterval();
         logger.info(
@@ -40,51 +49,77 @@ export class TaskPoller {
         return;
       }
 
-      const res = await fetch(`${this.apiUrl}/jobs/next`);
-
-      if (res.status === 204) {
-        logger.debug('No jobs available');
-        return;
-      }
-
-      if (res.status !== 200) {
-        logger.warn({ status: res.status }, 'Unexpected response from API');
-        return;
-      }
-
-      const job = (await res.json()) as Job;
-      logger.info({ job_id: job.job_id, task_id: job.task_id }, 'Received job');
-
-      if (job.task_type === 'kill') {
-        const promise = this.executeJob(job);
-        this.inFlightJobs.set(job.job_id, promise);
-        return;
-      }
-
-      if (this.sessionLock.acquire(job.session_id, job.job_id)) {
-        this.activeSessions.add(job.session_id);
-        const promise = this.executeJob(job);
-        this.inFlightJobs.set(job.job_id, promise);
-      } else {
-        logger.info({ job_id: job.job_id, session_id: job.session_id }, 'Session locked, requeueing job');
-        // NACK immediately — do not sleep here; sleeping blocks the poll loop from
-        // dispatching other jobs or responding to shutdown for the full delay duration.
-        try {
-          await fetch(`${this.apiUrl}/jobs/${job.job_id}/nack`, { method: 'POST' });
-        } catch (nackErr) {
-          logger.error({ job_id: job.job_id, err: nackErr }, 'NACK request failed');
+      for (const session of sessions) {
+        if (this.inFlightJobs.size >= this.maxConcurrency) {
+          this.increasePollInterval();
+          break;
         }
+        if (this.activeSessions.has(session.session_id)) {
+          continue;
+        }
+
+        const job = await this.fetchNextJob(session.session_id);
+        if (!job) {
+          continue;
+        }
+
+        this.activeSessions.add(session.session_id);
+        const promise = this.executeJob(job);
+        this.inFlightJobs.set(job.job_id, promise);
       }
     } catch (err) {
       logger.error({ err }, 'Poll error');
     }
   }
 
+  private async fetchActiveSessions(): Promise<SessionDescriptor[]> {
+    const res = await fetch(`${this.apiUrl}/jobs/sessions`);
+    if (res.status !== 200) {
+      logger.warn({ status: res.status }, 'Unexpected response from API while listing sessions');
+      return [];
+    }
+    const payload = (await res.json()) as { sessions?: SessionDescriptor[] };
+    return Array.isArray(payload.sessions) ? payload.sessions : [];
+  }
+
+  private async fetchNextJob(sessionId: string): Promise<Job | null> {
+    const res = await fetch(`${this.apiUrl}/jobs/next/${encodeURIComponent(sessionId)}`);
+
+    if (res.status === 204) {
+      this.knownSessions.delete(sessionId);
+      return null;
+    }
+
+    if (res.status !== 200) {
+      logger.warn({ status: res.status, session_id: sessionId }, 'Unexpected job fetch response from API');
+      return null;
+    }
+
+    const job = (await res.json()) as Job;
+    logger.info({ job_id: job.job_id, task_id: job.task_id, session_id: job.session_id }, 'Received job');
+    return job;
+  }
+
   private async executeJob(job: Job): Promise<void> {
+    const lockAcquired = this.sessionLock.acquire(job.session_id, job.job_id);
+    if (!lockAcquired) {
+      logger.error({ job_id: job.job_id, session_id: job.session_id }, 'Session lock unexpectedly unavailable');
+      try {
+        await fetch(`${this.apiUrl}/jobs/${encodeURIComponent(job.session_id)}/${job.job_id}/nack`, {
+          method: 'POST',
+        });
+      } catch (nackErr) {
+        logger.error({ job_id: job.job_id, err: nackErr }, 'NACK request failed');
+      } finally {
+        this.inFlightJobs.delete(job.job_id);
+        this.activeSessions.delete(job.session_id);
+      }
+      return;
+    }
+
     try {
       const result = await this.orchestrator.handle(job);
 
-      // Snippet-sized fields for API / Lark (executors may capture up to MAX_RESULT_OUTPUT_BYTES per stream)
       if (result.stdout.length > MAX_SNIPPET_CHARS) {
         result.stdout = result.stdout.substring(0, MAX_SNIPPET_CHARS);
       }
@@ -92,7 +127,6 @@ export class TaskPoller {
         result.stderr = result.stderr.substring(0, MAX_SNIPPET_CHARS);
       }
 
-      // Attach routing fields
       const resultWithSource: TaskResultSubmission = {
         ...result,
         task_type: job.task_type,
@@ -100,7 +134,6 @@ export class TaskPoller {
         ...(job.task_source ? { task_source: job.task_source } : {}),
       };
 
-      // Publish result (best-effort)
       try {
         const resultRes = await fetch(`${this.apiUrl}/results`, {
           method: 'POST',
@@ -114,9 +147,11 @@ export class TaskPoller {
         logger.error({ job_id: job.job_id, err: resultErr }, 'Result publish request failed');
       }
 
-      // ACK the job
       try {
-        const ackRes = await fetch(`${this.apiUrl}/jobs/${job.job_id}/ack`, { method: 'POST' });
+        const ackRes = await fetch(
+          `${this.apiUrl}/jobs/${encodeURIComponent(job.session_id)}/${job.job_id}/ack`,
+          { method: 'POST' },
+        );
         if (ackRes.status !== 200) {
           logger.warn({ job_id: job.job_id, status: ackRes.status }, 'ACK failed');
         } else {
@@ -128,9 +163,7 @@ export class TaskPoller {
     } catch (err) {
       logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
     } finally {
-      if (job.task_type !== 'kill') {
-        this.sessionLock.release(job.session_id);
-      }
+      this.sessionLock.release(job.session_id);
       this.inFlightJobs.delete(job.job_id);
       this.activeSessions.delete(job.session_id);
       this.resetPollInterval();

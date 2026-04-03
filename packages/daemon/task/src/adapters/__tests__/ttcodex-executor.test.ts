@@ -103,7 +103,7 @@ describe('TTCodexExecutor', () => {
         '-a',
         'exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check',
       ],
-      { cwd: '/tmp/localagent-job-test', shell: false },
+      { cwd: '/tmp/localagent-job-test', shell: false, detached: true },
     );
     expect(child.stdinWrite).toHaveBeenCalledWith('What is 2+2?');
   });
@@ -140,7 +140,7 @@ describe('TTCodexExecutor', () => {
         '-a',
         'exec resume --last --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check',
       ],
-      { cwd: '/tmp/localagent-job-test', shell: false },
+      { cwd: '/tmp/localagent-job-test', shell: false, detached: true },
     );
     expect(child.stdinWrite).toHaveBeenCalledWith('What is 2+2?');
   });

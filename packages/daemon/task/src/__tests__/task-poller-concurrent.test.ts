@@ -71,12 +71,12 @@ function createJob(overrides?: Partial<Job>): Job {
   };
 }
 
-function createMockResult(jobId: string, sessionId: string): TaskResultSubmission {
+function createMockResult(jobId: string, sessionId: string, taskType = 'generic'): TaskResultSubmission {
   return {
     job_id: jobId,
-    task_id: 'abc-123',
+    task_id: `${jobId}-task`,
     session_id: sessionId,
-    task_type: 'generic',
+    task_type: taskType,
     status: 'success',
     exit_code: 0,
     stdout: 'result output',
@@ -129,394 +129,204 @@ describe('TaskPoller Concurrent', () => {
     rmSync(TEST_SESSION_BASE_DIR, { recursive: true, force: true });
   });
 
-  describe('concurrent dispatch', () => {
-    it('dispatches multiple jobs for different sessions concurrently', async () => {
-      const jobEnv = new JobEnvironment(false);
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+  it('dispatches multiple jobs for different sessions concurrently', async () => {
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
 
-      let resolveJob1!: (v: TaskResultSubmission) => void;
-      let resolveJob2!: (v: TaskResultSubmission) => void;
+    let resolveJob1!: (v: TaskResultSubmission) => void;
+    let resolveJob2!: (v: TaskResultSubmission) => void;
 
-      const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
-      const job2Promise = new Promise<TaskResultSubmission>((r) => { resolveJob2 = r; });
+    const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
+    const job2Promise = new Promise<TaskResultSubmission>((r) => { resolveJob2 = r; });
 
-      mockClaudeExecute
-        .mockReturnValueOnce(job1Promise)
-        .mockReturnValueOnce(job2Promise);
+    mockClaudeExecute.mockReturnValueOnce(job1Promise).mockReturnValueOnce(job2Promise);
 
-      const job1 = createJob({ job_id: 'job-1', session_id: 'session-A' });
-      const job2 = createJob({ job_id: 'job-2', session_id: 'session-B' });
+    const job1 = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A' });
+    const job2 = createJob({ job_id: 'job-2', task_id: 'task-2', session_id: 'session-B' });
 
-      // First poll returns job1
-      mockFetch.mockResolvedValueOnce({
+    mockFetch
+      .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve(job1),
-      });
+        json: () => Promise.resolve({
+          sessions: [
+            { session_id: 'session-A', queue_name: 'jobs.session.session-A' },
+            { session_id: 'session-B', queue_name: 'jobs.session.session-B' },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) });
 
-      await poller.pollOnce();
-      // Let microtasks settle so executeJob starts running
-      await new Promise((r) => setTimeout(r, 10));
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 10));
 
-      // Second poll returns job2
-      mockFetch.mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(job2),
-      });
+    expect(mockClaudeExecute).toHaveBeenCalledTimes(2);
 
-      await poller.pollOnce();
-      await new Promise((r) => setTimeout(r, 10));
+    mockFetch
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 })
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
 
-      // Both orchestrator.handle calls should be in-flight simultaneously
-      expect(mockClaudeExecute).toHaveBeenCalledTimes(2);
+    resolveJob1(createMockResult('job-1', 'session-A'));
+    resolveJob2(createMockResult('job-2', 'session-B'));
 
-      // Now resolve both and drain
-      mockFetch
-        .mockResolvedValueOnce({ status: 201 }) // result for job1
-        .mockResolvedValueOnce({ status: 200 }) // ack for job1
-        .mockResolvedValueOnce({ status: 201 }) // result for job2
-        .mockResolvedValueOnce({ status: 200 }); // ack for job2
+    await poller.drain();
 
-      resolveJob1(createMockResult('job-1', 'session-A'));
-      resolveJob2(createMockResult('job-2', 'session-B'));
-
-      await poller.drain();
-
-      expect(mockSessionLock.release).toHaveBeenCalledWith('session-A');
-      expect(mockSessionLock.release).toHaveBeenCalledWith('session-B');
-    });
+    expect(mockSessionLock.release).toHaveBeenCalledWith('session-A');
+    expect(mockSessionLock.release).toHaveBeenCalledWith('session-B');
   });
 
-  describe('same-session serialization', () => {
-    it('NACKs a job immediately when session lock cannot be acquired', async () => {
-      const jobEnv = new JobEnvironment(false);
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+  it('preserves fifo within a session across repeated polls', async () => {
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
 
-      // First job acquires lock, second fails
-      (mockSessionLock.acquire as ReturnType<typeof vi.fn>)
-        .mockReturnValueOnce(true)
-        .mockReturnValueOnce(false);
+    let resolveJob1!: (v: TaskResultSubmission) => void;
+    let resolveJob2!: (v: TaskResultSubmission) => void;
+    const firstPromise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
+    const secondPromise = new Promise<TaskResultSubmission>((r) => { resolveJob2 = r; });
 
-      let resolveJob1!: (v: TaskResultSubmission) => void;
-      const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
-      mockClaudeExecute.mockReturnValueOnce(job1Promise);
+    mockClaudeExecute.mockReturnValueOnce(firstPromise).mockReturnValueOnce(secondPromise);
 
-      const job1 = createJob({ job_id: 'job-1', session_id: 'session-A' });
-      const job2 = createJob({ job_id: 'job-2', session_id: 'session-A' });
+    const job1 = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A', payload: 'first' });
+    const job2 = createJob({ job_id: 'job-2', task_id: 'task-2', session_id: 'session-A', payload: 'second' });
 
-      // First poll - job1 acquires lock
-      mockFetch.mockResolvedValueOnce({
+    mockFetch
+      .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve(job1),
-      });
-      await poller.pollOnce();
+        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) });
 
-      // Second poll - job2 fails lock, should NACK immediately (no sleep)
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(job2),
-        })
-        .mockResolvedValueOnce({ status: 200 }); // NACK response
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 10));
 
-      await poller.pollOnce();
-
-      // Verify NACK was called for job2
-      const nackCall = mockFetch.mock.calls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('/jobs/job-2/nack'),
-      );
-      expect(nackCall).toBeDefined();
-      expect(nackCall![1]).toEqual({ method: 'POST' });
-
-      // Clean up job1
-      mockFetch
-        .mockResolvedValueOnce({ status: 201 })
-        .mockResolvedValueOnce({ status: 200 });
-      resolveJob1(createMockResult('job-1', 'session-A'));
-      await poller.drain();
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
     });
+    await poller.pollOnce();
+    expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
 
-    it('NACKs and requeues a cleanup job when another in-flight job holds the same-session lock', async () => {
-      const jobEnv = new JobEnvironment(false);
-      const realSessionLock = new SessionLockManager();
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), realSessionLock, 5);
+    mockFetch
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
+    resolveJob1(createMockResult('job-1', 'session-A'));
+    await new Promise((r) => setTimeout(r, 10));
 
-      let resolveJob1!: (v: TaskResultSubmission) => void;
-      const job1Promise = new Promise<TaskResultSubmission>((r) => {
-        resolveJob1 = r;
-      });
-      mockClaudeExecute.mockReturnValueOnce(job1Promise);
-      mockCleanupExecute.mockResolvedValueOnce({
-        job_id: 'job-cleanup',
-        task_id: 'task-cleanup',
-        session_id: 'session-A',
-        task_type: 'cleanup',
-        status: 'success',
-        exit_code: 0,
-        stdout: 'cleanup complete',
-        stderr: '',
-        executor: 'builtin',
-        executor_model: 'none',
-      });
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
 
-      const activeJob = createJob({
-        job_id: 'job-active',
-        task_id: 'task-active',
-        session_id: 'session-A',
-        task_type: 'generic',
-      });
-      const cleanupJob = createJob({
-        job_id: 'job-cleanup',
-        task_id: 'task-cleanup',
-        session_id: 'session-A',
-        task_type: 'cleanup',
-        executors: [{ executor: 'builtin', executor_model: 'none' }],
-      });
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 10));
+    resolveJob2(createMockResult('job-2', 'session-A'));
+    await poller.drain();
 
-      mockFetch
-        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) })
-        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
-        .mockResolvedValueOnce({ status: 200 });
-
-      await poller.pollOnce();
-      await new Promise((r) => setTimeout(r, 10));
-      await poller.pollOnce();
-
-      const nackCall = mockFetch.mock.calls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('/jobs/job-cleanup/nack'),
-      );
-      expect(nackCall).toBeDefined();
-      expect(mockCleanupExecute).not.toHaveBeenCalled();
-
-      mockFetch
-        .mockResolvedValueOnce({ status: 201 })
-        .mockResolvedValueOnce({ status: 200 });
-      resolveJob1(createMockResult('job-active', 'session-A'));
-      await poller.drain();
-
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), realSessionLock, 5);
-      mockFetch
-        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
-        .mockResolvedValueOnce({ status: 201 })
-        .mockResolvedValueOnce({ status: 200 });
-
-      await poller.pollOnce();
-      await poller.drain();
-
-      expect(mockCleanupExecute).toHaveBeenCalledTimes(1);
-    });
-
-    it('dispatches kill immediately without NACKing behind the session lock', async () => {
-      const jobEnv = new JobEnvironment(false);
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
-
-      let resolveActive!: (v: TaskResultSubmission) => void;
-      const activePromise = new Promise<TaskResultSubmission>((r) => {
-        resolveActive = r;
-      });
-      mockClaudeExecute.mockReturnValueOnce(activePromise);
-
-      const activeJob = createJob({ job_id: 'job-active', session_id: 'session-A' });
-      const killJob = createJob({
-        job_id: 'job-kill',
-        task_id: 'task-kill',
-        session_id: 'session-A',
-        task_type: 'kill',
-        payload: '',
-        executors: [{ executor: 'builtin', executor_model: 'none' }],
-      });
-
-      mockFetch
-        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) })
-        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(killJob) })
-        .mockResolvedValueOnce({ status: 201 })
-        .mockResolvedValueOnce({ status: 200 });
-
-      await poller.pollOnce();
-      await new Promise((r) => setTimeout(r, 10));
-      await poller.pollOnce();
-      await new Promise((r) => setTimeout(r, 10));
-
-      const nackCall = mockFetch.mock.calls.find(
-        (call) => typeof call[0] === 'string' && call[0].includes('/jobs/job-kill/nack'),
-      );
-
-      expect(nackCall).toBeUndefined();
-      expect(mockSessionLock.acquire).toHaveBeenCalledTimes(1);
-
-      mockFetch
-        .mockResolvedValueOnce({ status: 201 })
-        .mockResolvedValueOnce({ status: 200 });
-      resolveActive(createMockResult('job-active', 'session-A'));
-      await poller.drain();
-    });
+    expect(mockClaudeExecute).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/jobs/session-A/job-1/nack'))).toBe(false);
   });
 
-  describe('capacity limit', () => {
-    it('skips polling when at max concurrency', async () => {
-      const jobEnv = new JobEnvironment(false);
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 2);
+  it('runs cleanup and kill in normal fifo order for the same session', async () => {
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
 
-      let resolveJob1!: (v: TaskResultSubmission) => void;
-      let resolveJob2!: (v: TaskResultSubmission) => void;
+    let resolveActive!: (v: TaskResultSubmission) => void;
+    const activePromise = new Promise<TaskResultSubmission>((r) => { resolveActive = r; });
+    mockClaudeExecute.mockReturnValueOnce(activePromise);
+    mockCleanupExecute.mockResolvedValueOnce(createMockResult('job-cleanup', 'session-A', 'cleanup'));
 
-      const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
-      const job2Promise = new Promise<TaskResultSubmission>((r) => { resolveJob2 = r; });
-
-      mockClaudeExecute
-        .mockReturnValueOnce(job1Promise)
-        .mockReturnValueOnce(job2Promise);
-
-      const job1 = createJob({ job_id: 'job-1', session_id: 'session-A' });
-      const job2 = createJob({ job_id: 'job-2', session_id: 'session-B' });
-
-      // Dispatch job1
-      mockFetch.mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(job1),
-      });
-      await poller.pollOnce();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Dispatch job2
-      mockFetch.mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(job2),
-      });
-      await poller.pollOnce();
-      await new Promise((r) => setTimeout(r, 10));
-
-      // At capacity now (2/2). Third poll should not fetch.
-      const fetchCountBefore = mockFetch.mock.calls.length;
-      await poller.pollOnce();
-
-      // No additional fetch call should have been made
-      expect(mockFetch.mock.calls.length).toBe(fetchCountBefore);
-
-      // Clean up — queue result+ack responses for both jobs
-      mockFetch
-        .mockResolvedValueOnce({ status: 201 }) // result for job1
-        .mockResolvedValueOnce({ status: 200 }) // ack for job1
-        .mockResolvedValueOnce({ status: 201 }) // result for job2
-        .mockResolvedValueOnce({ status: 200 }); // ack for job2
-      resolveJob1(createMockResult('job-1', 'session-A'));
-      resolveJob2(createMockResult('job-2', 'session-B'));
-      await poller.drain();
+    const activeJob = createJob({ job_id: 'job-active', task_id: 'task-active', session_id: 'session-A' });
+    const cleanupJob = createJob({
+      job_id: 'job-cleanup',
+      task_id: 'task-cleanup',
+      session_id: 'session-A',
+      task_type: 'cleanup',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
     });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) });
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 10));
+
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+    });
+    await poller.pollOnce();
+    expect(mockCleanupExecute).not.toHaveBeenCalled();
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
+    resolveActive(createMockResult('job-active', 'session-A'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
+
+    await poller.pollOnce();
+    await poller.drain();
+
+    expect(mockCleanupExecute).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/nack'))).toBe(false);
   });
 
-  describe('back-off', () => {
-    it('doubles poll interval when at capacity and resets when slot frees', async () => {
-      vi.useFakeTimers();
+  it('backs off when active session count hits concurrency limit', async () => {
+    vi.useFakeTimers();
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 1);
 
-      const jobEnv = new JobEnvironment(false);
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 1);
+    let resolveJob1!: (v: TaskResultSubmission) => void;
+    const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
+    mockClaudeExecute.mockReturnValueOnce(job1Promise);
 
-      let resolveJob1!: (v: TaskResultSubmission) => void;
-      const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
-      mockClaudeExecute.mockReturnValueOnce(job1Promise);
+    const job1 = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A' });
 
-      const job1 = createJob({ job_id: 'job-1', session_id: 'session-A' });
+    (poller as unknown as { basePollInterval: number }).basePollInterval = 1000;
+    (poller as unknown as { currentPollInterval: number }).currentPollInterval = 1000;
 
-      // Access private field for verification
-      const getInterval = () => (poller as unknown as { currentPollInterval: number }).currentPollInterval;
-
-      // First poll dispatches job1, not using start() to avoid loop complexity
-      mockFetch.mockResolvedValueOnce({
+    mockFetch
+      .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve(job1),
-      });
+        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) });
 
-      // Set up the base interval manually
-      (poller as unknown as { basePollInterval: number }).basePollInterval = 1000;
-      (poller as unknown as { currentPollInterval: number }).currentPollInterval = 1000;
+    await poller.pollOnce();
+    await vi.advanceTimersByTimeAsync(0);
 
-      await poller.pollOnce();
-      // Let microtask resolve so executeJob starts
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(getInterval()).toBe(1000); // still base
-
-      // Now at capacity (1/1). Next pollOnce should back off.
-      await poller.pollOnce();
-      expect(getInterval()).toBe(2000); // doubled
-
-      // Another poll still at capacity
-      await poller.pollOnce();
-      expect(getInterval()).toBe(4000); // doubled again
-
-      // Resolve the job to free a slot
-      mockFetch
-        .mockResolvedValueOnce({ status: 201 })
-        .mockResolvedValueOnce({ status: 200 });
-      resolveJob1(createMockResult('job-1', 'session-A'));
-
-      // Let the executeJob finish
-      await vi.advanceTimersByTimeAsync(0);
-
-      expect(getInterval()).toBe(1000); // reset to base
-
-      vi.useRealTimers();
+    mockFetch.mockResolvedValueOnce({
+      status: 200,
+      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
     });
-  });
+    await poller.pollOnce();
 
-  describe('drain', () => {
-    it('waits for all in-flight jobs to complete before resolving', async () => {
-      const jobEnv = new JobEnvironment(false);
-      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+    expect((poller as unknown as { currentPollInterval: number }).currentPollInterval).toBe(2000);
 
-      let resolveJob1!: (v: TaskResultSubmission) => void;
-      let resolveJob2!: (v: TaskResultSubmission) => void;
+    mockFetch
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
+    resolveJob1(createMockResult('job-1', 'session-A'));
+    await vi.advanceTimersByTimeAsync(0);
 
-      const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
-      const job2Promise = new Promise<TaskResultSubmission>((r) => { resolveJob2 = r; });
-
-      mockClaudeExecute
-        .mockReturnValueOnce(job1Promise)
-        .mockReturnValueOnce(job2Promise);
-
-      const job1 = createJob({ job_id: 'job-1', session_id: 'session-A' });
-      const job2 = createJob({ job_id: 'job-2', session_id: 'session-B' });
-
-      // Dispatch job1
-      mockFetch.mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(job1),
-      });
-      await poller.pollOnce();
-
-      // Dispatch job2
-      mockFetch.mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve(job2),
-      });
-      await poller.pollOnce();
-
-      // Start drain
-      let drained = false;
-      mockFetch.mockResolvedValue({ status: 201 }); // for result posts and acks
-
-      const drainPromise = poller.drain().then(() => { drained = true; });
-
-      // drain should not have resolved yet
-      await new Promise((r) => setTimeout(r, 10));
-      expect(drained).toBe(false);
-
-      // Resolve job1
-      resolveJob1(createMockResult('job-1', 'session-A'));
-      await new Promise((r) => setTimeout(r, 10));
-
-      // Still waiting for job2
-      expect(drained).toBe(false);
-
-      // Resolve job2
-      resolveJob2(createMockResult('job-2', 'session-B'));
-
-      await drainPromise;
-      expect(drained).toBe(true);
-
-      // Both locks released
-      expect(mockSessionLock.release).toHaveBeenCalledWith('session-A');
-      expect(mockSessionLock.release).toHaveBeenCalledWith('session-B');
-    });
+    expect((poller as unknown as { currentPollInterval: number }).currentPollInterval).toBe(1000);
+    vi.useRealTimers();
   });
 });
