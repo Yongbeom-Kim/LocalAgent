@@ -47,13 +47,13 @@ export function formatInvalidModelMessage(
 }
 
 export function formatThreadReplyHelpMessage(): string {
-  return 'Thread replies must be natural language, /status, /new, or /end.';
+  return 'Thread replies must be natural language, /status, /new, /end, or /kill.';
 }
 
 export function formatThreadTaskCommandRejectedMessage(): string {
-  return 'Cannot use /task in a thread. Reply with natural language, /status, /new, or /end.\nUse /task only as a new root message.';
+  return 'Cannot use /task in a thread. Reply with natural language, /status, /new, /end, or /kill.\nUse /task only as a new root message.';
 }
 
-export function formatThreadOnlyCommandMessage(command: '/status' | '/new' | '/end'): string {
+export function formatThreadOnlyCommandMessage(command: '/status' | '/new' | '/end' | '/kill'): string {
   return `The ${command} command can only be used inside a thread.`;
 }
