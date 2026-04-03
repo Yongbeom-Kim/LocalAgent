@@ -149,9 +149,10 @@ describe('GcExecutor', () => {
     it('removes a stale session directory with a dead PID lock file', () => {
       const sessionDir = makeDir('stale-locked-session');
 
-      // Write a lock file with a PID that does not exist
+      // Use max signed 32-bit PID as a deterministic non-existent PID.
+      // This avoids flaky assumptions like "999999 is always dead".
       const lockInfo = {
-        pid: 999999,
+        pid: 2147483647,
         job_id: 'job-dead-001',
         locked_at: new Date().toISOString(),
       };

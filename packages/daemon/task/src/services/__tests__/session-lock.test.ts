@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 
 const { TEST_SESSION_BASE_DIR } = vi.hoisted(() => ({
-  TEST_SESSION_BASE_DIR: '/tmp/local-agent-session-lock-test/session',
+  TEST_SESSION_BASE_DIR: `/tmp/local-agent-session-lock-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}/session`,
 }));
 
 vi.mock('@local-agent/shared', async () => {
