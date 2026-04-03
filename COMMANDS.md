@@ -170,6 +170,7 @@ Invalid (extra content):
 **Notes**
 
 - `/end` is rejected unless it can be associated with an existing thread session.
+- When accepted, cleanup may execute only after earlier same-session work finishes.
 
 ### /gc
 

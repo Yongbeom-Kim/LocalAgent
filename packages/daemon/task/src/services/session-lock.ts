@@ -36,17 +36,26 @@ export class SessionLockManager {
       try {
         const existing: LockInfo = JSON.parse(readFileSync(filePath, 'utf-8'));
 
-        // Same PID — lock is ours (shouldn't happen, but safe)
+        // Same process only means the lock might be ours. Distinguish by job_id so
+        // concurrent same-session jobs within one daemon process still serialize.
         if (existing.pid === process.pid) {
-          logger.warn({ sessionId, jobId, existing }, 'Re-acquiring own lock');
-        } else if (this.isPidAlive(existing.pid)) {
+          if (existing.job_id === jobId) {
+            logger.warn({ sessionId, jobId, existing }, 'Re-acquiring own lock');
+            return true;
+          }
+
+          logger.debug({ sessionId, jobId, lockedBy: existing }, 'Session locked by another in-process job');
+          return false;
+        }
+
+        if (this.isPidAlive(existing.pid)) {
           // Different PID and alive → session is busy
           logger.debug({ sessionId, jobId, lockedBy: existing }, 'Session locked by another job');
           return false;
-        } else {
-          // PID is dead → stale lock, break it
-          logger.warn({ sessionId, jobId, staleLock: existing }, 'Breaking stale lock (PID dead)');
         }
+
+        // PID is dead → stale lock, break it
+        logger.warn({ sessionId, jobId, staleLock: existing }, 'Breaking stale lock (PID dead)');
       } catch (err) {
         logger.warn({ sessionId, jobId, err }, 'Corrupt lock file, overwriting');
       }

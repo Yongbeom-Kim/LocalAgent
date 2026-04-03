@@ -1,5 +1,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { Job, TaskResultSubmission } from '@local-agent/shared';
+import { rmSync } from 'node:fs';
+import type { Job, TaskResultSubmission } from '@local-agent/shared';
+
+const { TEST_SESSION_BASE_DIR } = vi.hoisted(() => ({
+  TEST_SESSION_BASE_DIR: '/tmp/local-agent-task-poller-session-lock-test/session',
+}));
+
+vi.mock('@local-agent/shared', async () => {
+  const actual = await vi.importActual<typeof import('@local-agent/shared')>('@local-agent/shared');
+  return {
+    ...actual,
+    SESSION_BASE_DIR: TEST_SESSION_BASE_DIR,
+  };
+});
+
 import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ExecutionEnvironment } from '../services/job-environment';
 import { SessionLockManager } from '../services/session-lock';
@@ -20,6 +34,7 @@ vi.mock('../services/job-environment', () => ({
 }));
 
 const mockClaudeExecute = vi.fn();
+const mockCleanupExecute = vi.fn();
 
 vi.mock('../adapters/claude-executor', () => {
   return {
@@ -28,6 +43,12 @@ vi.mock('../adapters/claude-executor', () => {
     }),
   };
 });
+
+vi.mock('../adapters/cleanup-executor', () => ({
+  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute }) {
+    this.execute = mockCleanupExecute;
+  }),
+}));
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -67,8 +88,10 @@ describe('TaskPoller Concurrent', () => {
   let mockSessionLock: SessionLockManager;
 
   beforeEach(() => {
+    rmSync(TEST_SESSION_BASE_DIR, { recursive: true, force: true });
     mockFetch.mockClear();
     mockClaudeExecute.mockClear();
+    mockCleanupExecute.mockClear();
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
 
@@ -81,6 +104,7 @@ describe('TaskPoller Concurrent', () => {
 
   afterEach(() => {
     if (poller) poller.stop();
+    rmSync(TEST_SESSION_BASE_DIR, { recursive: true, force: true });
   });
 
   describe('concurrent dispatch', () => {
@@ -187,6 +211,76 @@ describe('TaskPoller Concurrent', () => {
         .mockResolvedValueOnce({ status: 200 });
       resolveJob1(createMockResult('job-1', 'session-A'));
       await poller.drain();
+    });
+
+    it('NACKs and requeues a cleanup job when another in-flight job holds the same-session lock', async () => {
+      const jobEnv = new JobEnvironment(false);
+      const realSessionLock = new SessionLockManager();
+      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), realSessionLock, 5);
+
+      let resolveJob1!: (v: TaskResultSubmission) => void;
+      const job1Promise = new Promise<TaskResultSubmission>((r) => {
+        resolveJob1 = r;
+      });
+      mockClaudeExecute.mockReturnValueOnce(job1Promise);
+      mockCleanupExecute.mockResolvedValueOnce({
+        job_id: 'job-cleanup',
+        task_id: 'task-cleanup',
+        session_id: 'session-A',
+        task_type: 'cleanup',
+        status: 'success',
+        exit_code: 0,
+        stdout: 'cleanup complete',
+        stderr: '',
+        executor: 'builtin',
+        executor_model: 'none',
+      });
+
+      const activeJob = createJob({
+        job_id: 'job-active',
+        task_id: 'task-active',
+        session_id: 'session-A',
+        task_type: 'generic',
+      });
+      const cleanupJob = createJob({
+        job_id: 'job-cleanup',
+        task_id: 'task-cleanup',
+        session_id: 'session-A',
+        task_type: 'cleanup',
+        executors: [{ executor: 'builtin', executor_model: 'none' }],
+      });
+
+      mockFetch
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
+        .mockResolvedValueOnce({ status: 200 });
+
+      await poller.pollOnce();
+      await new Promise((r) => setTimeout(r, 10));
+      await poller.pollOnce();
+
+      const nackCall = mockFetch.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('/jobs/job-cleanup/nack'),
+      );
+      expect(nackCall).toBeDefined();
+      expect(mockCleanupExecute).not.toHaveBeenCalled();
+
+      mockFetch
+        .mockResolvedValueOnce({ status: 201 })
+        .mockResolvedValueOnce({ status: 200 });
+      resolveJob1(createMockResult('job-active', 'session-A'));
+      await poller.drain();
+
+      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), realSessionLock, 5);
+      mockFetch
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
+        .mockResolvedValueOnce({ status: 201 })
+        .mockResolvedValueOnce({ status: 200 });
+
+      await poller.pollOnce();
+      await poller.drain();
+
+      expect(mockCleanupExecute).toHaveBeenCalledTimes(1);
     });
   });
 

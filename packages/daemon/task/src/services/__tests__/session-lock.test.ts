@@ -96,6 +96,30 @@ describe('SessionLockManager', () => {
       expect(lockInfo.job_id).toBe('job-003');
     });
 
+    it('returns false and preserves the lock when the same process tries to acquire with a different job_id', () => {
+      const sessionId = 'sess-same-pid';
+      const first = manager.acquire(sessionId, 'job-1');
+      const second = manager.acquire(sessionId, 'job-2');
+
+      expect(first).toBe(true);
+      expect(second).toBe(false);
+
+      const lockInfo = JSON.parse(readFileSync(join(TEST_SESSION_BASE_DIR, sessionId, '.lock'), 'utf-8'));
+      expect(lockInfo.job_id).toBe('job-1');
+      expect(lockInfo.pid).toBe(process.pid);
+    });
+
+    it('returns true for idempotent reacquisition by the same process and same job_id', () => {
+      const sessionId = 'sess-idempotent';
+
+      expect(manager.acquire(sessionId, 'job-1')).toBe(true);
+      expect(manager.acquire(sessionId, 'job-1')).toBe(true);
+
+      const lockInfo = JSON.parse(readFileSync(join(TEST_SESSION_BASE_DIR, sessionId, '.lock'), 'utf-8'));
+      expect(lockInfo.job_id).toBe('job-1');
+      expect(lockInfo.pid).toBe(process.pid);
+    });
+
     it('creates session dir if it does not exist', () => {
       const sessionId = 'sess-new';
       const sessionDir = join(TEST_SESSION_BASE_DIR, sessionId);
