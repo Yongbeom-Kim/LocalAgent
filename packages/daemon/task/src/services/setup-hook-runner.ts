@@ -72,9 +72,9 @@ export class SetupHookRunner {
       const rawStdout = typeof err.stdout === 'string' ? err.stdout : '';
       const rawStderr = typeof err.stderr === 'string' ? err.stderr : '';
 
-      // execFile() timeout errors typically set killed=true and signal='SIGTERM'.
-      const timedOut = err.killed === true || err.signal != null;
       const exitCode = typeof err.code === 'number' ? err.code : null;
+      // execFile() timeout errors typically set killed=true and leave exit code unset.
+      const timedOut = err.killed === true && exitCode === null;
       const isNonZeroExit = exitCode !== null && exitCode !== 0;
 
       // Only wrap the cases we want downstream to treat as a setup hook failure.
