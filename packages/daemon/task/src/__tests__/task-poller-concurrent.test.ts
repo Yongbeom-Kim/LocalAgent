@@ -3,7 +3,7 @@ import { rmSync } from 'node:fs';
 import type { Job, TaskResultSubmission } from '@local-agent/shared';
 
 const { TEST_SESSION_BASE_DIR } = vi.hoisted(() => ({
-  TEST_SESSION_BASE_DIR: '/tmp/local-agent-task-poller-session-lock-test/session',
+  TEST_SESSION_BASE_DIR: `/tmp/local-agent-task-poller-session-lock-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}/session`,
 }));
 
 vi.mock('@local-agent/shared', async () => {
@@ -89,11 +89,11 @@ describe('TaskPoller Concurrent', () => {
 
   beforeEach(() => {
     rmSync(TEST_SESSION_BASE_DIR, { recursive: true, force: true });
-    mockFetch.mockClear();
-    mockClaudeExecute.mockClear();
-    mockCleanupExecute.mockClear();
-    mockSetup.mockClear().mockResolvedValue(mockEnv);
-    mockTeardown.mockClear().mockResolvedValue(undefined);
+    mockFetch.mockReset();
+    mockClaudeExecute.mockReset();
+    mockCleanupExecute.mockReset();
+    mockSetup.mockReset().mockResolvedValue(mockEnv);
+    mockTeardown.mockReset().mockResolvedValue(undefined);
 
     mockSessionLock = {
       acquire: vi.fn().mockReturnValue(true),

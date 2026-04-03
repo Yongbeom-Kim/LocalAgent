@@ -57,17 +57,17 @@ describe('SetupHookRunner', () => {
 
   it('enforces -e', async () => {
     const script = 'false; true';
-    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow(/Setup hook failed/);
+    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow('Setup hook exited non-zero');
   });
 
   it('enforces -u', async () => {
     const script = 'echo "$THIS_VAR_IS_NOT_SET"';
-    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow(/Setup hook failed/);
+    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow('Setup hook exited non-zero');
   });
 
   it('enforces pipefail', async () => {
     const script = 'false | true';
-    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow(/Setup hook failed/);
+    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow('Setup hook exited non-zero');
   });
 
   it('throws a typed error for non-zero exit and captures stderr', async () => {
