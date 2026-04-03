@@ -308,6 +308,38 @@ describe('TaskPoller', () => {
       expect(resultPostBody.executor_model).toBe('opus');
     });
 
+    it('reports an active session while a job promise is still in flight', async () => {
+      let resolveJob!: (value: TaskResultSubmission) => void;
+      const jobPromise = new Promise<TaskResultSubmission>((resolve) => {
+        resolveJob = resolve;
+      });
+      mockClaudeExecute.mockReturnValueOnce(jobPromise);
+      const job = createJob({ session_id: 'session-active' });
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      expect(poller.isSessionActive('session-active')).toBe(true);
+
+      resolveJob({ ...mockResultSubmission, session_id: 'session-active' });
+      await poller.drain();
+
+      expect(poller.isSessionActive('session-active')).toBe(false);
+    });
+
     it('truncates stderr to MAX_SNIPPET_CHARS before POST /results', async () => {
       const longStderr = 'e'.repeat(MAX_SNIPPET_CHARS + 500);
       mockClaudeExecute.mockResolvedValueOnce({

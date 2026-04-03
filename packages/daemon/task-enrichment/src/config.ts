@@ -3,6 +3,7 @@ import {
   DEFAULT_API_URL,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_LOG_LEVEL,
+  DEFAULT_TASK_DAEMON_STATUS_URL,
   loadEnvFromRoot,
 } from '@local-agent/shared';
 
@@ -12,6 +13,7 @@ export interface EnrichmentDaemonConfig {
   apiUrl: string;
   pollIntervalMs: number;
   logLevel: string;
+  taskDaemonStatusUrl: string;
   enrichmentConfigDir: string;
   larkAppId?: string;
   larkAppSecret?: string;
@@ -24,6 +26,7 @@ export function loadEnrichmentDaemonConfig(env: Record<string, string | undefine
     apiUrl: env.API_URL ?? DEFAULT_API_URL,
     pollIntervalMs: env.POLL_INTERVAL_MS ? parseInt(env.POLL_INTERVAL_MS, 10) : DEFAULT_POLL_INTERVAL_MS,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
+    taskDaemonStatusUrl: env.TASK_DAEMON_STATUS_URL ?? DEFAULT_TASK_DAEMON_STATUS_URL,
     enrichmentConfigDir: env.ENRICHMENT_CONFIG_DIR ?? DEFAULT_ENRICHMENT_CONFIG_DIR,
     larkAppId: env.LARK_APP_ID,
     larkAppSecret: env.LARK_APP_SECRET,

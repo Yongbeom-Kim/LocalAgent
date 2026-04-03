@@ -25,6 +25,10 @@ export class TaskPoller {
     private readonly maxConcurrency: number = DEFAULT_MAX_CONCURRENT_SESSIONS,
   ) {}
 
+  isSessionActive(sessionId: string): boolean {
+    return this.activeSessions.has(sessionId);
+  }
+
   async pollOnce(): Promise<void> {
     try {
       if (this.inFlightJobs.size >= this.maxConcurrency) {
