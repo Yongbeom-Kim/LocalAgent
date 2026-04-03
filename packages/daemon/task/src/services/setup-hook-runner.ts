@@ -37,8 +37,8 @@ export class SetupHookRunner {
   ): Promise<void> {
     logger.info({ job_id: jobContext.job_id, workDir, timeoutMs }, 'Running setup hook');
 
-    const env: Record<string, string> = {
-      ...process.env as Record<string, string>,
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
       LOCALAGENT_JOB_ID: jobContext.job_id,
       LOCALAGENT_TASK_ID: jobContext.task_id,
       LOCALAGENT_TASK_TYPE: jobContext.task_type,
@@ -47,7 +47,7 @@ export class SetupHookRunner {
     };
 
     try {
-      const { stdout, stderr } = await execFileAsync('bash', ['-c', script], {
+      const { stdout, stderr } = await execFileAsync('bash', ['-e', '-u', '-o', 'pipefail', '-c', script], {
         cwd: workDir,
         env,
         timeout: timeoutMs,
