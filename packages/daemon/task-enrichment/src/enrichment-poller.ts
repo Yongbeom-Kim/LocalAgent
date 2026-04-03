@@ -29,6 +29,8 @@ const STATUS_LOOKUP_FAILURE_REASON = 'Failed to check live executor status. Plea
 const THREAD_LOOKUP_ERROR_REASON = 'Failed to recover thread state. Please retry in the thread.';
 const THREAD_REPLY_INCOMPLETE_METADATA_REASON =
   'Cannot continue this thread because the inherited thread metadata is incomplete.';
+const STATUS_INCOMPLETE_METADATA_REASON =
+  'Cannot check /status because the inherited thread metadata is incomplete.';
 const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end (in a thread)`;
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
@@ -237,15 +239,16 @@ export class EnrichmentPoller {
       }
 
       if (isStatusTask) {
-        if (
-          threadResult?.kind !== 'thread' ||
-          !threadResult.inheritedTaskType ||
-          !threadResult.inheritedSessionId ||
-          !threadResult.inheritedExecutor ||
-          !threadResult.inheritedExecutorModel
-        ) {
-          logger.warn({ task_id: task.task_id, threadResult }, 'Rejected status task without inherited thread metadata');
+        if (threadResult?.kind !== 'thread' || !threadResult.inheritedSessionId) {
+          logger.warn({ task_id: task.task_id, threadResult }, 'Rejected status task without inherited session_id');
           await this.publishRejection(task, STATUS_MISSING_SESSION_REASON);
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        if (!threadResult.inheritedTaskType || !threadResult.inheritedExecutor || !threadResult.inheritedExecutorModel) {
+          logger.warn({ task_id: task.task_id, threadResult }, 'Rejected status task with incomplete inherited metadata');
+          await this.publishRejection(task, STATUS_INCOMPLETE_METADATA_REASON);
           await this.ackTask(task.task_id);
           return;
         }
@@ -449,28 +452,32 @@ export class EnrichmentPoller {
     threadResult: ThreadContextResult,
     running: boolean,
   ): Promise<void> {
-    const body = {
-      job_id: task.task_id,
-      task_id: task.task_id,
-      task_type: threadResult.inheritedTaskType!,
-      session_id: threadResult.inheritedSessionId!,
-      executor: threadResult.inheritedExecutor!,
-      executor_model: threadResult.inheritedExecutorModel!,
-      status: 'success' as const,
-      exit_code: 0,
-      stdout: running ? 'Executor is running' : 'Executor is not running',
-      stderr: '',
-      ...(task.task_source ? { task_source: task.task_source } : {}),
-    };
+    try {
+      const body = {
+        job_id: task.task_id,
+        task_id: task.task_id,
+        task_type: threadResult.inheritedTaskType!,
+        session_id: threadResult.inheritedSessionId!,
+        executor: threadResult.inheritedExecutor!,
+        executor_model: threadResult.inheritedExecutorModel!,
+        status: 'success' as const,
+        exit_code: 0,
+        stdout: running ? 'Executor is running' : 'Executor is not running',
+        stderr: '',
+        ...(task.task_source ? { task_source: task.task_source } : {}),
+      };
 
-    const res = await fetch(`${this.apiUrl}/results`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
+      const res = await fetch(`${this.apiUrl}/results`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
 
-    if (res.status !== 201) {
-      logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for status result');
+      if (res.status !== 201) {
+        logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for status result');
+      }
+    } catch (err) {
+      logger.error({ task_id: task.task_id, err }, 'Failed to publish status result');
     }
   }
 

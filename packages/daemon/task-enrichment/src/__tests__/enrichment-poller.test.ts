@@ -1005,6 +1005,44 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
   });
 
+  it('rejects status task when inherited thread metadata is incomplete', async () => {
+    const task = createTask({
+      task_type: 'status',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
+      threadContext: 'assistant: prior',
+      inheritedTaskType: null,
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: 'claude',
+      inheritedExecutorModel: 'sonnet',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'status',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Cannot check /status because the inherited thread metadata is incomplete.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
   it('publishes running status with inherited headers', async () => {
     const task = createTask({
       task_type: 'status',
