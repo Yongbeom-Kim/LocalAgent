@@ -7,7 +7,7 @@
 
 Add a `/kill` command that can be used inside an existing Lark thread to stop the currently running LocalAgent-managed executor process for that thread's session. The command must not target arbitrary PIDs or other sessions. It preserves the session and workspace so the user can continue the thread afterward.
 
-The existing code has no persistent handle to the active child process for a session. Each executor spawns its own child and waits for completion inline, so a later control command cannot locate or terminate the live process. The design introduces a shared task-daemon cancellation registry plus a common executor-side cancellation interface. Each executor adapter still owns its own spawn details and kill semantics, but all adapters register their live child in a uniform way.
+The existing code has no persistent executor-owned state for an active session. Each executor is instantiated per job, spawns its child, and waits for completion inline, so a later control command cannot ask that same adapter instance to terminate the live process. The updated design moves kill behind the executor port itself: executors become long-lived instances owned by the orchestrator, each adapter keeps its own internal active-run state, and `/kill` calls an executor-level kill method instead of reaching into raw child-process handles.
 
 ## 2. Goals
 
@@ -51,7 +51,7 @@ Flow:
 2. Enrichment poller validates that the command is used inside a thread and inherits the thread `session_id`.
 3. Enrichment produces a `kill` job routed to the built-in executor path, not to an agent CLI.
 4. Task poller allows the kill job to run without waiting on the same-session lock.
-5. Task orchestrator resolves the kill request against the active-process registry for that session.
+5. Task orchestrator resolves which long-lived executor currently owns the active session and calls that executor's kill method.
 6. Lark result daemon replies with a normal text result containing status, signal path, and captured output.
 
 This mirrors `/end`: it stays inside the normal pipeline and keeps auditability and result reporting uniform.
@@ -70,26 +70,26 @@ This keeps command-context validation aligned with the current architecture.
 
 ## 5. Architecture
 
-### 5.1 Shared active-process registry
+### 5.1 Long-lived executor instances and session ownership map
 
-Introduce a task-daemon service responsible for exactly one active kill target per session:
+Introduce a task-daemon boundary where executor adapters are long-lived orchestrator-owned instances rather than one-shot objects created per job.
 
-- Keyed by `session_id`
-- Stores only the currently live killable executor attempt
-- Replaced atomically when executor fallback moves from one child to another
-- Cleared when the child exits or registration scope ends
+The orchestrator keeps:
 
-Stored metadata should include:
+- one persistent instance per executor adapter type
+- a small session-ownership map keyed by `session_id`
+- for each active session, the owning executor type and enough metadata to route a later `/kill`
+
+Each killable executor keeps its own internal active-run state for sessions it currently owns. That internal state includes:
 
 - `session_id`
 - `job_id`
 - `task_id`
-- `executor`
 - `executor_model`
-- a kill handle owned by the executor adapter
-- accessors for captured `stdout` and `stderr` buffers up to the current point
+- adapter-private child-process handle(s)
+- captured `stdout` and `stderr` buffers up to the current point
 
-This registry exists only in the task-daemon process. `/kill` is defined as killing the currently active managed process in that daemon for the inherited session.
+The raw child handle never leaves the adapter. `/kill` is defined as asking the owning long-lived executor instance to terminate its active run for the inherited session.
 
 ### 5.2 Session lock interaction
 
@@ -104,23 +104,23 @@ Design decision: `kill` jobs bypass same-session lock acquisition in `TaskPoller
 
 This is the narrowest change that preserves the current pipeline while making `/kill` effective.
 
-Current-scope assumption: v1 targets the current task-daemon process that owns the active executor child. Multi-daemon active-execution routing is out of scope for this feature.
+Current-scope assumption: v1 targets the current task-daemon process that owns the active executor instance and child process. Multi-daemon routing is out of scope for this feature.
 
-### 5.3 Shared executor cancellation contract
+### 5.3 Executor-port cancellation contract
 
-Extend the task-daemon executor contract so killable executors participate in a common lifecycle. The contract should stay narrow:
+Extend the task-daemon executor contract so killable executors expose cancellation directly. The contract should stay narrow:
 
 - executors still expose `execute(job, env)`
-- killable executors receive shared runtime services needed to register an active child
-- each adapter implements its own `kill` behavior for its child handle, behind a common shape
+- executors additionally expose a kill method keyed by `session_id`
+- each adapter implements its own internal tracking and kill behavior for its child handle(s)
 
 Recommended shape:
 
-- add a task-daemon service layer such as `active-execution-registry.ts`
-- add an executor helper or interface for registering a live child and providing a `terminate(graceMs)` method
-- keep built-in executors outside this contract; they simply never register a kill target
+- persist executor instances inside `TaskOrchestrator` instead of constructing a new adapter object for every job
+- add a port method such as `kill(sessionId, graceMs)` that returns a structured kill result
+- keep built-in executors outside killable behavior; they simply report `No active process`
 
-This preserves your requirement that each executor adapter implement its own kill, while still giving the orchestrator one uniform way to invoke cancellation.
+This preserves the requirement that each executor adapter implement its own kill, while keeping raw child-process state private to the adapter.
 
 ### 5.4 Why not `.kill()` directly?
 
@@ -157,26 +157,27 @@ Not killable in v1:
 
 If `/kill` is issued while only a non-killable path is active, the result is success with `No active process`.
 
-### 6.2 Registration lifecycle
+### 6.2 Executor-owned active-run lifecycle
 
 For each killable executor attempt:
 
 1. Spawn child.
 2. Start capturing stdout/stderr buffers.
-3. Register the live child in the shared registry under `session_id`.
-4. On normal exit, spawn error, or cancellation completion, unregister if the registry still points to that same child.
+3. Store the active run in the executor's internal per-session state.
+4. Notify the orchestrator's session-ownership map that this session is currently owned by that executor type.
+5. On normal exit, spawn error, or cancellation completion, clear the executor-owned active state and remove ownership from the orchestrator if the active attempt still matches the same session/job identity.
 
-The active record must be identity-safe and explicit about buffer ownership:
+The active state must be identity-safe and explicit about buffer ownership:
 
-- `register()` returns an opaque token or identity handle
-- `unregister(sessionId, token)` clears only if the active entry still matches that token
-- the record exposes read access to the current stdout/stderr buffers without waiting for the executor promise to resolve
+- the executor must distinguish the currently active attempt from stale fallback attempts
+- clearing state for a finished `continue` child must not wipe a newer `fresh` fallback child for the same session
+- the executor-owned state exposes kill-time access to the current stdout/stderr buffers without waiting for the executor promise to resolve
 - truncation still happens at final `TaskResultSubmission` time, but the live buffers used by `/kill` should be bounded in-memory using the same byte-limit discipline as normal executor output capture
 
 Executor fallback behavior is important:
 
-- if `continue` mode is active, the registry points at the `continue` child only while it is live
-- if `continue` fails and the adapter falls back to fresh execution, the old registration is cleared and the fresh child becomes the new active target
+- if `continue` mode is active, the executor's internal active state points at the `continue` child only while it is live
+- if `continue` fails and the adapter falls back to fresh execution, the old active state is replaced and the orchestrator continues routing the session to that same executor instance
 - there is never more than one active kill target per session
 
 ### 6.3 Process tree signaling
@@ -196,10 +197,10 @@ The implementation plan should treat process-tree termination as part of executo
 When the orchestrator handles a `kill` job:
 
 1. Skip environment setup, same as other built-in control paths.
-2. Query the active-process registry for `job.session_id`.
+2. Query the orchestrator's session-ownership map for `job.session_id`.
 3. If missing, return a successful result with `stdout: No active process` and empty `stderr`.
-4. If present, invoke the registered kill handle.
-5. Wait for the kill result summary from the adapter/runtime helper.
+4. If present, call the owning executor instance's `kill(sessionId, graceMs)` method.
+5. Wait for the structured kill result from that executor.
 6. Return a successful `TaskResultSubmission` with:
    - `task_type: 'kill'`
    - `session_id`
@@ -292,7 +293,6 @@ Behavior:
 
 Create:
 
-- `packages/daemon/task/src/services/active-execution-registry.ts`
 - optional helper such as `packages/daemon/task/src/services/killable-process.ts`
 
 Modify:
@@ -308,9 +308,9 @@ Modify:
 
 Behavior:
 
-- orchestrator owns one shared registry instance
+- orchestrator owns long-lived executor instances and a session-to-executor ownership map
 - task poller dispatches `kill` jobs without acquiring the same-session lock
-- killable adapters register their active child with live output accessors
+- killable adapters keep internal active child state and expose a port-level kill method
 - kill jobs are resolved by a built-in orchestrator path, not by spawning another CLI
 - cleanup and setup-hook remain outside kill handling
 
@@ -341,28 +341,28 @@ Rejected.
 - PID-based cross-process signaling is brittle and can hit stale or reused PIDs
 - does not preserve access to captured stdout/stderr buffers up to kill point
 
-### Approach 3: Orchestrator-level shared registry plus per-adapter kill implementation
+### Approach 3: Port-level executor kill with long-lived adapter instances
 
 Chosen.
 
 - keeps kill scope aligned with the running task-daemon process
 - preserves captured output and executor metadata
-- keeps adapter-specific spawn details inside the adapter
-- provides one uniform cancellation contract across executors
+- keeps adapter-specific spawn details and raw child handles inside the adapter
+- provides one uniform cancellation contract across executors without exposing child processes
 
 ## 9. Risks and mitigations
 
 - Race: `/kill` arrives just as the child exits.
-  Mitigation: registry lookup and unregister must be identity-checked; missing or already-finished target returns `No active process` or a successful grace-window exit.
+  Mitigation: executor-owned active state and orchestrator ownership removal must be identity-checked; missing or already-finished target returns `No active process` or a successful grace-window exit.
 
 - Race: `/kill` and fallback child replacement happen concurrently.
-  Mitigation: registration replacement and unregister must be token-based so a stale `continue` child cannot clear the newer `fresh` child entry.
+  Mitigation: executor-owned active attempt replacement and cleanup must be identity-based so a stale `continue` child cannot clear the newer `fresh` child entry.
 
 - Executor fallback swaps child handles while `/kill` is issued.
   Mitigation: registry replacement is atomic per session and always points to exactly one active child.
 
 - Deployment risk: another daemon process consumes the `kill` job.
-  Mitigation: v1 explicitly assumes the active child and `kill` request are handled within the same task-daemon process. If the deployment later becomes multi-daemon, `/kill` needs daemon affinity or an out-of-band control channel.
+  Mitigation: v1 explicitly assumes the active executor instance and `kill` request are handled within the same task-daemon process. If the deployment later becomes multi-daemon, `/kill` needs daemon affinity or an out-of-band control channel.
 
 - Signal delivery succeeds but close event is delayed.
   Mitigation: central helper waits on process exit with explicit timeout and reports escalation path.
@@ -376,7 +376,7 @@ Chosen.
 - listener only parses `/kill`; enrichment remains the thread-only enforcement point.
 - `/kill` inherits the current thread session and never targets another session.
 - if a long-running executor is active for a session, `/kill` stops it promptly without waiting for same-session lock release.
-- Killable executors register one active child per session.
+- Killable executors are long-lived instances that keep one active run per session.
 - `/kill` sends `SIGTERM`, waits 15 seconds, then sends `SIGKILL` if needed.
 - If the child exits during the grace period, the result is successful and reported as such.
 - If nothing killable is active, the result is successful with `No active process`.
@@ -384,3 +384,4 @@ Chosen.
 - Built-in cleanup and setup hooks are not kill targets.
 - Result replies include clear signal-path reporting and captured output up to the kill point.
 - Process-tree termination is handled explicitly by each killable executor adapter rather than assuming direct-child `.kill()` is sufficient.
+- Raw child-process handles are never exposed outside executor adapters.

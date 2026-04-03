@@ -2,7 +2,7 @@
 
 **Goal:** Add a thread-only `/kill` command that stops the currently active LocalAgent-managed executor process for the current session using `SIGTERM` then `SIGKILL` after 15 seconds, while preserving the session for later continuation.
 
-**Architecture:** Implement `/kill` as a new control task type that flows through the existing listener -> enrichment -> job -> result pipeline, parallel to `/end`. Add a shared task-daemon active-execution registry keyed by `session_id`, let killable executor adapters register exactly one live child per session, and have a built-in orchestrator kill path resolve the active handle, terminate it, and return a structured success result with captured output up to the kill point.
+**Architecture:** Implement `/kill` as a new control task type that flows through the existing listener -> enrichment -> job -> result pipeline, parallel to `/end`. Make executors long-lived orchestrator-owned instances, extend the executor port with a kill method keyed by `session_id`, keep active child state internal to each adapter, and have the orchestrator maintain only a session-to-executor ownership map so `/kill` can route to the correct executor without exposing raw child handles.
 
 **Tech Stack:** TypeScript, Node.js child_process, Express, Vitest, Markdown
 
@@ -25,14 +25,12 @@
 | `packages/daemon/task-enrichment/src/__tests__/enrichment-service.test.ts` | Modify | Verify `kill` enrichment behavior |
 | `packages/daemon/task-enrichment/src/enrichment-poller.ts` | Modify | Make `/kill` thread-only and inherit session_id without thread history |
 | `packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts` | Modify | Verify `/kill` thread validation and job creation |
-| `packages/daemon/task/src/services/active-execution-registry.ts` | Create | Track the current live killable execution per session |
 | `packages/daemon/task/src/services/killable-process.ts` | Create | Shared helper/types for signal escalation and kill summary |
-| `packages/daemon/task/src/services/__tests__/active-execution-registry.test.ts` | Create | Verify registration replacement, lookup, and identity-safe unregister |
 | `packages/daemon/task/src/services/__tests__/killable-process.test.ts` | Create | Verify `SIGTERM`/`SIGKILL` escalation and grace-window exit handling |
 | `packages/daemon/task/src/task-poller.ts` | Modify | Let `kill` jobs bypass same-session locking so they can interrupt active work |
 | `packages/daemon/task/src/__tests__/task-poller-concurrent.test.ts` | Modify | Prove `kill` does not NACK behind the active session lock |
-| `packages/daemon/task/src/ports/task-executor.ts` | Modify | Thread shared runtime services into executors |
-| `packages/daemon/task/src/core/task-orchestrator.ts` | Modify | Handle `kill` jobs and pass registry/runtime services to executors |
+| `packages/daemon/task/src/ports/task-executor.ts` | Modify | Add executor-level kill to the port |
+| `packages/daemon/task/src/core/task-orchestrator.ts` | Modify | Keep long-lived executor instances, route session ownership, and handle `/kill` |
 | `packages/daemon/task/src/core/__tests__/task-orchestrator.test.ts` | Modify | Verify built-in `/kill` behavior and registry integration |
 | `packages/daemon/task/src/adapters/claude-executor.ts` | Modify | Register active Claude child and expose adapter-specific kill handling |
 | `packages/daemon/task/src/adapters/claude-w-executor.ts` | Modify | Register active Claude-W child and expose adapter-specific kill handling |
@@ -254,33 +252,13 @@ Modify `packages/daemon/task-enrichment/src/enrichment-poller.ts` to:
 Run: `pnpm vitest run packages/daemon/task-enrichment/src/__tests__/enrichment-service.test.ts packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts`
 Expected: PASS.
 
-### Task 4: Build the Shared Active-Execution Registry and Kill Helper
+### Task 4: Build the Shared Kill Helper
 
 **Files:**
-- Create: `packages/daemon/task/src/services/active-execution-registry.ts`
 - Create: `packages/daemon/task/src/services/killable-process.ts`
-- Create: `packages/daemon/task/src/services/__tests__/active-execution-registry.test.ts`
 - Create: `packages/daemon/task/src/services/__tests__/killable-process.test.ts`
 
-- [ ] **Step 1: Write failing registry tests first**
-
-Create `packages/daemon/task/src/services/__tests__/active-execution-registry.test.ts` with tests for:
-
-- registering a target stores it by `session_id`
-- registering a second target for the same session replaces the first
-- unregister only clears the entry when the caller identity matches the active registration
-- lookup returns `undefined` when empty
-
-Suggested API shape:
-
-```ts
-const token = registry.register(target);
-expect(registry.get('session-1')).toBeDefined();
-registry.unregister('session-1', token);
-expect(registry.get('session-1')).toBeUndefined();
-```
-
-- [ ] **Step 2: Write failing kill-helper tests for signal escalation**
+- [ ] **Step 1: Write failing kill-helper tests for signal escalation**
 
 Create `packages/daemon/task/src/services/__tests__/killable-process.test.ts` covering:
 
@@ -291,31 +269,12 @@ Create `packages/daemon/task/src/services/__tests__/killable-process.test.ts` co
 
 Use fake timers for the grace window and a mock EventEmitter child with `kill()` spies.
 
-- [ ] **Step 3: Run the new service tests and confirm failure**
+- [ ] **Step 2: Run the new service tests and confirm failure**
 
-Run: `pnpm vitest run packages/daemon/task/src/services/__tests__/active-execution-registry.test.ts packages/daemon/task/src/services/__tests__/killable-process.test.ts`
-Expected: FAIL because the services do not exist yet.
+Run: `pnpm vitest run packages/daemon/task/src/services/__tests__/killable-process.test.ts`
+Expected: FAIL because the helper does not exist yet.
 
-- [ ] **Step 4: Implement the active-execution registry**
-
-Create `packages/daemon/task/src/services/active-execution-registry.ts` with a small in-memory map keyed by `session_id`.
-
-The target payload should include at least:
-
-```ts
-interface ActiveExecutionTarget {
-  sessionId: string;
-  jobId: string;
-  taskId: string;
-  executor: TaskExecutorType;
-  executorModel: string;
-  terminate: (graceMs: number) => Promise<KillResult>;
-}
-```
-
-Have `register()` return an opaque token so unregister is identity-safe and does not accidentally clear a newer fallback child.
-
-- [ ] **Step 5: Implement the shared kill helper**
+- [ ] **Step 3: Implement the shared kill helper**
 
 Create `packages/daemon/task/src/services/killable-process.ts`.
 
@@ -334,7 +293,7 @@ This helper should:
 
 Keep the signal logic explicit. Do not rely on bare `.kill()` defaults.
 
-- [ ] **Step 6: Make the process-tree signaling mechanism explicit in tests**
+- [ ] **Step 4: Make the process-tree signaling mechanism explicit in tests**
 
 Decide one concrete mechanism and encode it in the tests before wiring executors. Recommended POSIX path:
 
@@ -343,9 +302,9 @@ Decide one concrete mechanism and encode it in the tests before wiring executors
 
 Add at least one assertion in `packages/daemon/task/src/services/__tests__/killable-process.test.ts` that the helper uses the chosen signaling primitive rather than an implicit direct-child default.
 
-- [ ] **Step 7: Re-run the new service tests and verify they pass**
+- [ ] **Step 5: Re-run the new service tests and verify they pass**
 
-Run: `pnpm vitest run packages/daemon/task/src/services/__tests__/active-execution-registry.test.ts packages/daemon/task/src/services/__tests__/killable-process.test.ts`
+Run: `pnpm vitest run packages/daemon/task/src/services/__tests__/killable-process.test.ts`
 Expected: PASS.
 
 ### Task 5: Let `/kill` Bypass Same-Session Locking in the Poller
@@ -383,7 +342,7 @@ Update `packages/daemon/task/src/task-poller.ts` so:
 Run: `pnpm vitest run packages/daemon/task/src/__tests__/task-poller-concurrent.test.ts`
 Expected: PASS, including the new regression proving `/kill` is not blocked by the active same-session lock.
 
-### Task 6: Integrate the Registry into the Task Orchestrator and Add Built-in Kill Execution
+### Task 6: Extend the Executor Port and Orchestrator for Long-Lived Killable Executors
 
 **Files:**
 - Modify: `packages/daemon/task/src/ports/task-executor.ts`
@@ -394,46 +353,51 @@ Expected: PASS, including the new regression proving `/kill` is not blocked by t
 
 Extend `packages/daemon/task/src/core/__tests__/task-orchestrator.test.ts` with tests for:
 
-- returning success with `No active process` when a `kill` job finds no registered target
-- calling the registered target's `terminate(15000)` for a `kill` job and returning its formatted result
+- returning success with `No active process` when a `kill` job finds no owning executor for the session
+- calling the owning executor instance's `kill(sessionId, 15000)` for a `kill` job and returning its formatted result
 - normalizing `/kill` result `exit_code` to `0` for both no-op and terminated-active-process outcomes
 - skipping `jobEnv.setup()` for `kill`, like cleanup/gc
+- reusing long-lived executor instances rather than constructing fresh adapters for each kill lookup
 
-Use a real `ActiveExecutionRegistry` instance or a focused mock; avoid over-mocking the kill path.
+Use the real long-lived executor instances or a focused ownership-map mock; avoid over-mocking the kill path.
 
 - [ ] **Step 2: Run the orchestrator test file and confirm failure**
 
 Run: `pnpm vitest run packages/daemon/task/src/core/__tests__/task-orchestrator.test.ts`
-Expected: FAIL because the orchestrator does not yet recognize `kill` or pass shared runtime services.
+Expected: FAIL because the orchestrator does not yet recognize `kill`, keep long-lived executor instances, or route session ownership to an executor-level kill method.
 
-- [ ] **Step 3: Extend the task-executor port with runtime services**
+- [ ] **Step 3: Extend the task-executor port with a kill method**
 
-Modify `packages/daemon/task/src/ports/task-executor.ts` so executors can receive shared runtime services, for example:
+Modify `packages/daemon/task/src/ports/task-executor.ts` so executors expose a kill method, for example:
 
 ```ts
-export interface ExecutorRuntime {
-  activeExecutions: ActiveExecutionRegistry;
+export interface ExecutorKillResult {
+  status: 'success' | 'failure';
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
 }
 
 export interface TaskExecutor {
-  execute(job: JobAttempt, env: ExecutionEnvironment, runtime: ExecutorRuntime): Promise<TaskResultSubmission>;
+  execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission>;
+  kill(sessionId: string, graceMs: number): Promise<ExecutorKillResult>;
 }
 ```
 
-Keep the interface minimal. Built-in executors may ignore the runtime parameter.
+Keep the interface minimal. Built-in executors can return `No active process`.
 
 - [ ] **Step 4: Implement built-in kill handling in the orchestrator**
 
 Modify `packages/daemon/task/src/core/task-orchestrator.ts` to:
 
-- own a single `ActiveExecutionRegistry` instance
 - branch on `job.task_type === 'kill'` before normal executor iteration
 - skip env setup for `kill`
 - resolve the active target by `session_id`
 - return success with `No active process` if absent
-- otherwise call `target.terminate(15_000)` and translate that into a `TaskResultSubmission`
+- otherwise call the owning executor instance's `kill(job.session_id, 15_000)` and translate that into a `TaskResultSubmission`
 - normalize successful `/kill` results to `exit_code: 0`
-- pass the shared runtime into normal executor execution paths
+- maintain a session-to-executor ownership map for active sessions
+- construct executor adapters once and reuse those instances across jobs
 
 Format the kill `stdout` as a short structured block containing outcome, executor/model, signal path, wait duration, and captured stdout. Put captured stderr in the result `stderr` field.
 
@@ -445,9 +409,9 @@ Expected: PASS.
 - [ ] **Step 6: Run a typecheck gate after the executor-port signature change**
 
 Run: `pnpm -C packages/daemon/task tsc --noEmit`
-Expected: PASS, confirming all executor callsites and mocks were updated for the new runtime parameter.
+Expected: PASS, confirming all executor callsites and mocks were updated for the new port-level kill contract.
 
-### Task 7: Register Live Children in Each Killable Executor Adapter
+### Task 7: Implement Executor-Owned Active State and Adapter-Level Kill
 
 **Files:**
 - Modify: `packages/daemon/task/src/adapters/claude-executor.ts`
@@ -459,19 +423,20 @@ Expected: PASS, confirming all executor callsites and mocks were updated for the
 - Modify: `packages/daemon/task/src/adapters/__tests__/cursor-executor.test.ts`
 - Modify: `packages/daemon/task/src/adapters/__tests__/ttcodex-executor.test.ts`
 
-- [ ] **Step 1: Add failing adapter tests for active-child registration**
+- [ ] **Step 1: Add failing adapter tests for executor-owned active state**
 
 For each executor test file, add focused tests asserting that:
 
-- `execute()` registers the live child with the runtime registry after spawn
-- the registration is removed when the child closes or emits spawn error
-- on fallback (`continue` -> fresh), the registry points to the fresh child only after the continue child ends
+- `execute()` stores an active run for the session inside the executor instance after spawn
+- `kill(sessionId, graceMs)` returns `No active process` when the executor has no active session state
+- active session state is cleared when the child closes or emits spawn error
+- on fallback (`continue` -> fresh), the executor instance points to the fresh child only after the continue child ends
 
-Use a mock `ExecutorRuntime` with a fake registry or a small spy wrapper around the real registry.
+Use the same executor instance across execute/kill assertions so the test matches the intended long-lived-instance design.
 
 - [ ] **Step 2: Add failing adapter tests for kill metadata**
 
-In at least one representative adapter test file, verify that the registered terminate handle returns:
+In at least one representative adapter test file, verify that `kill(sessionId, graceMs)` returns:
 
 - signal path `SIGTERM -> exited` when the child closes promptly
 - captured stdout/stderr up to kill point
@@ -481,22 +446,23 @@ You do not need to re-test the full escalation state machine in every adapter; o
 - [ ] **Step 3: Run the executor adapter tests and confirm failure**
 
 Run: `pnpm vitest run packages/daemon/task/src/adapters/__tests__/claude-executor.test.ts packages/daemon/task/src/adapters/__tests__/claude-w-executor.test.ts packages/daemon/task/src/adapters/__tests__/cursor-executor.test.ts packages/daemon/task/src/adapters/__tests__/ttcodex-executor.test.ts`
-Expected: FAIL because executors do not yet accept runtime services or register children.
+Expected: FAIL because executors do not yet maintain executor-owned active session state or expose the new port-level kill method.
 
-- [ ] **Step 4: Wire active-child registration into each adapter**
+- [ ] **Step 4: Wire executor-owned active state into each adapter**
 
 For each adapter:
 
-- accept the new runtime parameter
 - preserve the existing spawn/continue/fallback behavior
 - accumulate stdout/stderr buffers as today
-- immediately after spawn, register an active target with:
+- immediately after spawn, store active session state inside the executor instance with:
   - session ID
   - job/task/executor metadata
-  - a terminate function built from the shared kill helper and that adapter's child handle
-- on `close` or `error`, unregister only if the registration still refers to that child
+  - the adapter-private child handle
+  - captured output accessors or buffers
+- implement `kill(sessionId, graceMs)` using the shared kill helper against the adapter-private child handle
+- on `close` or `error`, clear active state only if it still refers to that same attempt
 
-Keep kill implementation adapter-local by creating the registration payload in each adapter, but reuse the shared kill helper for the actual `SIGTERM`/`SIGKILL` wait logic.
+Keep kill implementation adapter-local and reuse the shared kill helper for the actual `SIGTERM`/`SIGKILL` wait logic.
 
 - [ ] **Step 5: Ensure built-in executors remain non-killable**
 
@@ -523,7 +489,6 @@ pnpm vitest run \
   packages/api/src/__tests__/routes/tasks.test.ts \
   packages/daemon/task-enrichment/src/__tests__/enrichment-service.test.ts \
   packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts \
-  packages/daemon/task/src/services/__tests__/active-execution-registry.test.ts \
   packages/daemon/task/src/services/__tests__/killable-process.test.ts \
   packages/daemon/task/src/core/__tests__/task-orchestrator.test.ts \
   packages/daemon/task/src/adapters/__tests__/claude-executor.test.ts \
