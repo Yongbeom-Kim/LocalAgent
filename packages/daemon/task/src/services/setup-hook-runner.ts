@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { createLogger } from '@local-agent/shared';
+import { createLogger, MAX_RESULT_OUTPUT_BYTES, truncate } from '@local-agent/shared';
 
 const execFileAsync = promisify(execFile);
 const logger = createLogger('task-daemon:setup-hook-runner');
@@ -11,6 +11,21 @@ interface JobContext {
   task_type: string;
   session_id: string;
   payload: string;
+}
+
+export class SetupHookExecutionError extends Error {
+  exit_code = 1;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+
+  constructor(params: { message: string; stdout: string; stderr: string; timedOut: boolean }) {
+    super(params.message);
+    this.name = 'SetupHookExecutionError';
+    this.stdout = params.stdout;
+    this.stderr = params.stderr;
+    this.timedOut = params.timedOut;
+  }
 }
 
 export class SetupHookRunner {
@@ -46,14 +61,58 @@ export class SetupHookRunner {
         logger.warn({ job_id: jobContext.job_id, stderr }, 'Setup hook stderr');
       }
     } catch (error) {
-      const err = error as NodeJS.ErrnoException & { stdout?: string; stderr?: string };
-      const stderr = err.stderr ?? '';
-      const message = stderr
-        ? `Setup hook failed: ${stderr.trim()}`
-        : `Setup hook failed: ${err.message}`;
+      const err = error as NodeJS.ErrnoException & {
+        code?: unknown;
+        killed?: unknown;
+        signal?: unknown;
+        stdout?: unknown;
+        stderr?: unknown;
+      };
 
-      logger.error({ job_id: jobContext.job_id, err: error }, 'Setup hook failed');
-      throw new Error(message);
+      const rawStdout = typeof err.stdout === 'string' ? err.stdout : '';
+      const rawStderr = typeof err.stderr === 'string' ? err.stderr : '';
+
+      // execFile() timeout errors typically set killed=true and signal='SIGTERM'.
+      const timedOut = err.killed === true || err.signal != null;
+      const exitCode = typeof err.code === 'number' ? err.code : null;
+      const isNonZeroExit = exitCode !== null && exitCode !== 0;
+
+      // Only wrap the cases we want downstream to treat as a setup hook failure.
+      if (!timedOut && !isNonZeroExit) {
+        const message = rawStderr
+          ? `Setup hook failed: ${rawStderr.trim()}`
+          : `Setup hook failed: ${err.message}`;
+
+        logger.error({ job_id: jobContext.job_id, err: error }, 'Setup hook failed');
+        throw new Error(message);
+      }
+
+      let stderr = rawStderr.trim() ? rawStderr : (err.message ?? '').toString().trim();
+      if (timedOut && !stderr) {
+        stderr = `Setup hook timed out after ${timeoutMs}ms`;
+      }
+
+      const stdout = truncate(rawStdout, MAX_RESULT_OUTPUT_BYTES);
+      const truncatedStderr = truncate(stderr, MAX_RESULT_OUTPUT_BYTES);
+
+      logger.error(
+        {
+          job_id: jobContext.job_id,
+          timedOut,
+          exit_code: exitCode,
+          stdout: stdout ? truncate(stdout, 8 * 1024) : '',
+          stderr: truncatedStderr ? truncate(truncatedStderr, 8 * 1024) : '',
+          err: error,
+        },
+        'Setup hook failed',
+      );
+
+      throw new SetupHookExecutionError({
+        message: timedOut ? 'Setup hook timed out' : 'Setup hook exited non-zero',
+        stdout,
+        stderr: truncatedStderr,
+        timedOut,
+      });
     }
   }
 }
