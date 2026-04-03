@@ -132,6 +132,46 @@ Valid (explicitly choose executor and model for the new instance):
 
 - If `/new` is accepted, it remains within the same thread; it does not create a new root message.
 
+### /status
+
+**Purpose**
+
+Report whether the current thread session has an executor actively running.
+
+**Grammar**
+
+```text
+/status
+```
+
+**Valid Contexts**
+
+- Thread reply only.
+
+**Invalid Forms**
+
+- Any use as a root message. (Context invalid.)
+- Any trailing arguments or extra content (including newlines). (Shape invalid.)
+
+**Examples**
+
+Valid:
+
+```text
+/status
+```
+
+Invalid (extra content):
+
+```text
+/status now
+```
+
+**Notes**
+
+- `/status` is rejected unless it can be associated with an existing thread session.
+- When accepted, the reply reports only whether an executor is currently running.
+
 ### /end
 
 **Purpose**

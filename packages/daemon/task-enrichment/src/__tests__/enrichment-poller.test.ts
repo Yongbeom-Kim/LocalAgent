@@ -23,8 +23,8 @@ vi.mock('@local-agent/shared', async () => {
     ...actual,
     generateSessionId: mockGenerateSessionId,
     formatThreadTaskCommandRejectedMessage: () =>
-      'Cannot use /task in a thread. Reply with natural language, /new, or /end.\nUse /task only as a new root message.',
-    formatThreadOnlyCommandMessage: (command: '/new' | '/end') =>
+      'Cannot use /task in a thread. Reply with natural language, /status, /new, or /end.\nUse /task only as a new root message.',
+    formatThreadOnlyCommandMessage: (command: '/status' | '/new' | '/end') =>
       `The ${command} command can only be used inside a thread.`,
   };
 });
@@ -79,7 +79,7 @@ describe('EnrichmentPoller', () => {
     mockGenerateSessionId.mockReset();
     mockGenerateSessionId.mockReturnValue('generated-session-id');
     const service = new EnrichmentService() as any;
-    poller = new EnrichmentPoller('http://localhost:3000', service);
+    poller = new EnrichmentPoller('http://localhost:3000', 'http://task-daemon:7070', service);
   });
 
   afterEach(() => {
@@ -459,6 +459,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     mockThreadFetcher = { fetchThreadContext: vi.fn() };
     poller = new EnrichmentPoller(
       'http://localhost:3000',
+      'http://task-daemon:7070',
       service,
       mockThreadFetcher as unknown as ThreadContextFetcher,
     );
@@ -933,5 +934,200 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     const posted = JSON.parse(mockFetch.mock.calls[1][1].body as string);
     expect(posted.executors).toEqual([{ executor: 'cursor', executor_model: 'auto' }]);
+  });
+
+  it('rejects status task outside thread', async () => {
+    const task = createTask({
+      task_type: 'status',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'status',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'The /status command can only be used inside a thread.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('rejects status task without inherited thread metadata', async () => {
+    const task = createTask({
+      task_type: 'status',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
+      threadContext: 'assistant: prior',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: null,
+      inheritedExecutor: 'claude',
+      inheritedExecutorModel: 'sonnet',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'status',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'The /status command requires an existing session in this thread.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('publishes running status with inherited headers', async () => {
+    const task = createTask({
+      task_type: 'status',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
+      threadContext: 'assistant: prior',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: 'claude',
+      inheritedExecutorModel: 'sonnet',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ running: true }) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://task-daemon:7070/status/thread-session-id', {
+      signal: expect.any(AbortSignal),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'deploy',
+        session_id: 'thread-session-id',
+        executor: 'claude',
+        executor_model: 'sonnet',
+        status: 'success',
+        exit_code: 0,
+        stdout: 'Executor is running',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('publishes not-running status with inherited headers', async () => {
+    const task = createTask({
+      task_type: 'status',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
+      threadContext: 'assistant: prior',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: 'cursor',
+      inheritedExecutorModel: 'auto',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ running: false }) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'deploy',
+        session_id: 'thread-session-id',
+        executor: 'cursor',
+        executor_model: 'auto',
+        status: 'success',
+        exit_code: 0,
+        stdout: 'Executor is not running',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('publishes failure when status lookup throws', async () => {
+    const task = createTask({
+      task_type: 'status',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
+      threadContext: 'assistant: prior',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: 'claude',
+      inheritedExecutorModel: 'sonnet',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockRejectedValueOnce(new Error('status unavailable'))
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'status',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Failed to check live executor status. Please retry in the thread.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
   });
 });

@@ -19,14 +19,17 @@ const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an i
 const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
 const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
+const STATUS_TASK_TYPE = 'status';
 const THREAD_REPLY_TASK_TYPE = 'thread_reply';
 const NEW_INSTANCE_PROMPT = 'Respond with: New session instance started.';
 const NEW_INSTANCE_MISSING_SOURCE_REASON = 'The /new command requires a Lark source.';
 const NEW_INSTANCE_MISSING_SESSION_REASON = 'The /new command requires an existing session in this thread.';
+const STATUS_MISSING_SESSION_REASON = 'The /status command requires an existing session in this thread.';
+const STATUS_LOOKUP_FAILURE_REASON = 'Failed to check live executor status. Please retry in the thread.';
 const THREAD_LOOKUP_ERROR_REASON = 'Failed to recover thread state. Please retry in the thread.';
 const THREAD_REPLY_INCOMPLETE_METADATA_REASON =
   'Cannot continue this thread because the inherited thread metadata is incomplete.';
-const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /end (in a thread)`;
+const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end (in a thread)`;
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
 
@@ -91,6 +94,7 @@ export class EnrichmentPoller {
 
   constructor(
     private readonly apiUrl: string,
+    private readonly taskDaemonStatusUrl: string,
     private readonly enrichmentService: EnrichmentService,
     private readonly threadContextFetcher?: ThreadContextFetcher,
   ) {}
@@ -115,6 +119,7 @@ export class EnrichmentPoller {
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
       const isGcTask = task.task_type === GC_TASK_TYPE;
       const isNewInstanceTask = task.task_type === NEW_INSTANCE_TASK_TYPE;
+      const isStatusTask = task.task_type === STATUS_TASK_TYPE;
       const isThreadReplyTask = task.task_type === THREAD_REPLY_TASK_TYPE;
       let threadResult: ThreadContextResult | undefined;
 
@@ -158,6 +163,13 @@ export class EnrichmentPoller {
         if (isNewInstanceTask && threadResult.kind === 'not_thread') {
           logger.warn({ task_id: task.task_id }, 'Rejected new_instance task outside thread');
           await this.publishRejection(task, formatThreadOnlyCommandMessage('/new'));
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        if (isStatusTask && threadResult.kind === 'not_thread') {
+          logger.warn({ task_id: task.task_id }, 'Rejected status task outside thread');
+          await this.publishRejection(task, formatThreadOnlyCommandMessage('/status'));
           await this.ackTask(task.task_id);
           return;
         }
@@ -222,6 +234,46 @@ export class EnrichmentPoller {
         await this.publishRejection(task, NEW_INSTANCE_MISSING_SESSION_REASON);
         await this.ackTask(task.task_id);
         return;
+      }
+
+      if (isStatusTask) {
+        if (
+          threadResult?.kind !== 'thread' ||
+          !threadResult.inheritedTaskType ||
+          !threadResult.inheritedSessionId ||
+          !threadResult.inheritedExecutor ||
+          !threadResult.inheritedExecutorModel
+        ) {
+          logger.warn({ task_id: task.task_id, threadResult }, 'Rejected status task without inherited thread metadata');
+          await this.publishRejection(task, STATUS_MISSING_SESSION_REASON);
+          await this.ackTask(task.task_id);
+          return;
+        }
+
+        try {
+          const timeoutSignal = AbortSignal.timeout(1000);
+          const statusRes = await fetch(
+            `${this.taskDaemonStatusUrl}/status/${encodeURIComponent(threadResult.inheritedSessionId)}`,
+            { signal: timeoutSignal },
+          );
+
+          if (statusRes.status !== 200) {
+            logger.error({ task_id: task.task_id, status: statusRes.status }, 'GET /status failed for status task');
+            await this.publishRejection(task, STATUS_LOOKUP_FAILURE_REASON);
+            await this.ackTask(task.task_id);
+            return;
+          }
+
+          const statusBody = (await statusRes.json()) as { running?: boolean };
+          await this.publishStatusResult(task, threadResult, statusBody.running === true);
+          await this.ackTask(task.task_id);
+          return;
+        } catch (statusErr) {
+          logger.error({ task_id: task.task_id, err: statusErr }, 'Status lookup request failed');
+          await this.publishRejection(task, STATUS_LOOKUP_FAILURE_REASON);
+          await this.ackTask(task.task_id);
+          return;
+        }
       }
 
       if (isNewInstanceTask) {
@@ -389,6 +441,36 @@ export class EnrichmentPoller {
       }
     } catch (err) {
       logger.error({ task_id: task.task_id, err }, 'Failed to publish rejection result');
+    }
+  }
+
+  private async publishStatusResult(
+    task: Task,
+    threadResult: ThreadContextResult,
+    running: boolean,
+  ): Promise<void> {
+    const body = {
+      job_id: task.task_id,
+      task_id: task.task_id,
+      task_type: threadResult.inheritedTaskType!,
+      session_id: threadResult.inheritedSessionId!,
+      executor: threadResult.inheritedExecutor!,
+      executor_model: threadResult.inheritedExecutorModel!,
+      status: 'success' as const,
+      exit_code: 0,
+      stdout: running ? 'Executor is running' : 'Executor is not running',
+      stderr: '',
+      ...(task.task_source ? { task_source: task.task_source } : {}),
+    };
+
+    const res = await fetch(`${this.apiUrl}/results`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (res.status !== 201) {
+      logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for status result');
     }
   }
 

@@ -38,6 +38,7 @@ services:
     environment:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"
+      TASK_DAEMON_STATUS_PORT: "7070"
       LOG_LEVEL: info
       DEBUG: "${DEBUG:-0}"
     volumes:
@@ -78,6 +79,7 @@ services:
     environment:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"
+      TASK_DAEMON_STATUS_URL: http://task-daemon:7070
       LOG_LEVEL: info
     depends_on:
       rabbitmq:

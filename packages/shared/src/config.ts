@@ -8,6 +8,7 @@ import {
   DEFAULT_LOG_LEVEL,
   DEFAULT_API_URL,
   DEFAULT_POLL_INTERVAL_MS,
+  DEFAULT_TASK_DAEMON_STATUS_PORT,
 } from './constants';
 
 /**
@@ -39,6 +40,7 @@ export interface DaemonConfig {
   apiUrl: string;
   pollIntervalMs: number;
   logLevel: string;
+  statusPort: number;
 }
 
 export function loadApiConfig(env: Record<string, string | undefined> = process.env): ApiConfig {
@@ -55,5 +57,6 @@ export function loadDaemonConfig(env: Record<string, string | undefined> = proce
     apiUrl: env.API_URL ?? DEFAULT_API_URL,
     pollIntervalMs: env.POLL_INTERVAL_MS ? parseInt(env.POLL_INTERVAL_MS, 10) : DEFAULT_POLL_INTERVAL_MS,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
+    statusPort: env.TASK_DAEMON_STATUS_PORT ? parseInt(env.TASK_DAEMON_STATUS_PORT, 10) : DEFAULT_TASK_DAEMON_STATUS_PORT,
   };
 }

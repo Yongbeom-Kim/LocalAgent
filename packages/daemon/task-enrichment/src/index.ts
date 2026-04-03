@@ -21,7 +21,12 @@ function main() {
     logger.info('Thread context enrichment disabled (LARK_APP_ID or LARK_APP_SECRET not set)');
   }
 
-  const poller = new EnrichmentPoller(config.apiUrl, enrichmentService, threadContextFetcher);
+  const poller = new EnrichmentPoller(
+    config.apiUrl,
+    config.taskDaemonStatusUrl,
+    enrichmentService,
+    threadContextFetcher,
+  );
   poller.start(config.pollIntervalMs);
 
   const shutdown = () => {

@@ -5,7 +5,7 @@ import type { LarkReactor } from '../adapters/lark-reactor';
 import type { LarkReplier } from '../adapters/lark-replier';
 import type { DedupMap } from '../services/dedup';
 
-const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /end (in a thread)';
+const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)';
 
 function makeEvent(overrides: Record<string, unknown> = {}) {
   return {
@@ -289,6 +289,41 @@ describe('MessageHandler', () => {
     it('does not treat /newfoo as a /new command', async () => {
       await handler.handle(makeEvent({
         content: JSON.stringify({ text: '/newfoo' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    });
+
+    it('submits bare /status as status with empty payload', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/status' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'status',
+        '',
+        { source: 'lark', message_id: 'om_msg1' },
+        undefined,
+        undefined,
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    });
+
+    it('replies with usage hint for /status with args and does not submit', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/status now' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(reactor.react).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    });
+
+    it('does not treat /statusfoo as a /status command', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/statusfoo' }),
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
