@@ -108,6 +108,7 @@ import { ClaudeWExecutor } from '../../adapters/claude-w-executor';
 import { CursorExecutor } from '../../adapters/cursor-executor';
 import { TTCodexExecutor } from '../../adapters/ttcodex-executor';
 import { GcExecutor } from '../../services/gc-executor';
+import { SetupHookExecutionError } from '../../services/setup-hook-runner';
 import { TaskOrchestrator } from '../task-orchestrator';
 import { JobEnvironment } from '../../services/job-environment';
 
@@ -339,6 +340,62 @@ describe('TaskOrchestrator', () => {
     expect(result.stderr).toContain('clone failed');
     expect(mockClaudeExecute).not.toHaveBeenCalled();
     expect(mockTeardown).not.toHaveBeenCalled();
+  });
+
+  it('short-circuits with terminal failure when setup hook rejects with SetupHookExecutionError', async () => {
+    mockSetup.mockRejectedValue(
+      new SetupHookExecutionError({
+        message: 'Setup hook exited non-zero',
+        stdout: 'hook stdout',
+        stderr: 'hook stderr',
+        timedOut: false,
+      }),
+    );
+
+    const result = await orchestrator.handle(createJob());
+
+    expect(result).toEqual({
+      job_id: 'job-456',
+      task_id: 'test-123',
+      task_type: 'generic',
+      status: 'failure',
+      exit_code: 1,
+      stdout: 'hook stdout',
+      stderr: 'hook stderr',
+    });
+    expect(Object.prototype.hasOwnProperty.call(result, 'executor')).toBe(false);
+    expect(Object.prototype.hasOwnProperty.call(result, 'executor_model')).toBe(false);
+
+    expect(ClaudeExecutor).not.toHaveBeenCalled();
+    expect(ClaudeWExecutor).not.toHaveBeenCalled();
+    expect(CursorExecutor).not.toHaveBeenCalled();
+    expect(TTCodexExecutor).not.toHaveBeenCalled();
+    expect(CleanupExecutor).not.toHaveBeenCalled();
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
+    expect(mockClaudeWExecute).not.toHaveBeenCalled();
+    expect(mockCursorExecute).not.toHaveBeenCalled();
+    expect(mockTTCodexExecute).not.toHaveBeenCalled();
+    expect(mockCleanupExecute).not.toHaveBeenCalled();
+  });
+
+  it('does not retry new_instance when setup hook rejects with SetupHookExecutionError', async () => {
+    mockSetup.mockRejectedValue(
+      new SetupHookExecutionError({
+        message: 'Setup hook timed out',
+        stdout: 'hook stdout 2',
+        stderr: 'hook stderr 2',
+        timedOut: true,
+      }),
+    );
+
+    const result = await orchestrator.handle(createJob({ task_type: 'new_instance' }));
+
+    expect(mockSetup).toHaveBeenCalledTimes(1);
+    expect(result.status).toBe('failure');
+    expect(result.exit_code).toBe(1);
+    expect(result.stdout).toBe('hook stdout 2');
+    expect(result.stderr).toBe('hook stderr 2');
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
   });
 
   it('returns failure when execution fails without teardown', async () => {

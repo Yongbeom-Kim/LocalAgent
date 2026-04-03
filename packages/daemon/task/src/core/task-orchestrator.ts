@@ -7,6 +7,7 @@ import { TTCodexExecutor } from '../adapters/ttcodex-executor';
 import { TaskExecutor } from '../ports/task-executor';
 import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
+import { SetupHookExecutionError } from '../services/setup-hook-runner';
 
 const logger = createLogger('task-daemon:orchestrator');
 const NEW_INSTANCE_MAX_RETRIES = 3;
@@ -53,6 +54,19 @@ export class TaskOrchestrator {
       try {
         env = await this.jobEnv.setup(job);
       } catch (error) {
+        if (error instanceof SetupHookExecutionError) {
+          logger.error({ job_id: job.job_id, err: error }, 'Setup hook failed');
+          return {
+            job_id: job.job_id,
+            task_id: job.task_id,
+            task_type: job.task_type,
+            status: 'failure',
+            exit_code: error.exit_code,
+            stdout: error.stdout,
+            stderr: error.stderr,
+          };
+        }
+
         logger.error({ job_id: job.job_id, err: error }, 'Environment setup failed');
         return {
           job_id: job.job_id,
