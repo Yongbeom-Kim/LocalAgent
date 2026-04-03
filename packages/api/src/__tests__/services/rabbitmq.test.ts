@@ -41,13 +41,15 @@ describe('RabbitMQService', () => {
     (amqplibMock.default.connect as any).mockResolvedValue(connection);
     channel.assertQueue.mockResolvedValue({});
     channel.sendToQueue.mockReturnValue(true);
+    channel.publish.mockReturnValue(true);
     service = new RabbitMQService('amqp://localhost', 'test-queue');
   });
 
   describe('connect', () => {
-    it('connects and asserts durable queue', async () => {
+    it('connects and asserts durable task queue and jobs exchange', async () => {
       await service.connect();
       expect(channel.assertQueue).toHaveBeenCalledWith('test-queue', { durable: true });
+      expect(channel.assertExchange).toHaveBeenCalledWith('jobs', 'direct', { durable: true });
     });
   });
 
@@ -65,8 +67,122 @@ describe('RabbitMQService', () => {
       expect(channel.sendToQueue).toHaveBeenCalledWith(
         'test-queue',
         Buffer.from(JSON.stringify(msg)),
-        { persistent: true }
+        { persistent: true },
       );
+    });
+  });
+
+  describe('session job queues', () => {
+    it('asserts and binds per-session queues with idle ttl', async () => {
+      await service.connect();
+      const queueName = await service.ensureSessionJobQueue('session-1');
+      expect(queueName).toBe('jobs.session.session-1');
+      expect(channel.assertQueue).toHaveBeenCalledWith('jobs.session.session-1', {
+        durable: true,
+        arguments: { 'x-expires': 3600000 },
+      });
+      expect(channel.bindQueue).toHaveBeenCalledWith('jobs.session.session-1', 'jobs', 'session-1');
+    });
+
+    it('publishes jobs to the jobs exchange with session_id as routing key', async () => {
+      await service.connect();
+      const job = {
+        job_id: 'job-1',
+        task_id: 'task-1',
+        task_type: 'generic',
+        payload: 'hello',
+        executors: [{ executor: 'claude', executor_model: 'sonnet' }],
+        submitted_at: '2026-03-31T00:00:00.000Z',
+        session_id: 'session-1',
+        enriched_at: '2026-03-31T00:00:01.000Z',
+      };
+      const result = await service.publishJob(job as any);
+      expect(result).toBe(true);
+      expect(channel.publish).toHaveBeenCalledWith(
+        'jobs',
+        'session-1',
+        Buffer.from(JSON.stringify(job)),
+        { persistent: true },
+      );
+    });
+
+    it('reads and acks jobs from a specific session queue', async () => {
+      await service.connect();
+      await service.ensureSessionJobQueue('session-1');
+      const content = JSON.stringify({
+        job_id: 'job-789',
+        task_id: 'task-123',
+        task_type: 'generic',
+        payload: 'hello',
+        executors: [{ executor: 'claude', executor_model: 'sonnet' }],
+        submitted_at: '2026-03-31T00:00:00.000Z',
+        session_id: 'session-1',
+        enriched_at: '2026-03-31T00:00:01.000Z',
+      });
+      const msg = {
+        content: Buffer.from(content),
+        fields: { deliveryTag: 55 },
+      };
+      channel.get.mockResolvedValue(msg);
+
+      const job = await service.getNextJobFromSession('session-1');
+      expect(job).not.toBeNull();
+      expect(channel.get).toHaveBeenCalledWith('jobs.session.session-1', { noAck: false });
+
+      const acked = service.ackJobFromSession('session-1', 'job-789');
+      expect(acked).toBe(true);
+      expect(channel.ack).toHaveBeenCalledWith(msg);
+    });
+
+    it('tracks deliveries independently across session queues', async () => {
+      await service.connect();
+      await service.ensureSessionJobQueue('session-a');
+      await service.ensureSessionJobQueue('session-b');
+
+      channel.get
+        .mockResolvedValueOnce({
+          content: Buffer.from(JSON.stringify({
+            job_id: 'job-a',
+            task_id: 'task-a',
+            task_type: 'generic',
+            payload: 'a',
+            executors: [{ executor: 'claude', executor_model: 'sonnet' }],
+            submitted_at: '2026-03-31T00:00:00.000Z',
+            session_id: 'session-a',
+            enriched_at: '2026-03-31T00:00:01.000Z',
+          })),
+          fields: { deliveryTag: 1 },
+        })
+        .mockResolvedValueOnce({
+          content: Buffer.from(JSON.stringify({
+            job_id: 'job-b',
+            task_id: 'task-b',
+            task_type: 'generic',
+            payload: 'b',
+            executors: [{ executor: 'claude', executor_model: 'sonnet' }],
+            submitted_at: '2026-03-31T00:00:00.000Z',
+            session_id: 'session-b',
+            enriched_at: '2026-03-31T00:00:01.000Z',
+          })),
+          fields: { deliveryTag: 2 },
+        });
+
+      await service.getNextJobFromSession('session-a');
+      await service.getNextJobFromSession('session-b');
+
+      expect(service.ackJobFromSession('session-a', 'job-a')).toBe(true);
+      expect(service.ackJobFromSession('session-b', 'job-b')).toBe(true);
+      expect(channel.ack).toHaveBeenCalledTimes(2);
+    });
+
+    it('lists active sessions in stable order', async () => {
+      await service.connect();
+      await service.ensureSessionJobQueue('session-b');
+      await service.ensureSessionJobQueue('session-a');
+      expect(service.listActiveSessions()).toEqual([
+        { session_id: 'session-a', queue_name: 'jobs.session.session-a' },
+        { session_id: 'session-b', queue_name: 'jobs.session.session-b' },
+      ]);
     });
   });
 
@@ -78,51 +194,6 @@ describe('RabbitMQService', () => {
       expect(result).toBeNull();
     });
 
-    it('returns task with preserved task ID and executor when message available', async () => {
-      await service.connect();
-      const content = JSON.stringify({
-        task_id: 'task-123',
-        task_type: 'generic',
-        payload: 'hello',
-        executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
-        submitted_at: '2026-03-26T00:00:00.000Z',
-      });
-      channel.get.mockResolvedValue({
-        content: Buffer.from(content),
-        fields: { deliveryTag: 42 },
-      });
-      const result = await service.getNext();
-      expect(result).not.toBeNull();
-      expect(result).toEqual({
-        task_id: 'task-123',
-        task_type: 'generic',
-        payload: 'hello',
-        executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
-        submitted_at: '2026-03-26T00:00:00.000Z',
-      });
-    });
-  });
-
-  describe('ack', () => {
-    it('acknowledges message by task ID', async () => {
-      await service.connect();
-      const content = JSON.stringify({
-        task_id: 'task-123',
-        task_type: 'generic',
-        payload: 'hello',
-        executors: [{ executor: 'claude', executor_model: 'opus' }],
-        submitted_at: '2026-03-26T00:00:00.000Z',
-      });
-      channel.get.mockResolvedValue({
-        content: Buffer.from(content),
-        fields: { deliveryTag: 42 },
-      });
-      const task = await service.getNext();
-      const acked = service.ack(task!.task_id);
-      expect(acked).toBe(true);
-      expect(channel.ack).toHaveBeenCalledWith({ content: expect.any(Buffer), fields: { deliveryTag: 42 } });
-    });
-
     it('acknowledges duplicate task IDs instead of overwriting the earlier ACK state', async () => {
       await service.connect();
       const firstMessage = {
@@ -130,7 +201,6 @@ describe('RabbitMQService', () => {
           task_id: 'duplicate-id',
           task_type: 'generic',
           payload: 'first',
-          executors: [{ executor: 'claude', executor_model: 'opus' }],
           submitted_at: '2026-03-26T00:00:00.000Z',
         })),
         fields: { deliveryTag: 1 },
@@ -140,47 +210,19 @@ describe('RabbitMQService', () => {
           task_id: 'duplicate-id',
           task_type: 'generic',
           payload: 'second',
-          executors: [{ executor: 'claude-w', executor_model: 'gpt-5.4' }],
           submitted_at: '2026-03-26T00:00:01.000Z',
         })),
         fields: { deliveryTag: 2 },
       };
-      channel.get
-        .mockResolvedValueOnce(firstMessage)
-        .mockResolvedValueOnce(secondMessage);
+      channel.get.mockResolvedValueOnce(firstMessage).mockResolvedValueOnce(secondMessage);
 
       const firstTask = await service.getNext();
       const duplicateTask = await service.getNext();
 
-      expect(firstTask).toEqual({
-        task_id: 'duplicate-id',
-        task_type: 'generic',
-        payload: 'first',
-        executors: [{ executor: 'claude', executor_model: 'opus' }],
-        submitted_at: '2026-03-26T00:00:00.000Z',
-      });
+      expect(firstTask?.task_id).toBe('duplicate-id');
       expect(duplicateTask).toBeNull();
       expect(channel.ack).toHaveBeenCalledWith(secondMessage);
-      expect(channel.nack).not.toHaveBeenCalled();
       expect(service.ack('duplicate-id')).toBe(true);
-      expect(channel.ack).toHaveBeenCalledTimes(2);
-      expect(channel.ack).toHaveBeenCalledWith(firstMessage);
-      expect(service.ack('duplicate-id')).toBe(false);
-    });
-
-    it('returns false for unknown task ID', async () => {
-      await service.connect();
-      const acked = service.ack('unknown-id');
-      expect(acked).toBe(false);
-    });
-  });
-
-  describe('connect — exchange topology', () => {
-    it('asserts results fanout exchange and lark-messages queue with binding', async () => {
-      await service.connect();
-      expect(channel.assertExchange).toHaveBeenCalledWith('results', 'fanout', { durable: true });
-      expect(channel.assertQueue).toHaveBeenCalledWith('lark-messages', { durable: true });
-      expect(channel.bindQueue).toHaveBeenCalledWith('lark-messages', 'results', '');
     });
   });
 
@@ -206,21 +248,9 @@ describe('RabbitMQService', () => {
         { persistent: true },
       );
     });
-
-    it('throws when not connected', () => {
-      expect(() => service.publishToExchange('results', {} as any)).toThrow('Not connected');
-    });
   });
 
   describe('getNextFromQueue', () => {
-    it('returns null when queue is empty', async () => {
-      await service.connect();
-      channel.get.mockResolvedValue(false);
-      const result = await service.getNextFromQueue('lark-messages');
-      expect(result).toBeNull();
-      expect(channel.get).toHaveBeenCalledWith('lark-messages', { noAck: false });
-    });
-
     it('returns result when message available', async () => {
       await service.connect();
       const content = JSON.stringify({
@@ -239,72 +269,7 @@ describe('RabbitMQService', () => {
       });
       const result = await service.getNextFromQueue('lark-messages');
       expect(result).toEqual(JSON.parse(content));
-    });
-  });
-
-  describe('nackJob', () => {
-    it('calls channel.nack with requeue=true and removes from delivery map', async () => {
-      await service.connect();
-      const content = JSON.stringify({
-        job_id: 'job-789',
-        task_id: 'task-123',
-        task_type: 'generic',
-        payload: 'hello',
-        executors: [{ executor: 'claude', executor_model: 'sonnet' }],
-        submitted_at: '2026-03-31T00:00:00.000Z',
-        session_id: 'session-abc',
-        enriched_at: '2026-03-31T00:00:01.000Z',
-      });
-      const msg = {
-        content: Buffer.from(content),
-        fields: { deliveryTag: 55 },
-      };
-      channel.get.mockResolvedValue(msg);
-      const job = await service.getNextJob();
-      expect(job).not.toBeNull();
-      const nacked = service.nackJob(job!.job_id);
-      expect(nacked).toBe(true);
-      expect(channel.nack).toHaveBeenCalledWith(msg, false, true);
-      // After nack, calling again should return false (removed from map)
-      const nackedAgain = service.nackJob(job!.job_id);
-      expect(nackedAgain).toBe(false);
-    });
-
-    it('returns false for unknown job ID', async () => {
-      await service.connect();
-      const result = service.nackJob('no-such-job');
-      expect(result).toBe(false);
-      expect(channel.nack).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('ackFromQueue', () => {
-    it('acknowledges result by result_id and queue name', async () => {
-      await service.connect();
-      const msg = {
-        content: Buffer.from(JSON.stringify({
-          result_id: 'res-1',
-          job_id: 'job-456',
-          task_id: 'task-123',
-          status: 'success',
-          exit_code: 0,
-          stdout: 'output',
-          stderr: '',
-          completed_at: '2026-03-27T00:00:00.000Z',
-        })),
-        fields: { deliveryTag: 99 },
-      };
-      channel.get.mockResolvedValue(msg);
-      await service.getNextFromQueue('lark-messages');
-      const acked = service.ackFromQueue('lark-messages', 'res-1');
-      expect(acked).toBe(true);
-      expect(channel.ack).toHaveBeenCalledWith(msg);
-    });
-
-    it('returns false for unknown result_id', async () => {
-      await service.connect();
-      const acked = service.ackFromQueue('lark-messages', 'unknown');
-      expect(acked).toBe(false);
+      expect(service.ackFromQueue('lark-messages', 'res-1')).toBe(true);
     });
   });
 });

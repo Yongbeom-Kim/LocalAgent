@@ -57,7 +57,7 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
         ...(setup_hook !== undefined ? { setup_hook } : {}),
         ...(setup_hook_timeout_ms !== undefined ? { setup_hook_timeout_ms } : {}),
       };
-      const buffered = rabbitmq.publishJob(job);
+      const buffered = await rabbitmq.publishJob(job);
 
       if (!buffered) {
         res.status(503).json({ error: 'Server busy, try again later' });
@@ -70,9 +70,13 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     }
   });
 
-  router.get('/next', async (req: Request, res: Response, next: NextFunction) => {
+  router.get('/sessions', (req: Request, res: Response) => {
+    res.status(200).json({ sessions: rabbitmq.listActiveSessions() });
+  });
+
+  router.get('/next/:sessionId', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const job = await rabbitmq.getNextJob();
+      const job = await rabbitmq.getNextJobFromSession(req.params.sessionId);
       if (!job) {
         res.status(204).send();
         return;
@@ -83,9 +87,9 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     }
   });
 
-  router.post('/:id/ack', (req: Request, res: Response, next: NextFunction) => {
+  router.post('/:sessionId/:id/ack', (req: Request, res: Response, next: NextFunction) => {
     try {
-      const acked = rabbitmq.ackJob(req.params.id);
+      const acked = rabbitmq.ackJobFromSession(req.params.sessionId, req.params.id);
       if (!acked) {
         res.status(404).json({ error: 'Job not found or already acknowledged' });
         return;
@@ -96,9 +100,9 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     }
   });
 
-  router.post('/:id/nack', (req: Request, res: Response, next: NextFunction) => {
+  router.post('/:sessionId/:id/nack', (req: Request, res: Response, next: NextFunction) => {
     try {
-      const nacked = rabbitmq.nackJob(req.params.id);
+      const nacked = rabbitmq.nackJobFromSession(req.params.sessionId, req.params.id);
       if (!nacked) {
         res.status(404).json({ error: 'Job not found or already processed' });
         return;

@@ -151,7 +151,7 @@ describe('CursorExecutor', () => {
         '--',
         'What is 2+2?',
       ],
-      { cwd: '/tmp/localagent-job-test', shell: false },
+      { cwd: '/tmp/localagent-job-test', shell: false, detached: true },
     );
   });
 

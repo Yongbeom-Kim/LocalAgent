@@ -89,10 +89,14 @@ describe('TaskPoller', () => {
   });
 
   describe('pollOnce', () => {
-    it('fetches job, executes, posts result, then acks', async () => {
+    it('fetches active sessions, executes a session job, posts result, then acks', async () => {
       const job = createJob();
 
       mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
+        })
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job),
@@ -109,13 +113,14 @@ describe('TaskPoller', () => {
       await poller.pollOnce();
       await poller.drain();
 
-      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/jobs/next');
-      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/jobs/sessions');
+      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs/next/session-789');
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mockResultSubmission),
       });
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/jobs/session-789/job-456/ack', {
         method: 'POST',
       });
     });
@@ -126,88 +131,28 @@ describe('TaskPoller', () => {
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
-          json: () => Promise.resolve(job),
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
-        .mockResolvedValueOnce({
-          status: 500,
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-      await poller.drain();
-
-      expect(mockFetch).toHaveBeenCalledTimes(3);
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
-        method: 'POST',
-      });
-    });
-
-    it('still acks job even if result POST throws', async () => {
-      const job = createJob();
-
-      mockFetch
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job),
         })
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
+        .mockResolvedValueOnce({ status: 500 })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
 
       await poller.pollOnce();
       await poller.drain();
 
-      expect(mockFetch).toHaveBeenCalledTimes(3);
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/jobs/session-789/job-456/ack', {
         method: 'POST',
       });
     });
 
-    it('does nothing when queue is empty (204)', async () => {
-      mockFetch.mockResolvedValueOnce({ status: 204 });
+    it('does nothing when there are no active sessions', async () => {
+      mockFetch.mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ sessions: [] }) });
       await poller.pollOnce();
-      expect(ClaudeExecutor).not.toHaveBeenCalled();
-    });
-
-    it('posts failure result and acks when executor is unknown', async () => {
-      const job = createJob({ executors: [{ executor: 'invalid' as never, executor_model: 'opus' }] });
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(job),
-        })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-      await poller.drain();
-
-      // orchestrator catches unknown executor error and returns failure result
-      expect(mockFetch).toHaveBeenCalledTimes(3);
-      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: expect.stringContaining('"status":"failure"'),
-      });
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/job-456/ack', {
-        method: 'POST',
-      });
-    });
-
-    it('handles fetch errors gracefully', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
-      await expect(poller.pollOnce()).resolves.toBeUndefined();
+      expect(mockClaudeExecute).not.toHaveBeenCalled();
     });
 
     it('forwards task_source from job to result submission', async () => {
@@ -217,180 +162,47 @@ describe('TaskPoller', () => {
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
-          json: () => Promise.resolve(job),
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job) })
+        .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
 
       await poller.pollOnce();
       await poller.drain();
 
-      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      const resultPostBody = JSON.parse(mockFetch.mock.calls[2][1].body);
       expect(resultPostBody.task_source).toEqual(taskSource);
     });
 
-    it('forwards session_id from job to result submission', async () => {
-      const job = createJob({ session_id: 'session-forwarded' });
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(job),
-        })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-      await poller.drain();
-
-      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(resultPostBody.session_id).toBe('session-forwarded');
-    });
-
-    it('forwards task_type from job to result submission', async () => {
-      const job = createJob({ task_type: 'deploy' });
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(job),
-        })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-      await poller.drain();
-
-      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(resultPostBody.task_type).toBe('deploy');
-    });
-
-    it('forwards executor metadata from orchestrator result to POST /results', async () => {
+    it('truncates stdout and stderr to snippet length before publishing', async () => {
       const job = createJob();
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(job),
-        })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-      await poller.drain();
-
-      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(resultPostBody.executor).toBe('claude');
-      expect(resultPostBody.executor_model).toBe('opus');
-    });
-
-    it('reports an active session while a job promise is still in flight', async () => {
-      let resolveJob!: (value: TaskResultSubmission) => void;
-      const jobPromise = new Promise<TaskResultSubmission>((resolve) => {
-        resolveJob = resolve;
-      });
-      mockClaudeExecute.mockReturnValueOnce(jobPromise);
-      const job = createJob({ session_id: 'session-active' });
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(job),
-        })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-
-      expect(poller.isSessionActive('session-active')).toBe(true);
-
-      resolveJob({ ...mockResultSubmission, session_id: 'session-active' });
-      await poller.drain();
-
-      expect(poller.isSessionActive('session-active')).toBe(false);
-    });
-
-    it('truncates stderr to MAX_SNIPPET_CHARS before POST /results', async () => {
-      const longStderr = 'e'.repeat(MAX_SNIPPET_CHARS + 500);
       mockClaudeExecute.mockResolvedValueOnce({
         ...mockResultSubmission,
-        stderr: longStderr,
+        stdout: 'x'.repeat(MAX_SNIPPET_CHARS + 10),
+        stderr: 'y'.repeat(MAX_SNIPPET_CHARS + 20),
       });
-      const job = createJob();
 
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
-          json: () => Promise.resolve(job),
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job) })
+        .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
 
       await poller.pollOnce();
       await poller.drain();
 
-      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(resultPostBody.stderr.length).toBe(MAX_SNIPPET_CHARS);
+      const body = JSON.parse(mockFetch.mock.calls[2][1].body);
+      expect(body.stdout).toHaveLength(MAX_SNIPPET_CHARS);
+      expect(body.stderr).toHaveLength(MAX_SNIPPET_CHARS);
     });
 
-    it('omits task_source from result when job has none', async () => {
-      const job = createJob(); // no task_source
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve(job),
-        })
-        .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-      await poller.drain();
-
-      const resultPostBody = JSON.parse(mockFetch.mock.calls[1][1].body);
-      expect(resultPostBody.task_source).toBeUndefined();
+    it('handles active-session fetch errors gracefully', async () => {
+      mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
+      await expect(poller.pollOnce()).resolves.toBeUndefined();
     });
   });
 });

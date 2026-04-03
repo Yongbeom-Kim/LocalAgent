@@ -88,7 +88,7 @@ describe('ClaudeWExecutor', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'claude-w',
       ['--dangerously-skip-permissions', '--model', 'gpt-5.4', '-p', '-'],
-      { cwd: '/tmp/localagent-job-test' },
+      { cwd: '/tmp/localagent-job-test', detached: true },
     );
     expect(child.stdinData).toBe('What is 2+2?');
   });
@@ -115,7 +115,7 @@ describe('ClaudeWExecutor', () => {
         '--plugin-dir', '/tmp/job/repo/plugin-b',
         '-p', '-',
       ],
-      { cwd: '/tmp/job' },
+      { cwd: '/tmp/job', detached: true },
     );
   });
 
@@ -139,7 +139,7 @@ describe('ClaudeWExecutor', () => {
         '--append-system-prompt', 'You are a helpful assistant that speaks like a pirate.',
         '-p', '-',
       ],
-      { cwd: '/tmp/localagent-job-test' },
+      { cwd: '/tmp/localagent-job-test', detached: true },
     );
   });
 
@@ -196,7 +196,7 @@ describe('ClaudeWExecutor', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'claude-w',
       ['--dangerously-skip-permissions', '--model', 'gpt-5.4', '--continue', '-p', '-'],
-      { cwd: '/tmp/localagent-job-test' },
+      { cwd: '/tmp/localagent-job-test', detached: true },
     );
     expect(child.stdinData).toBe('What is 2+2?');
   });
