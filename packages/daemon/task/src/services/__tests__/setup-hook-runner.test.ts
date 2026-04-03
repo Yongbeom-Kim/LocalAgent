@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { mkdirSync, rmSync, existsSync, writeFileSync } from 'node:fs';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdirSync, rmSync, existsSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -14,8 +14,7 @@ describe('SetupHookRunner', () => {
 
   beforeEach(() => {
     runner = new SetupHookRunner();
-    workDir = join(tmpdir(), `setup-hook-test-${Date.now()}`);
-    mkdirSync(workDir, { recursive: true });
+    workDir = mkdtempSync(join(tmpdir(), 'setup-hook-test-'));
   });
 
   afterEach(() => {
@@ -26,6 +25,7 @@ describe('SetupHookRunner', () => {
     job_id: 'job-abc',
     task_id: 'task-xyz',
     task_type: 'coding',
+    session_id: 'session-123',
     payload: 'do something',
   };
 
@@ -40,6 +40,8 @@ describe('SetupHookRunner', () => {
       'echo "$LOCALAGENT_JOB_ID" > job_id.txt',
       'echo "$LOCALAGENT_TASK_ID" > task_id.txt',
       'echo "$LOCALAGENT_TASK_TYPE" > task_type.txt',
+      'echo "$LOCALAGENT_SESSION_ID" > session_id.txt',
+      'echo "$LOCALAGENT_PAYLOAD" > payload.txt',
     ].join('\n');
 
     await runner.run(script, workDir, ctx, 10_000);
@@ -48,6 +50,23 @@ describe('SetupHookRunner', () => {
     expect(readFileSync(join(workDir, 'job_id.txt'), 'utf-8').trim()).toBe('job-abc');
     expect(readFileSync(join(workDir, 'task_id.txt'), 'utf-8').trim()).toBe('task-xyz');
     expect(readFileSync(join(workDir, 'task_type.txt'), 'utf-8').trim()).toBe('coding');
+    expect(readFileSync(join(workDir, 'session_id.txt'), 'utf-8').trim()).toBe('session-123');
+    expect(readFileSync(join(workDir, 'payload.txt'), 'utf-8').trim()).toBe('do something');
+  });
+
+  it('enforces -e', async () => {
+    const script = 'false; true';
+    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow(/Setup hook failed/);
+  });
+
+  it('enforces -u', async () => {
+    const script = 'echo "$THIS_VAR_IS_NOT_SET"';
+    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow(/Setup hook failed/);
+  });
+
+  it('enforces pipefail', async () => {
+    const script = 'false | true';
+    await expect(runner.run(script, workDir, ctx, 10_000)).rejects.toThrow(/Setup hook failed/);
   });
 
   it('throws when script exits non-zero', async () => {

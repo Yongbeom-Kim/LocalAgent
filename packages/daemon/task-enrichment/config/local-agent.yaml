@@ -4,5 +4,7 @@ rules:
     # 2. asynchroously backfill history
     setup_hook: |
       git clone --depth 1 git@github.com:Yongbeom-Kim/LocalAgent.git ./LocalAgent 
-      ./LocalAgent && git config --local user.name "Kim Yongbeom" && git config --local user.email "dernbu@gmail.com"
-      nohup git -C "$PWD/LocalAgent" fetch --unshallow --tags </dev/null &>/dev/null &
+      cd ./LocalAgent
+      git config --local user.name "Kim Yongbeom"
+      git config --local user.email "dernbu@gmail.com"
+      nohup git fetch --unshallow --tags </dev/null &>/dev/null &
