@@ -512,14 +512,15 @@ New rule:
 The rejection copy can stay in the current style:
 
 ```text
-Cannot use /task in a thread. Remove the /task prefix or start a new conversation.
+Cannot use /task in a thread. Reply with natural language, /new, or /end.
+Use /task only as a new root message.
 ```
 
 The exact wording can be tuned, but it should remain a direct thread-specific explanation rather than falling back to the generic usage hint.
 
 #### Plain threaded replies
 
-These will normally be rejected earlier by `lark-listener` because plain Lark messages are no longer valid task submissions at all.
+These will normally be submitted as continuation candidates by `lark-listener` and then accepted or rejected by enrichment based on thread context.
 
 Even so, enrichment should keep a defense-in-depth rejection for non-control threaded tasks in case another producer submits them unexpectedly with a Lark `task_source`.
 

@@ -25,7 +25,7 @@ Out of scope (by design):
 Default non-command behavior:
 
 - A **root message** that is not a recognized command is rejected with a `/task` usage hint.
-- A **thread reply** that is not a recognized command is treated as natural-language continuation.
+- A **thread reply** that is not a recognized command is treated as natural-language continuation if the thread state can be recovered; otherwise it is rejected.
 
 Failure classes (high-level):
 
@@ -90,6 +90,7 @@ third line of payload
 - `<payload>` must begin on the same line as `<model>`.
 - Multi-line payloads are supported only after the payload has started on the first line.
 - Externally observable edge case (confirmed in code): parsing is driven by the first line. If the first line does not contain all three fields plus at least one payload character, the command is rejected as shape invalid.
+- `<payload>` must contain at least one non-whitespace character; whitespace-only payloads are rejected during routing. (Routing invalid.)
 
 ### /new
 
@@ -212,4 +213,4 @@ Invalid (extra content):
 ## Maintenance
 
 - Any change to the externally visible Lark command surface must update `COMMANDS.md` in the same PR.
-- If other docs disagree with this file, `COMMANDS.md` wins for the external contract.
+- Reviewers should treat command-contract drift as a release blocker.

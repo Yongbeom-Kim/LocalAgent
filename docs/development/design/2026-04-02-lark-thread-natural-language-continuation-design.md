@@ -18,7 +18,7 @@ Today:
 
 - root messages are expected to use explicit `/task <type> <executor> <model> <payload>`
 - plain thread replies are treated as natural-language continuation
-- threaded non-control messages are rejected in enrichment with `Cannot use /task in a thread. Remove the /task prefix or start a new conversation.`
+- threaded `/task ...` messages are rejected in enrichment with a thread-specific help message
 
 That is the opposite of the desired conversational model. In a Lark thread, users should be able to keep talking naturally and let the system continue the current task/session automatically.
 
