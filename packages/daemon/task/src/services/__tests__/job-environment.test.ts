@@ -16,17 +16,22 @@ vi.mock('@local-agent/shared', async () => {
 });
 
 vi.mock('node:child_process', () => ({
+  execFile: vi.fn(),
   execFileSync: vi.fn(),
 }));
 
-vi.mock('../setup-hook-runner', () => ({
-  SetupHookRunner: vi.fn().mockImplementation(() => ({
-    run: vi.fn().mockResolvedValue(undefined),
-  })),
-}));
+vi.mock('../setup-hook-runner', async () => {
+  const actual = await vi.importActual<typeof import('../setup-hook-runner')>('../setup-hook-runner');
+  return {
+    ...actual,
+    SetupHookRunner: vi.fn().mockImplementation(() => ({
+      run: vi.fn().mockResolvedValue(undefined),
+    })),
+  };
+});
 
 import { execFileSync } from 'node:child_process';
-import { SetupHookRunner } from '../setup-hook-runner';
+import { SetupHookExecutionError, SetupHookRunner } from '../setup-hook-runner';
 import { JobEnvironment } from '../job-environment';
 
 const mockExecFileSync = vi.mocked(execFileSync);
@@ -261,28 +266,43 @@ describe('JobEnvironment', () => {
     });
 
     it('cleans up the session workspace when setup hook fails and debug is false', async () => {
-      mockRunner.run.mockRejectedValueOnce(new Error('Setup hook failed: npm not found'));
+      mockRunner.run.mockRejectedValueOnce(new SetupHookExecutionError({
+        message: 'Setup hook exited non-zero',
+        stdout: '',
+        stderr: 'npm not found',
+        timedOut: false,
+      }));
       const job = createJob({ setup_hook: 'npm ci' });
       const workDir = join(sessionRootDir, job.session_id);
 
-      await expect(jobEnv.setup(job)).rejects.toThrow('Setup hook failed');
+      await expect(jobEnv.setup(job)).rejects.toBeInstanceOf(SetupHookExecutionError);
       expect(existsSync(workDir)).toBe(false);
     });
 
     it('preserves the session workspace on setup failure when debug is true', async () => {
       const debugJobEnv = new JobEnvironment(true, new SetupHookRunner());
       const debugRunner = MockSetupHookRunner.mock.results[1].value as { run: ReturnType<typeof vi.fn> };
-      debugRunner.run.mockRejectedValueOnce(new Error('Setup hook failed: npm not found'));
+      debugRunner.run.mockRejectedValueOnce(new SetupHookExecutionError({
+        message: 'Setup hook exited non-zero',
+        stdout: '',
+        stderr: 'npm not found',
+        timedOut: false,
+      }));
       const job = createJob({ session_id: 'session-debug-001', setup_hook: 'npm ci' });
       const workDir = join(sessionRootDir, job.session_id);
       createdDirs.push(workDir);
 
-      await expect(debugJobEnv.setup(job)).rejects.toThrow('Setup hook failed');
+      await expect(debugJobEnv.setup(job)).rejects.toBeInstanceOf(SetupHookExecutionError);
       expect(existsSync(workDir)).toBe(true);
     });
 
     it('preserves the lock file but clears other contents when setup fails after lock acquisition', async () => {
-      mockRunner.run.mockRejectedValueOnce(new Error('Setup hook failed: npm not found'));
+      mockRunner.run.mockRejectedValueOnce(new SetupHookExecutionError({
+        message: 'Setup hook exited non-zero',
+        stdout: '',
+        stderr: 'npm not found',
+        timedOut: false,
+      }));
       const job = createJob({
         session_id: 'session-locked-failure-001',
         setup_hook: 'npm ci',
@@ -293,7 +313,7 @@ describe('JobEnvironment', () => {
       mkdirSync(join(workDir, 'stale-dir'), { recursive: true });
       createdDirs.push(workDir);
 
-      await expect(jobEnv.setup(job)).rejects.toThrow('Setup hook failed');
+      await expect(jobEnv.setup(job)).rejects.toBeInstanceOf(SetupHookExecutionError);
       expect(existsSync(workDir)).toBe(true);
       expect(existsSync(join(workDir, '.lock'))).toBe(true);
       expect(existsSync(join(workDir, 'stale-dir'))).toBe(false);
