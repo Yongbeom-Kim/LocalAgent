@@ -1,6 +1,9 @@
 # Design: Explicit `/task` Routing Contract
 
-> Refinement note: this document still defines the root-message contract. Thread continuation behavior for plain replies is refined separately in `docs/development/design/2026-04-02-lark-thread-natural-language-continuation-design.md`, where root `/task` remains explicit but in-thread natural-language replies continue the current conversation automatically.
+> Authority note: repo-root `COMMANDS.md` is the authoritative external Lark command contract.
+> This design doc explains rationale and implementation boundaries for root `/task` behavior.
+
+> Refinement note: thread reply behavior is refined separately in `docs/development/design/2026-04-02-lark-thread-natural-language-continuation-design.md`.
 
 **Date:** 2026-04-02
 **Status:** Ready for implementation
@@ -509,14 +512,15 @@ New rule:
 The rejection copy can stay in the current style:
 
 ```text
-Cannot use /task in a thread. Remove the /task prefix or start a new conversation.
+Cannot use /task in a thread. Reply with natural language, /new, or /end.
+Use /task only as a new root message.
 ```
 
 The exact wording can be tuned, but it should remain a direct thread-specific explanation rather than falling back to the generic usage hint.
 
 #### Plain threaded replies
 
-These will normally be rejected earlier by `lark-listener` because plain Lark messages are no longer valid task submissions at all.
+These will normally be submitted as continuation candidates by `lark-listener` and then accepted or rejected by enrichment based on thread context.
 
 Even so, enrichment should keep a defense-in-depth rejection for non-control threaded tasks in case another producer submits them unexpectedly with a Lark `task_source`.
 

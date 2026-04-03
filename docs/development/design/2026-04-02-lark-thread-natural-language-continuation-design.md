@@ -1,5 +1,8 @@
 # Design: Natural-Language Continuation in Lark Threads
 
+> Authority note: repo-root `COMMANDS.md` is the authoritative external Lark command contract.
+> This design doc explains rationale and implementation boundaries for thread reply behavior.
+
 > This design updates the thread behavior described in `docs/development/design/2026-04-02-task-explicit-routing-contract-design.md` and `docs/development/design/2026-04-02-new-instance-executor-model-inheritance-design.md`.
 
 **Date:** 2026-04-02
@@ -14,8 +17,8 @@ The current Lark contract still makes threaded conversation feel like a fresh co
 Today:
 
 - root messages are expected to use explicit `/task <type> <executor> <model> <payload>`
-- plain thread replies are rejected because they are not `/task`
-- threaded non-control messages are rejected in enrichment with `Cannot use /task in a thread. Remove the /task prefix or start a new conversation.`
+- plain thread replies are treated as natural-language continuation
+- threaded `/task ...` messages are rejected in enrichment with a thread-specific help message
 
 That is the opposite of the desired conversational model. In a Lark thread, users should be able to keep talking naturally and let the system continue the current task/session automatically.
 
