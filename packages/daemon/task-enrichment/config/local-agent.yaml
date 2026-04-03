@@ -1,6 +1,9 @@
 rules:
   localagent:
+    # 1. git clone (depth-1)
+    # 2. asynchroously backfill history
     setup_hook: |
-      git clone --depth 1 git@github.com:Yongbeom-Kim/LocalAgent.git ./LocalAgent &&
-      # fire and forget backfill git history
+      git clone --depth 1 git@github.com:Yongbeom-Kim/LocalAgent.git ./LocalAgent 
+      git config --global user.name "Kim Yongbeom"
+      git config --global user.email "dernbu@gmail.com"
       nohup git -C "$PWD/LocalAgent" fetch --unshallow --tags </dev/null &>/dev/null &
