@@ -35,18 +35,22 @@ vi.mock('../services/job-environment', () => ({
 
 const mockClaudeExecute = vi.fn();
 const mockCleanupExecute = vi.fn();
+const mockClaudeKill = vi.fn();
+const mockCleanupKill = vi.fn();
 
 vi.mock('../adapters/claude-executor', () => {
   return {
-    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute; kill: typeof mockClaudeKill }) {
       this.execute = mockClaudeExecute;
+      this.kill = mockClaudeKill;
     }),
   };
 });
 
 vi.mock('../adapters/cleanup-executor', () => ({
-  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute }) {
+  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute; kill: typeof mockCleanupKill }) {
     this.execute = mockCleanupExecute;
+    this.kill = mockCleanupKill;
   }),
 }));
 
@@ -92,6 +96,24 @@ describe('TaskPoller Concurrent', () => {
     mockFetch.mockReset();
     mockClaudeExecute.mockReset();
     mockCleanupExecute.mockReset();
+    mockClaudeKill.mockReset().mockResolvedValue({
+      status: 'success',
+      outcome: 'no_active_process',
+      signalPath: 'none',
+      waitDurationMs: 0,
+      exitCode: 0,
+      stdout: 'No active process',
+      stderr: '',
+    });
+    mockCleanupKill.mockReset().mockResolvedValue({
+      status: 'success',
+      outcome: 'no_active_process',
+      signalPath: 'none',
+      waitDurationMs: 0,
+      exitCode: 0,
+      stdout: 'No active process',
+      stderr: '',
+    });
     mockSetup.mockReset().mockResolvedValue(mockEnv);
     mockTeardown.mockReset().mockResolvedValue(undefined);
 
@@ -281,6 +303,51 @@ describe('TaskPoller Concurrent', () => {
       await poller.drain();
 
       expect(mockCleanupExecute).toHaveBeenCalledTimes(1);
+    });
+
+    it('dispatches kill immediately without NACKing behind the session lock', async () => {
+      const jobEnv = new JobEnvironment(false);
+      poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+
+      let resolveActive!: (v: TaskResultSubmission) => void;
+      const activePromise = new Promise<TaskResultSubmission>((r) => {
+        resolveActive = r;
+      });
+      mockClaudeExecute.mockReturnValueOnce(activePromise);
+
+      const activeJob = createJob({ job_id: 'job-active', session_id: 'session-A' });
+      const killJob = createJob({
+        job_id: 'job-kill',
+        task_id: 'task-kill',
+        session_id: 'session-A',
+        task_type: 'kill',
+        payload: '',
+        executors: [{ executor: 'builtin', executor_model: 'none' }],
+      });
+
+      mockFetch
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(killJob) })
+        .mockResolvedValueOnce({ status: 201 })
+        .mockResolvedValueOnce({ status: 200 });
+
+      await poller.pollOnce();
+      await new Promise((r) => setTimeout(r, 10));
+      await poller.pollOnce();
+      await new Promise((r) => setTimeout(r, 10));
+
+      const nackCall = mockFetch.mock.calls.find(
+        (call) => typeof call[0] === 'string' && call[0].includes('/jobs/job-kill/nack'),
+      );
+
+      expect(nackCall).toBeUndefined();
+      expect(mockSessionLock.acquire).toHaveBeenCalledTimes(1);
+
+      mockFetch
+        .mockResolvedValueOnce({ status: 201 })
+        .mockResolvedValueOnce({ status: 200 });
+      resolveActive(createMockResult('job-active', 'session-A'));
+      await poller.drain();
     });
   });
 

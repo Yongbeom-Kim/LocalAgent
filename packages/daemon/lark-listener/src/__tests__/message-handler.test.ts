@@ -5,7 +5,7 @@ import type { LarkReactor } from '../adapters/lark-reactor';
 import type { LarkReplier } from '../adapters/lark-replier';
 import type { DedupMap } from '../services/dedup';
 
-const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)';
+const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end, /kill (in a thread)';
 
 function makeEvent(overrides: Record<string, unknown> = {}) {
   return {
@@ -229,6 +229,32 @@ describe('MessageHandler', () => {
     it('replies with usage hint for /end with args and does not submit', async () => {
       await handler.handle(makeEvent({
         content: JSON.stringify({ text: '/end now' }),
+      }));
+
+      expect(submitter.submit).not.toHaveBeenCalled();
+      expect(reactor.react).not.toHaveBeenCalled();
+      expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+    });
+
+    it('submits bare /kill as kill with empty payload', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/kill' }),
+      }));
+
+      expect(submitter.submit).toHaveBeenCalledWith(
+        'kill',
+        '',
+        { source: 'lark', message_id: 'om_msg1' },
+        undefined,
+        undefined,
+      );
+      expect(replier.reply).not.toHaveBeenCalled();
+      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    });
+
+    it('replies with usage hint for /kill with args and does not submit', async () => {
+      await handler.handle(makeEvent({
+        content: JSON.stringify({ text: '/kill now' }),
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();

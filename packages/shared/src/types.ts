@@ -144,7 +144,7 @@ export function isValidExecutorPreferences(
   );
 }
 
-export const CONTROL_TASK_TYPES = ['new_instance', 'gc', 'cleanup', 'status'] as const;
+export const CONTROL_TASK_TYPES = ['new_instance', 'gc', 'cleanup', 'status', 'kill'] as const;
 export type ControlTaskType = (typeof CONTROL_TASK_TYPES)[number];
 
 export function isControlTaskType(value: unknown): value is ControlTaskType {

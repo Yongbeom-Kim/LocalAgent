@@ -55,6 +55,12 @@ export class TaskPoller {
       const job = (await res.json()) as Job;
       logger.info({ job_id: job.job_id, task_id: job.task_id }, 'Received job');
 
+      if (job.task_type === 'kill') {
+        const promise = this.executeJob(job);
+        this.inFlightJobs.set(job.job_id, promise);
+        return;
+      }
+
       if (this.sessionLock.acquire(job.session_id, job.job_id)) {
         this.activeSessions.add(job.session_id);
         const promise = this.executeJob(job);
@@ -122,7 +128,9 @@ export class TaskPoller {
     } catch (err) {
       logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
     } finally {
-      this.sessionLock.release(job.session_id);
+      if (job.task_type !== 'kill') {
+        this.sessionLock.release(job.session_id);
+      }
       this.inFlightJobs.delete(job.job_id);
       this.activeSessions.delete(job.session_id);
       this.resetPollInterval();

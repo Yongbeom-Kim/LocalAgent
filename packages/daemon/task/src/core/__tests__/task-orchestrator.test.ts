@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Job, JobAttempt, TaskResultSubmission } from '@local-agent/shared';
 import { ExecutionEnvironment } from '../../services/job-environment';
+import { ExecutorKillResult, TaskExecutorLifecycle } from '../../ports/task-executor';
 
 const mockEnv: ExecutionEnvironment = {
   workDir: '/tmp/localagent-job-test',
@@ -65,34 +66,47 @@ const mockClaudeWExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockCursorExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockTTCodexExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockCleanupExecute = vi.fn().mockResolvedValue(mockCleanupResultSubmission);
+const mockClaudeKill = vi.fn<(_: string, __: number) => Promise<ExecutorKillResult>>();
+const mockClaudeWKill = vi.fn<(_: string, __: number) => Promise<ExecutorKillResult>>();
+const mockCursorKill = vi.fn<(_: string, __: number) => Promise<ExecutorKillResult>>();
+const mockTTCodexKill = vi.fn<(_: string, __: number) => Promise<ExecutorKillResult>>();
+const mockCleanupKill = vi.fn<(_: string, __: number) => Promise<ExecutorKillResult>>();
+
+let claudeLifecycle: TaskExecutorLifecycle | undefined;
 
 vi.mock('../../adapters/claude-executor', () => ({
-  ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+  ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute; kill: typeof mockClaudeKill }, lifecycle?: TaskExecutorLifecycle) {
+    claudeLifecycle = lifecycle;
     this.execute = mockClaudeExecute;
+    this.kill = mockClaudeKill;
   }),
 }));
 
 vi.mock('../../adapters/claude-w-executor', () => ({
-  ClaudeWExecutor: vi.fn(function (this: { execute: typeof mockClaudeWExecute }) {
+  ClaudeWExecutor: vi.fn(function (this: { execute: typeof mockClaudeWExecute; kill: typeof mockClaudeWKill }) {
     this.execute = mockClaudeWExecute;
+    this.kill = mockClaudeWKill;
   }),
 }));
 
 vi.mock('../../adapters/cleanup-executor', () => ({
-  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute }) {
+  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute; kill: typeof mockCleanupKill }) {
     this.execute = mockCleanupExecute;
+    this.kill = mockCleanupKill;
   }),
 }));
 
 vi.mock('../../adapters/cursor-executor', () => ({
-  CursorExecutor: vi.fn(function (this: { execute: typeof mockCursorExecute }) {
+  CursorExecutor: vi.fn(function (this: { execute: typeof mockCursorExecute; kill: typeof mockCursorKill }) {
     this.execute = mockCursorExecute;
+    this.kill = mockCursorKill;
   }),
 }));
 
 vi.mock('../../adapters/ttcodex-executor', () => ({
-  TTCodexExecutor: vi.fn(function (this: { execute: typeof mockTTCodexExecute }) {
+  TTCodexExecutor: vi.fn(function (this: { execute: typeof mockTTCodexExecute; kill: typeof mockTTCodexKill }) {
     this.execute = mockTTCodexExecute;
+    this.kill = mockTTCodexKill;
   }),
 }));
 
@@ -136,9 +150,55 @@ describe('TaskOrchestrator', () => {
     mockCursorExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockTTCodexExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockCleanupExecute.mockClear().mockResolvedValue(mockCleanupResultSubmission);
+    mockClaudeKill.mockReset().mockResolvedValue({
+      status: 'success',
+      outcome: 'no_active_process',
+      signalPath: 'none',
+      waitDurationMs: 0,
+      exitCode: 0,
+      stdout: 'No active process',
+      stderr: '',
+    });
+    mockClaudeWKill.mockReset().mockResolvedValue({
+      status: 'success',
+      outcome: 'no_active_process',
+      signalPath: 'none',
+      waitDurationMs: 0,
+      exitCode: 0,
+      stdout: 'No active process',
+      stderr: '',
+    });
+    mockCursorKill.mockReset().mockResolvedValue({
+      status: 'success',
+      outcome: 'no_active_process',
+      signalPath: 'none',
+      waitDurationMs: 0,
+      exitCode: 0,
+      stdout: 'No active process',
+      stderr: '',
+    });
+    mockTTCodexKill.mockReset().mockResolvedValue({
+      status: 'success',
+      outcome: 'no_active_process',
+      signalPath: 'none',
+      waitDurationMs: 0,
+      exitCode: 0,
+      stdout: 'No active process',
+      stderr: '',
+    });
+    mockCleanupKill.mockReset().mockResolvedValue({
+      status: 'success',
+      outcome: 'no_active_process',
+      signalPath: 'none',
+      waitDurationMs: 0,
+      exitCode: 0,
+      stdout: 'No active process',
+      stderr: '',
+    });
     mockGcExecute.mockClear().mockReturnValue(mockGcResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
+    claudeLifecycle = undefined;
     vi.mocked(ClaudeExecutor).mockClear();
     vi.mocked(ClaudeWExecutor).mockClear();
     vi.mocked(CursorExecutor).mockClear();
@@ -176,9 +236,9 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeWExecutor).not.toHaveBeenCalled();
-    expect(CursorExecutor).not.toHaveBeenCalled();
-    expect(CleanupExecutor).not.toHaveBeenCalled();
+    expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
+    expect(CursorExecutor).toHaveBeenCalledTimes(1);
+    expect(CleanupExecutor).toHaveBeenCalledTimes(1);
     expect(mockClaudeExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         executor: 'claude',
@@ -231,9 +291,9 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeExecutor).not.toHaveBeenCalled();
-    expect(CursorExecutor).not.toHaveBeenCalled();
-    expect(CleanupExecutor).not.toHaveBeenCalled();
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
+    expect(CursorExecutor).toHaveBeenCalledTimes(1);
+    expect(CleanupExecutor).toHaveBeenCalledTimes(1);
     expect(mockClaudeWExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         executor: 'claude-w',
@@ -252,9 +312,9 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(CursorExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeExecutor).not.toHaveBeenCalled();
-    expect(ClaudeWExecutor).not.toHaveBeenCalled();
-    expect(CleanupExecutor).not.toHaveBeenCalled();
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
+    expect(CleanupExecutor).toHaveBeenCalledTimes(1);
     expect(mockCursorExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         executor: 'cursor',
@@ -273,10 +333,10 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(TTCodexExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeExecutor).not.toHaveBeenCalled();
-    expect(ClaudeWExecutor).not.toHaveBeenCalled();
-    expect(CursorExecutor).not.toHaveBeenCalled();
-    expect(CleanupExecutor).not.toHaveBeenCalled();
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
+    expect(CursorExecutor).toHaveBeenCalledTimes(1);
+    expect(CleanupExecutor).toHaveBeenCalledTimes(1);
     expect(mockTTCodexExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         executor: 'ttcodex',
@@ -298,8 +358,8 @@ describe('TaskOrchestrator', () => {
     const result = await orchestrator.handle(job);
 
     expect(CleanupExecutor).toHaveBeenCalledTimes(1);
-    expect(ClaudeExecutor).not.toHaveBeenCalled();
-    expect(ClaudeWExecutor).not.toHaveBeenCalled();
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
     expect(mockCleanupExecute).toHaveBeenCalledWith(
       expect.objectContaining({
         task_type: 'cleanup',
@@ -328,6 +388,71 @@ describe('TaskOrchestrator', () => {
       }),
       emptyEnv,
     );
+  });
+
+  it('returns no active process for kill when no executor owns the session', async () => {
+    const result = await orchestrator.handle(createJob({
+      task_type: 'kill',
+      payload: '',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
+    }));
+
+    expect(mockSetup).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      job_id: 'job-456',
+      task_id: 'test-123',
+      task_type: 'kill',
+      session_id: 'session-789',
+      status: 'success',
+      exit_code: 0,
+      stdout: 'Kill outcome: no-op\nNo active process',
+      stderr: '',
+    });
+  });
+
+  it('routes kill to the owning executor instance', async () => {
+    await orchestrator.handle(createJob());
+
+    claudeLifecycle?.onActiveStart({
+      runId: 'run-1',
+      sessionId: 'session-789',
+      executor: 'claude',
+      executorModel: 'opus',
+    });
+
+    mockClaudeKill.mockResolvedValueOnce({
+      status: 'success',
+      outcome: 'terminated_active_process',
+      signalPath: 'SIGTERM -> exited',
+      waitDurationMs: 842,
+      exitCode: 143,
+      stdout: 'captured stdout',
+      stderr: 'captured stderr',
+    });
+
+    const result = await orchestrator.handle(createJob({
+      task_type: 'kill',
+      payload: '',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
+    }));
+
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
+    expect(mockClaudeKill).toHaveBeenCalledWith('session-789', 15000);
+    expect(result.status).toBe('success');
+    expect(result.exit_code).toBe(0);
+    expect(result.executor).toBe('claude');
+    expect(result.executor_model).toBe('opus');
+    expect(result.stdout).toContain('Kill outcome: terminated active process');
+    expect(result.stdout).toContain('Signal path: SIGTERM -> exited');
+    expect(result.stdout).toContain('captured stdout');
+    expect(result.stderr).toBe('captured stderr');
+  });
+
+  it('reuses long-lived executor instances across multiple jobs', async () => {
+    await orchestrator.handle(createJob({ job_id: 'job-1' }));
+    await orchestrator.handle(createJob({ job_id: 'job-2' }));
+
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
   });
 
   it('returns failure result when setup fails', async () => {
@@ -366,11 +491,11 @@ describe('TaskOrchestrator', () => {
     expect(Object.prototype.hasOwnProperty.call(result, 'executor')).toBe(false);
     expect(Object.prototype.hasOwnProperty.call(result, 'executor_model')).toBe(false);
 
-    expect(ClaudeExecutor).not.toHaveBeenCalled();
-    expect(ClaudeWExecutor).not.toHaveBeenCalled();
-    expect(CursorExecutor).not.toHaveBeenCalled();
-    expect(TTCodexExecutor).not.toHaveBeenCalled();
-    expect(CleanupExecutor).not.toHaveBeenCalled();
+    expect(ClaudeExecutor).toHaveBeenCalledTimes(1);
+    expect(ClaudeWExecutor).toHaveBeenCalledTimes(1);
+    expect(CursorExecutor).toHaveBeenCalledTimes(1);
+    expect(TTCodexExecutor).toHaveBeenCalledTimes(1);
+    expect(CleanupExecutor).toHaveBeenCalledTimes(1);
     expect(mockClaudeExecute).not.toHaveBeenCalled();
     expect(mockClaudeWExecute).not.toHaveBeenCalled();
     expect(mockCursorExecute).not.toHaveBeenCalled();

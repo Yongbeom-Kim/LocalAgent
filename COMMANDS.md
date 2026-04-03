@@ -212,6 +212,46 @@ Invalid (extra content):
 - `/end` is rejected unless it can be associated with an existing thread session.
 - When accepted, cleanup may execute only after earlier same-session work finishes.
 
+### /kill
+
+**Purpose**
+
+Stop the currently running managed agent process for the current thread session.
+
+**Grammar**
+
+```text
+/kill
+```
+
+**Valid Contexts**
+
+- Thread reply only.
+
+**Invalid Forms**
+
+- Any use as a root message. (Context invalid.)
+- Any trailing arguments or extra content (including newlines). (Shape invalid.)
+
+**Examples**
+
+Valid:
+
+```text
+/kill
+```
+
+Invalid (extra content):
+
+```text
+/kill now
+```
+
+**Notes**
+
+- `/kill` only targets the current LocalAgent-managed active process for the thread session.
+- The thread session remains active after `/kill`.
+
 ### /gc
 
 **Purpose**
