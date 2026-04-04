@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { rmSync } from 'node:fs';
 import type { Job, TaskResultSubmission } from '@local-agent/shared';
+import type { TaskExecutorLifecycle } from '../ports/task-executor';
 
 const { TEST_SESSION_BASE_DIR } = vi.hoisted(() => ({
   TEST_SESSION_BASE_DIR: `/tmp/local-agent-task-poller-session-lock-test-${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}/session`,
@@ -37,10 +38,15 @@ const mockClaudeExecute = vi.fn();
 const mockCleanupExecute = vi.fn();
 const mockClaudeKill = vi.fn();
 const mockCleanupKill = vi.fn();
+let claudeLifecycle: TaskExecutorLifecycle | undefined;
 
 vi.mock('../adapters/claude-executor', () => {
   return {
-    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute; kill: typeof mockClaudeKill }) {
+    ClaudeExecutor: vi.fn(function (
+      this: { execute: typeof mockClaudeExecute; kill: typeof mockClaudeKill },
+      lifecycle?: TaskExecutorLifecycle,
+    ) {
+      claudeLifecycle = lifecycle;
       this.execute = mockClaudeExecute;
       this.kill = mockClaudeKill;
     }),
@@ -84,6 +90,14 @@ function createMockResult(jobId: string, sessionId: string, taskType = 'generic'
   };
 }
 
+function createSession(sessionId: string, headTaskType: string | null = 'generic') {
+  return {
+    session_id: sessionId,
+    queue_name: `jobs.session.${sessionId}`,
+    head_task_type: headTaskType,
+  };
+}
+
 import { TaskPoller } from '../task-poller';
 import { JobEnvironment } from '../services/job-environment';
 
@@ -116,6 +130,7 @@ describe('TaskPoller Concurrent', () => {
     });
     mockSetup.mockReset().mockResolvedValue(mockEnv);
     mockTeardown.mockReset().mockResolvedValue(undefined);
+    claudeLifecycle = undefined;
 
     mockSessionLock = {
       acquire: vi.fn().mockReturnValue(true),
@@ -147,12 +162,7 @@ describe('TaskPoller Concurrent', () => {
     mockFetch
       .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve({
-          sessions: [
-            { session_id: 'session-A', queue_name: 'jobs.session.session-A' },
-            { session_id: 'session-B', queue_name: 'jobs.session.session-B' },
-          ],
-        }),
+        json: () => Promise.resolve({ sessions: [createSession('session-A'), createSession('session-B')] }),
       })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) });
@@ -194,7 +204,7 @@ describe('TaskPoller Concurrent', () => {
     mockFetch
       .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+        json: () => Promise.resolve({ sessions: [createSession('session-A')] }),
       })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) });
 
@@ -203,7 +213,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch.mockResolvedValueOnce({
       status: 200,
-      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      json: () => Promise.resolve({ sessions: [createSession('session-A')] }),
     });
     await poller.pollOnce();
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
@@ -217,7 +227,7 @@ describe('TaskPoller Concurrent', () => {
     mockFetch
       .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+        json: () => Promise.resolve({ sessions: [createSession('session-A')] }),
       })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
       .mockResolvedValueOnce({ status: 201 })
@@ -232,7 +242,7 @@ describe('TaskPoller Concurrent', () => {
     expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/jobs/session-A/job-1/nack'))).toBe(false);
   });
 
-  it('runs cleanup and kill in normal fifo order for the same session', async () => {
+  it('runs cleanup in normal fifo order for the same session', async () => {
     const jobEnv = new JobEnvironment(false);
     poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
 
@@ -253,7 +263,7 @@ describe('TaskPoller Concurrent', () => {
     mockFetch
       .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+        json: () => Promise.resolve({ sessions: [createSession('session-A')] }),
       })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) });
     await poller.pollOnce();
@@ -261,7 +271,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch.mockResolvedValueOnce({
       status: 200,
-      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      json: () => Promise.resolve({ sessions: [createSession('session-A', 'cleanup')] }),
     });
     await poller.pollOnce();
     expect(mockCleanupExecute).not.toHaveBeenCalled();
@@ -275,7 +285,7 @@ describe('TaskPoller Concurrent', () => {
     mockFetch
       .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+        json: () => Promise.resolve({ sessions: [createSession('session-A', 'cleanup')] }),
       })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
       .mockResolvedValueOnce({ status: 201 })
@@ -305,7 +315,7 @@ describe('TaskPoller Concurrent', () => {
     mockFetch
       .mockResolvedValueOnce({
         status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+        json: () => Promise.resolve({ sessions: [createSession('session-A')] }),
       })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) });
 
@@ -314,7 +324,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch.mockResolvedValueOnce({
       status: 200,
-      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
+      json: () => Promise.resolve({ sessions: [createSession('session-A')] }),
     });
     await poller.pollOnce();
 
@@ -328,5 +338,77 @@ describe('TaskPoller Concurrent', () => {
 
     expect((poller as unknown as { currentPollInterval: number }).currentPollInterval).toBe(1000);
     vi.useRealTimers();
+  });
+
+  it('dispatches queued kill for an active session immediately', async () => {
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 1);
+
+    let resolveActive!: (v: TaskResultSubmission) => void;
+    const activePromise = new Promise<TaskResultSubmission>((r) => { resolveActive = r; });
+
+    mockClaudeExecute.mockImplementationOnce((attempt: { session_id: string }) => {
+      claudeLifecycle?.onActiveStart({
+        runId: 'run-1',
+        sessionId: attempt.session_id,
+        executor: 'claude',
+        executorModel: 'opus',
+      });
+      return activePromise;
+    });
+    mockClaudeKill.mockResolvedValueOnce({
+      status: 'success',
+      outcome: 'terminated_active_process',
+      signalPath: 'SIGTERM -> exited',
+      waitDurationMs: 25,
+      exitCode: 143,
+      stdout: 'killed active job',
+      stderr: '',
+    });
+
+    const activeJob = createJob({ job_id: 'job-active', task_id: 'task-active', session_id: 'session-A' });
+    const killJob = createJob({
+      job_id: 'job-kill',
+      task_id: 'task-kill',
+      session_id: 'session-A',
+      task_type: 'kill',
+      payload: '',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ sessions: [createSession('session-A')] }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) });
+
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 10));
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ sessions: [createSession('session-A', 'kill')] }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(killJob) })
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
+
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mockClaudeKill).toHaveBeenCalledWith('session-A', 15000);
+    expect(mockSessionLock.acquire).toHaveBeenCalledTimes(1);
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 201 })
+      .mockResolvedValueOnce({ status: 200 });
+    resolveActive(createMockResult('job-active', 'session-A'));
+
+    await poller.drain();
+
+    expect(mockSessionLock.release).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/jobs/session-A/job-kill/ack'))).toBe(true);
   });
 });

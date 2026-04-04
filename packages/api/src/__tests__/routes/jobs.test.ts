@@ -96,16 +96,16 @@ describe('GET /jobs/sessions', () => {
 
   it('returns active sessions', async () => {
     mockRabbitMQ.listActiveSessions.mockReturnValueOnce([
-      { session_id: 'session-a', queue_name: 'jobs.session.session-a' },
-      { session_id: 'session-b', queue_name: 'jobs.session.session-b' },
+      { session_id: 'session-a', queue_name: 'jobs.session.session-a', head_task_type: 'generic' },
+      { session_id: 'session-b', queue_name: 'jobs.session.session-b', head_task_type: 'kill' },
     ]);
     const app = buildApp();
     const res = await request(app).get('/jobs/sessions');
     expect(res.status).toBe(200);
     expect(res.body).toEqual({
       sessions: [
-        { session_id: 'session-a', queue_name: 'jobs.session.session-a' },
-        { session_id: 'session-b', queue_name: 'jobs.session.session-b' },
+        { session_id: 'session-a', queue_name: 'jobs.session.session-a', head_task_type: 'generic' },
+        { session_id: 'session-b', queue_name: 'jobs.session.session-b', head_task_type: 'kill' },
       ],
     });
   });

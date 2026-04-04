@@ -13,6 +13,11 @@ const logger = createLogger('task-daemon:poller');
 interface SessionDescriptor {
   session_id: string;
   queue_name: string;
+  head_task_type: string | null;
+}
+
+interface ExecuteJobOptions {
+  skipSessionLock?: boolean;
 }
 
 export class TaskPoller {
@@ -20,6 +25,7 @@ export class TaskPoller {
   private running = false;
   private inFlightJobs = new Map<string, Promise<void>>();
   private activeSessions = new Set<string>();
+  private activeKillSessions = new Set<string>();
   private knownSessions = new Set<string>();
   private basePollInterval = 0;
   private currentPollInterval = 0;
@@ -40,21 +46,27 @@ export class TaskPoller {
       const sessions = await this.fetchActiveSessions();
       this.knownSessions = new Set(sessions.map((session) => session.session_id));
 
-      if (this.inFlightJobs.size >= this.maxConcurrency) {
-        this.increasePollInterval();
-        logger.info(
-          { inFlight: this.inFlightJobs.size, maxConcurrency: this.maxConcurrency },
-          'At capacity, backing off',
-        );
-        return;
-      }
+      let backedOffAtCapacity = false;
 
       for (const session of sessions) {
-        if (this.inFlightJobs.size >= this.maxConcurrency) {
-          this.increasePollInterval();
-          break;
+        const allowKillBypass =
+          session.head_task_type === 'kill' &&
+          this.activeSessions.has(session.session_id) &&
+          !this.activeKillSessions.has(session.session_id);
+
+        if (this.inFlightJobs.size >= this.maxConcurrency && !allowKillBypass) {
+          if (!backedOffAtCapacity) {
+            this.increasePollInterval();
+            logger.info(
+              { inFlight: this.inFlightJobs.size, maxConcurrency: this.maxConcurrency },
+              'At capacity, backing off',
+            );
+            backedOffAtCapacity = true;
+          }
+          continue;
         }
-        if (this.activeSessions.has(session.session_id)) {
+
+        if (this.activeSessions.has(session.session_id) && !allowKillBypass) {
           continue;
         }
 
@@ -63,8 +75,13 @@ export class TaskPoller {
           continue;
         }
 
-        this.activeSessions.add(session.session_id);
-        const promise = this.executeJob(job);
+        if (job.task_type !== 'kill') {
+          this.activeSessions.add(session.session_id);
+        } else {
+          this.activeKillSessions.add(session.session_id);
+        }
+
+        const promise = this.executeJob(job, { skipSessionLock: job.task_type === 'kill' });
         this.inFlightJobs.set(job.job_id, promise);
       }
     } catch (err) {
@@ -100,8 +117,9 @@ export class TaskPoller {
     return job;
   }
 
-  private async executeJob(job: Job): Promise<void> {
-    const lockAcquired = this.sessionLock.acquire(job.session_id, job.job_id);
+  private async executeJob(job: Job, options: ExecuteJobOptions = {}): Promise<void> {
+    const shouldAcquireLock = options.skipSessionLock !== true;
+    const lockAcquired = shouldAcquireLock ? this.sessionLock.acquire(job.session_id, job.job_id) : true;
     if (!lockAcquired) {
       logger.error({ job_id: job.job_id, session_id: job.session_id }, 'Session lock unexpectedly unavailable');
       try {
@@ -163,9 +181,15 @@ export class TaskPoller {
     } catch (err) {
       logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
     } finally {
-      this.sessionLock.release(job.session_id);
+      if (shouldAcquireLock) {
+        this.sessionLock.release(job.session_id);
+      }
       this.inFlightJobs.delete(job.job_id);
-      this.activeSessions.delete(job.session_id);
+      if (job.task_type === 'kill') {
+        this.activeKillSessions.delete(job.session_id);
+      } else {
+        this.activeSessions.delete(job.session_id);
+      }
       this.resetPollInterval();
       logger.info(
         { job_id: job.job_id, inFlight: this.inFlightJobs.size },

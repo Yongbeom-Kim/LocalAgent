@@ -104,6 +104,9 @@ describe('RabbitMQService', () => {
         Buffer.from(JSON.stringify(job)),
         { persistent: true },
       );
+      expect(service.listActiveSessions()).toEqual([
+        { session_id: 'session-1', queue_name: 'jobs.session.session-1', head_task_type: 'generic' },
+      ]);
     });
 
     it('reads and acks jobs from a specific session queue', async () => {
@@ -177,11 +180,59 @@ describe('RabbitMQService', () => {
 
     it('lists active sessions in stable order', async () => {
       await service.connect();
-      await service.ensureSessionJobQueue('session-b');
-      await service.ensureSessionJobQueue('session-a');
+      await service.publishJob({
+        job_id: 'job-b',
+        task_id: 'task-b',
+        task_type: 'kill',
+        payload: '',
+        executors: [{ executor: 'builtin', executor_model: 'none' }],
+        submitted_at: '2026-03-31T00:00:00.000Z',
+        session_id: 'session-b',
+        enriched_at: '2026-03-31T00:00:01.000Z',
+      } as any);
+      await service.publishJob({
+        job_id: 'job-a',
+        task_id: 'task-a',
+        task_type: 'generic',
+        payload: 'a',
+        executors: [{ executor: 'claude', executor_model: 'sonnet' }],
+        submitted_at: '2026-03-31T00:00:00.000Z',
+        session_id: 'session-a',
+        enriched_at: '2026-03-31T00:00:01.000Z',
+      } as any);
       expect(service.listActiveSessions()).toEqual([
-        { session_id: 'session-a', queue_name: 'jobs.session.session-a' },
-        { session_id: 'session-b', queue_name: 'jobs.session.session-b' },
+        { session_id: 'session-a', queue_name: 'jobs.session.session-a', head_task_type: 'generic' },
+        { session_id: 'session-b', queue_name: 'jobs.session.session-b', head_task_type: 'kill' },
+      ]);
+    });
+
+    it('restores the session head task type when a job is nacked for requeue', async () => {
+      await service.connect();
+      const job = {
+        job_id: 'job-kill',
+        task_id: 'task-kill',
+        task_type: 'kill',
+        payload: '',
+        executors: [{ executor: 'builtin', executor_model: 'none' }],
+        submitted_at: '2026-03-31T00:00:00.000Z',
+        session_id: 'session-1',
+        enriched_at: '2026-03-31T00:00:01.000Z',
+      };
+
+      await service.publishJob(job as any);
+      channel.get.mockResolvedValueOnce({
+        content: Buffer.from(JSON.stringify(job)),
+        fields: { deliveryTag: 77 },
+      });
+
+      await service.getNextJobFromSession('session-1');
+      expect(service.listActiveSessions()).toEqual([
+        { session_id: 'session-1', queue_name: 'jobs.session.session-1', head_task_type: null },
+      ]);
+
+      expect(service.nackJobFromSession('session-1', 'job-kill')).toBe(true);
+      expect(service.listActiveSessions()).toEqual([
+        { session_id: 'session-1', queue_name: 'jobs.session.session-1', head_task_type: 'kill' },
       ]);
     });
   });

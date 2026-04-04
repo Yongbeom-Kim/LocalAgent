@@ -20,6 +20,12 @@ interface GetMessage {
 export interface SessionJobDescriptor {
   session_id: string;
   queue_name: string;
+  head_task_type: string | null;
+}
+
+interface SessionQueuedJobMeta {
+  job_id: string;
+  task_type: string;
 }
 
 const logger = createLogger('api:rabbitmq');
@@ -30,6 +36,7 @@ export class RabbitMQService {
   private deliveryMap = new Map<string, GetMessage>();
   private queueDeliveryMaps = new Map<string, Map<string, GetMessage>>();
   private activeSessionQueues = new Set<string>();
+  private pendingSessionJobs = new Map<string, SessionQueuedJobMeta[]>();
 
   constructor(
     private readonly url: string,
@@ -89,6 +96,8 @@ export class RabbitMQService {
   async publishJob(message: Job): Promise<boolean> {
     if (!this.channel) throw new Error('Not connected');
     await this.ensureSessionJobQueue(message.session_id);
+    const pendingJobs = this.getOrCreatePendingSessionJobs(message.session_id);
+    pendingJobs.push({ job_id: message.job_id, task_type: message.task_type });
     const buffer = Buffer.from(JSON.stringify(message));
     return this.channel.publish(DEFAULT_JOBS_EXCHANGE_NAME, message.session_id, buffer, {
       persistent: true,
@@ -105,6 +114,7 @@ export class RabbitMQService {
     }
 
     const parsed = JSON.parse(msg.content.toString()) as Job;
+    this.removePendingSessionJob(sessionId, parsed.job_id);
     const deliveryMap = this.getOrCreateDeliveryMap(queueName);
 
     if (deliveryMap.has(parsed.job_id)) {
@@ -134,6 +144,7 @@ export class RabbitMQService {
       .map((session_id) => ({
         session_id,
         queue_name: RabbitMQService.getSessionQueueName(session_id),
+        head_task_type: this.pendingSessionJobs.get(session_id)?.[0]?.task_type ?? null,
       }));
   }
 
@@ -224,6 +235,9 @@ export class RabbitMQService {
     if (mode === 'ack') {
       this.channel.ack(delivery as any);
     } else {
+      if (requeue) {
+        this.requeuePendingSessionJob(sessionId, delivery);
+      }
       this.channel.nack(delivery as any, false, requeue);
     }
 
@@ -238,5 +252,54 @@ export class RabbitMQService {
       this.queueDeliveryMaps.set(queueName, deliveryMap);
     }
     return deliveryMap;
+  }
+
+  private getOrCreatePendingSessionJobs(sessionId: string): SessionQueuedJobMeta[] {
+    let pendingJobs = this.pendingSessionJobs.get(sessionId);
+    if (!pendingJobs) {
+      pendingJobs = [];
+      this.pendingSessionJobs.set(sessionId, pendingJobs);
+    }
+    return pendingJobs;
+  }
+
+  private removePendingSessionJob(sessionId: string, jobId: string): void {
+    const pendingJobs = this.pendingSessionJobs.get(sessionId);
+    if (!pendingJobs || pendingJobs.length === 0) {
+      return;
+    }
+
+    if (pendingJobs[0]?.job_id === jobId) {
+      pendingJobs.shift();
+    } else {
+      const index = pendingJobs.findIndex((job) => job.job_id === jobId);
+      if (index >= 0) {
+        pendingJobs.splice(index, 1);
+      }
+    }
+
+    if (pendingJobs.length === 0) {
+      this.pendingSessionJobs.delete(sessionId);
+    }
+  }
+
+  private requeuePendingSessionJob(sessionId: string, delivery: GetMessage): void {
+    let parsed: { job_id?: unknown; task_type?: unknown } | null = null;
+    try {
+      parsed = JSON.parse(delivery.content.toString()) as { job_id?: unknown; task_type?: unknown };
+    } catch {
+      return;
+    }
+
+    if (typeof parsed?.job_id !== 'string' || typeof parsed.task_type !== 'string') {
+      return;
+    }
+
+    const pendingJobs = this.getOrCreatePendingSessionJobs(sessionId);
+    if (pendingJobs[0]?.job_id === parsed.job_id) {
+      return;
+    }
+
+    pendingJobs.unshift({ job_id: parsed.job_id, task_type: parsed.task_type });
   }
 }
