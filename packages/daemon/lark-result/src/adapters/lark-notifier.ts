@@ -1,7 +1,6 @@
 import {
   TaskResult,
   createLogger,
-  type TaskSource,
   LarkHistoryRepository,
   type RecordOutboundLarkMessageParams,
 } from '@local-agent/shared';
@@ -18,6 +17,7 @@ const LARK_REACTIONS_URL = (messageId: string) =>
 const LARK_DELETE_REACTION_URL = (messageId: string, reactionId: string) =>
   `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions/${reactionId}`;
 const MAX_RETRIES = DEFAULT_LARK_MAX_RETRIES;
+const NEW_INSTANCE_MARKER = 'New session instance started.';
 
 export class LarkNotifier {
   constructor(
@@ -26,7 +26,12 @@ export class LarkNotifier {
     private readonly recipientId: string,
     private readonly larkHistoryRepository?: Pick<
       LarkHistoryRepository,
-      'recordOutboundLarkMessage' | 'markLarkThreadNewInstance'
+      | 'recordOutboundLarkMessage'
+      | 'markLarkThreadNewInstance'
+      | 'getLarkMessageByMessageId'
+      | 'getLarkThreadByRootMessageId'
+      | 'upsertLarkThreadState'
+      | 'deleteLarkRowsBySessionId'
     >,
   ) {}
 
@@ -133,16 +138,34 @@ export class LarkNotifier {
       return;
     }
 
+    const sourceMessage = await this.larkHistoryRepository.getLarkMessageByMessageId(result.task_source.message_id);
+    const rootMessageId = sourceMessage?.rootMessageId ?? result.task_source.message_id;
+    const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(rootMessageId);
     const createdAtMs = Date.now();
     const eventKind = this.getOutboundEventKind(result);
     const metadataJson = eventKind ? JSON.stringify({ event_kind: eventKind }) : null;
 
+    await this.larkHistoryRepository.upsertLarkThreadState({
+      rootMessageId,
+      threadId: sourceMessage?.threadId ?? existingThread?.threadId ?? null,
+      sessionId: result.session_id,
+      source: 'lark',
+      chatType: existingThread?.chatType ?? null,
+      taskType: result.task_type,
+      executor: result.executor ?? existingThread?.executor ?? 'claude',
+      executorModel: result.executor_model ?? existingThread?.executorModel ?? 'sonnet',
+      status: result.task_type === 'cleanup' ? 'ended' : 'active',
+      createdAtMs: existingThread?.createdAtMs ?? sourceMessage?.createdAtMs ?? createdAtMs,
+      updatedAtMs: createdAtMs,
+      endedAtMs: result.task_type === 'cleanup' ? createdAtMs : null,
+    });
+
     const outboundParams: RecordOutboundLarkMessageParams = {
       messageId: messageIdFromResponse ?? this.buildSyntheticOutboundMessageId(result.result_id),
       source: 'lark',
-      rootMessageId: result.task_source.message_id,
+      rootMessageId,
       sessionId: result.session_id,
-      threadId: null,
+      threadId: sourceMessage?.threadId ?? existingThread?.threadId ?? null,
       messageType: 'text',
       rawContent: JSON.stringify({ text }),
       normalizedText: text,
@@ -152,7 +175,7 @@ export class LarkNotifier {
 
     await this.larkHistoryRepository.recordOutboundLarkMessage(outboundParams);
 
-    if (result.task_type === 'new_instance' && result.executor && result.executor_model) {
+    if (this.isNewInstanceReply(result) && result.executor && result.executor_model) {
       await this.larkHistoryRepository.markLarkThreadNewInstance({
         sessionId: result.session_id,
         executor: result.executor,
@@ -160,10 +183,14 @@ export class LarkNotifier {
         updatedAtMs: createdAtMs,
       });
     }
+
+    if (result.task_type === 'cleanup') {
+      await this.larkHistoryRepository.deleteLarkRowsBySessionId(result.session_id);
+    }
   }
 
   private getOutboundEventKind(result: TaskResult): string | null {
-    if (result.task_type === 'new_instance') {
+    if (this.isNewInstanceReply(result)) {
       return 'new_instance_reply';
     }
 
@@ -176,6 +203,10 @@ export class LarkNotifier {
 
   private buildSyntheticOutboundMessageId(resultId: string): string {
     return `local_outbound_${resultId}`;
+  }
+
+  private isNewInstanceReply(result: TaskResult): boolean {
+    return result.task_type === 'new_instance' || result.stdout.includes(NEW_INSTANCE_MARKER);
   }
 
   /**

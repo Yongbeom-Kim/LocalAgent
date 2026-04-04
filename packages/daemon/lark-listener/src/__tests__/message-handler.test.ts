@@ -36,6 +36,7 @@ describe('MessageHandler', () => {
     upsertInboundLarkMessage: ReturnType<typeof vi.fn>;
     recordOutboundLarkMessage: ReturnType<typeof vi.fn>;
     getLarkThreadByThreadId: ReturnType<typeof vi.fn>;
+    getLarkThreadByRootMessageId: ReturnType<typeof vi.fn>;
   };
   let metadataResolver: { resolve: ReturnType<typeof vi.fn> };
 
@@ -48,6 +49,7 @@ describe('MessageHandler', () => {
       upsertInboundLarkMessage: vi.fn().mockResolvedValue(undefined),
       recordOutboundLarkMessage: vi.fn().mockResolvedValue(undefined),
       getLarkThreadByThreadId: vi.fn().mockResolvedValue(null),
+      getLarkThreadByRootMessageId: vi.fn().mockResolvedValue(null),
     };
     metadataResolver = {
       resolve: vi.fn().mockResolvedValue({ rootMessageId: 'om_msg1', threadId: null }),

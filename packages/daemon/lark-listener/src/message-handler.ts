@@ -61,9 +61,10 @@ export class MessageHandler {
 
     const text = this.extractText(message_type, message.content);
     const threadIdentity = await this.metadataResolver.resolve(message_id);
-    const existingThread = threadIdentity.threadId
-      ? await this.historyRepository.getLarkThreadByThreadId(threadIdentity.threadId)
-      : null;
+    const existingThread =
+      (threadIdentity.threadId
+        ? await this.historyRepository.getLarkThreadByThreadId(threadIdentity.threadId)
+        : null) ?? (await this.historyRepository.getLarkThreadByRootMessageId(threadIdentity.rootMessageId));
     const now = Date.now();
     const sessionId = existingThread?.sessionId ?? threadIdentity.rootMessageId;
 

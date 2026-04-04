@@ -83,4 +83,5 @@ export type {
   UpsertInboundLarkMessageParams,
   RecordOutboundLarkMessageParams,
   MarkLarkThreadNewInstanceParams,
+  UpsertLarkThreadStateParams,
 } from './db/lark-history-repository';

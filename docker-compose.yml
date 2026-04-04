@@ -13,6 +13,20 @@ services:
       timeout: 5s
       retries: 5
 
+  migrator:
+    build:
+      context: .
+      dockerfile: packages/migrator/Dockerfile
+    environment:
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+    volumes:
+      - local-agent-db:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    profiles:
+      - full
+
   api:
     build:
       context: .
@@ -41,13 +55,18 @@ services:
       TASK_DAEMON_STATUS_PORT: "7070"
       LOG_LEVEL: info
       DEBUG: "${DEBUG:-0}"
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
     volumes:
       - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
+      - local-agent-db:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
       api:
         condition: service_started
+      migrator:
+        condition: service_completed_successfully
     profiles:
       - task-daemon
       - full
@@ -63,11 +82,17 @@ services:
       LARK_APP_ID: ${LARK_APP_ID}
       LARK_APP_SECRET: ${LARK_APP_SECRET}
       LARK_RECIPIENT_ID: ${LARK_RECIPIENT_ID}
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+    volumes:
+      - local-agent-db:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
       api:
         condition: service_started
+      migrator:
+        condition: service_completed_successfully
     profiles:
       - lark-result-daemon
       - full
@@ -81,11 +106,17 @@ services:
       POLL_INTERVAL_MS: "5000"
       TASK_DAEMON_STATUS_URL: http://task-daemon:7070
       LOG_LEVEL: info
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+    volumes:
+      - local-agent-db:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
       api:
         condition: service_started
+      migrator:
+        condition: service_completed_successfully
     profiles:
       - task-enrichment-daemon
       - full
@@ -118,10 +149,19 @@ services:
       LOG_LEVEL: info
       LARK_APP_ID: ${LARK_APP_ID}
       LARK_APP_SECRET: ${LARK_APP_SECRET}
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+    volumes:
+      - local-agent-db:/data
     depends_on:
       api:
         condition: service_started
+      migrator:
+        condition: service_completed_successfully
     profiles:
       - lark-listener-daemon
       - full
     restart: unless-stopped
+
+volumes:
+  local-agent-db:

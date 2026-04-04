@@ -33,7 +33,10 @@ describe('LarkNotifier', () => {
     return {
       recordOutboundLarkMessage: vi.fn().mockResolvedValue(undefined),
       markLarkThreadNewInstance: vi.fn().mockResolvedValue(undefined),
-      markLarkThreadEnded: vi.fn().mockResolvedValue(undefined),
+      getLarkMessageByMessageId: vi.fn().mockResolvedValue(null),
+      getLarkThreadByRootMessageId: vi.fn().mockResolvedValue(null),
+      upsertLarkThreadState: vi.fn().mockResolvedValue(undefined),
+      deleteLarkRowsBySessionId: vi.fn().mockResolvedValue(undefined),
     };
   }
 
@@ -64,6 +67,11 @@ describe('LarkNotifier', () => {
     }));
 
     expect(repository.recordOutboundLarkMessage).toHaveBeenCalledTimes(1);
+    expect(repository.upsertLarkThreadState).toHaveBeenCalledWith(expect.objectContaining({
+      rootMessageId: 'om_root_1',
+      sessionId: 'session_1',
+      taskType: 'code_review',
+    }));
     expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
       messageId: 'om_reply_1',
       source: 'lark',
@@ -138,7 +146,76 @@ describe('LarkNotifier', () => {
     expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session_3',
     }));
+    expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3');
     expect(repository.markLarkThreadNewInstance).not.toHaveBeenCalled();
+  });
+
+  it('promotes placeholder root thread rows to the real session_id on first successful reply', async () => {
+    const repository = createRepositoryMocks();
+    repository.getLarkMessageByMessageId.mockResolvedValue({
+      messageId: 'om_root_4',
+      source: 'lark',
+      rootMessageId: 'om_root_4',
+      sessionId: 'om_root_4',
+      threadId: null,
+      direction: 'inbound',
+      senderType: 'user',
+      messageType: 'text',
+      rawContent: '{"text":"start"}',
+      normalizedText: 'start',
+      metadataJson: null,
+      createdAtMs: 100,
+    });
+    repository.getLarkThreadByRootMessageId.mockResolvedValue({
+      rootMessageId: 'om_root_4',
+      threadId: null,
+      sessionId: 'om_root_4',
+      source: 'lark',
+      chatType: 'p2p',
+      taskType: 'thread_reply',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 100,
+      updatedAtMs: 100,
+      endedAtMs: null,
+    });
+
+    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository);
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_4' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
+      });
+
+    await dbNotifier.notify(createResult({
+      task_type: 'deploy',
+      session_id: 'session_real_4',
+      executor: 'cursor',
+      executor_model: 'gpt-5.4-medium-fast',
+      task_source: { source: 'lark', message_id: 'om_root_4' },
+    }));
+
+    expect(repository.upsertLarkThreadState).toHaveBeenCalledWith(expect.objectContaining({
+      rootMessageId: 'om_root_4',
+      sessionId: 'session_real_4',
+      executor: 'cursor',
+      executorModel: 'gpt-5.4-medium-fast',
+      taskType: 'deploy',
+    }));
+    expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
+      rootMessageId: 'om_root_4',
+      sessionId: 'session_real_4',
+    }));
   });
 
   it('fetches tenant access token and sends message on success', async () => {
