@@ -56,8 +56,8 @@ describe('GcExecutor', () => {
     vi.restoreAllMocks();
   });
 
-  it('returns success when base dir is missing', () => {
-    const result = executor.execute(createJob());
+  it('returns success when base dir is missing', async () => {
+    const result = await executor.execute(createJob());
 
     expect(result).toEqual({
       job_id: 'job-gc-001',
@@ -70,63 +70,63 @@ describe('GcExecutor', () => {
     });
   });
 
-  it('returns zero counts for empty session dir', () => {
+  it('returns zero counts for empty session dir', async () => {
     mkdirSync(TEST_SESSION_BASE_DIR, { recursive: true });
 
-    const result = executor.execute(createJob());
+    const result = await executor.execute(createJob());
 
     expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 0.');
   });
 
-  it('removes stale directories', () => {
+  it('removes stale directories', async () => {
     const staleDir = makeDir('stale-session');
     setDirAge(staleDir, TEST_SESSION_DIR_TTL_DAYS + 1);
 
-    const result = executor.execute(createJob());
+    const result = await executor.execute(createJob());
 
     expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
     expect(() => rmSync(staleDir, { recursive: true, force: true })).not.toThrow();
   });
 
-  it('retains fresh directories', () => {
+  it('retains fresh directories', async () => {
     const freshDir = makeDir('fresh-session');
     setDirAge(freshDir, 1);
 
-    const result = executor.execute(createJob());
+    const result = await executor.execute(createJob());
 
     expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 1.');
   });
 
-  it('handles mixed stale and fresh directories', () => {
+  it('handles mixed stale and fresh directories', async () => {
     const staleDir = makeDir('stale-session');
     const freshDir = makeDir('fresh-session');
     setDirAge(staleDir, TEST_SESSION_DIR_TTL_DAYS + 1);
     setDirAge(freshDir, 1);
 
-    const result = executor.execute(createJob());
+    const result = await executor.execute(createJob());
 
     expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 1.');
   });
 
-  it('propagates task_source when present', () => {
-    const result = executor.execute(createJob({
+  it('propagates task_source when present', async () => {
+    const result = await executor.execute(createJob({
       task_source: { source: 'lark', message_id: 'om_msg1' },
     }));
 
     expect(result.task_source).toEqual({ source: 'lark', message_id: 'om_msg1' });
   });
 
-  it('ignores non-directory entries', () => {
+  it('ignores non-directory entries', async () => {
     mkdirSync(TEST_SESSION_BASE_DIR, { recursive: true });
     writeFileSync(join(TEST_SESSION_BASE_DIR, 'note.txt'), 'hello');
 
-    const result = executor.execute(createJob());
+    const result = await executor.execute(createJob());
 
     expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 0.');
   });
 
   describe('lock-aware GC', () => {
-    it('skips a stale session directory that has a live PID lock file', () => {
+    it('skips a stale session directory that has a live PID lock file', async () => {
       const sessionDir = makeDir('locked-session');
 
       // Write a lock file with the current (live) PID
@@ -140,13 +140,13 @@ describe('GcExecutor', () => {
       // Set age after writing the lock file so directory mtime is old
       setDirAge(sessionDir, TEST_SESSION_DIR_TTL_DAYS + 1);
 
-      const result = executor.execute(createJob());
+      const result = await executor.execute(createJob());
 
       // Locked session should be retained, not removed
       expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 1.');
     });
 
-    it('removes a stale session directory with a dead PID lock file', () => {
+    it('removes a stale session directory with a dead PID lock file', async () => {
       const sessionDir = makeDir('stale-locked-session');
 
       // Use max signed 32-bit PID as a deterministic non-existent PID.
@@ -161,20 +161,33 @@ describe('GcExecutor', () => {
       // Set age after writing the lock file so directory mtime is old
       setDirAge(sessionDir, TEST_SESSION_DIR_TTL_DAYS + 1);
 
-      const result = executor.execute(createJob());
+      const result = await executor.execute(createJob());
 
       // Stale lock (dead PID) should not protect the directory
       expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
     });
 
-    it('removes a stale session directory with no lock file (normal age-based behavior unchanged)', () => {
+    it('removes a stale session directory with no lock file (normal age-based behavior unchanged)', async () => {
       const sessionDir = makeDir('no-lock-session');
       setDirAge(sessionDir, TEST_SESSION_DIR_TTL_DAYS + 1);
 
-      const result = executor.execute(createJob());
+      const result = await executor.execute(createJob());
 
       expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
     });
+  });
+
+  it('removes ended lark sqlite rows during gc safety-net cleanup', async () => {
+    const listEndedSessionIds = vi.fn().mockResolvedValue(['session-ended-1', 'session-ended-2']);
+    const deleteRowsBySessionId = vi.fn().mockResolvedValue(undefined);
+    const gcWithDbCleanup = new GcExecutor(listEndedSessionIds, deleteRowsBySessionId);
+
+    const result = await gcWithDbCleanup.execute(createJob());
+
+    expect(listEndedSessionIds).toHaveBeenCalledTimes(1);
+    expect(deleteRowsBySessionId).toHaveBeenCalledWith('session-ended-1');
+    expect(deleteRowsBySessionId).toHaveBeenCalledWith('session-ended-2');
+    expect(result.stdout).toBe('GC complete: no session directories found.');
   });
 
 });
