@@ -35,22 +35,17 @@ vi.mock('../services/job-environment', () => ({
 
 const mockClaudeExecute = vi.fn();
 const mockCleanupExecute = vi.fn();
-const mockClaudeKill = vi.fn();
-const mockCleanupKill = vi.fn();
-
 vi.mock('../adapters/claude-executor', () => {
   return {
-    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute; kill: typeof mockClaudeKill }) {
+    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
       this.execute = mockClaudeExecute;
-      this.kill = mockClaudeKill;
     }),
   };
 });
 
 vi.mock('../adapters/cleanup-executor', () => ({
-  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute; kill: typeof mockCleanupKill }) {
+  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute }) {
     this.execute = mockCleanupExecute;
-    this.kill = mockCleanupKill;
   }),
 }));
 
@@ -96,24 +91,6 @@ describe('TaskPoller Concurrent', () => {
     mockFetch.mockReset();
     mockClaudeExecute.mockReset();
     mockCleanupExecute.mockReset();
-    mockClaudeKill.mockReset().mockResolvedValue({
-      status: 'success',
-      outcome: 'no_active_process',
-      signalPath: 'none',
-      waitDurationMs: 0,
-      exitCode: 0,
-      stdout: 'No active process',
-      stderr: '',
-    });
-    mockCleanupKill.mockReset().mockResolvedValue({
-      status: 'success',
-      outcome: 'no_active_process',
-      signalPath: 'none',
-      waitDurationMs: 0,
-      exitCode: 0,
-      stdout: 'No active process',
-      stderr: '',
-    });
     mockSetup.mockReset().mockResolvedValue(mockEnv);
     mockTeardown.mockReset().mockResolvedValue(undefined);
 
@@ -232,7 +209,7 @@ describe('TaskPoller Concurrent', () => {
     expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/jobs/session-A/job-1/nack'))).toBe(false);
   });
 
-  it('runs cleanup and kill in normal fifo order for the same session', async () => {
+  it('runs cleanup in normal fifo order for the same session', async () => {
     const jobEnv = new JobEnvironment(false);
     poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
 

@@ -14,12 +14,9 @@ import type { ThreadContextFetcher, ThreadContextResult } from './adapters/threa
 
 const logger = createLogger('enrichment-daemon:poller');
 const CLEANUP_TASK_TYPE = 'cleanup';
-const KILL_TASK_TYPE = 'kill';
 const GC_TASK_TYPE = 'gc';
 const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an inherited session_id from the thread root.';
 const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
-const KILL_REJECTION_REASON = 'Kill tasks in existing threads require an inherited session_id from the thread root.';
-const KILL_MISSING_SOURCE_REASON = 'Kill tasks require a Lark task source to resolve the existing session.';
 const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
 const STATUS_TASK_TYPE = 'status';
@@ -34,7 +31,7 @@ const THREAD_REPLY_INCOMPLETE_METADATA_REASON =
   'Cannot continue this thread because the inherited thread metadata is incomplete.';
 const STATUS_INCOMPLETE_METADATA_REASON =
   'Cannot check /status because the inherited thread metadata is incomplete.';
-const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end, /kill (in a thread)`;
+const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end (in a thread)`;
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
 
@@ -122,7 +119,6 @@ export class EnrichmentPoller {
       logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
 
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
-      const isKillTask = task.task_type === KILL_TASK_TYPE;
       const isGcTask = task.task_type === GC_TASK_TYPE;
       const isNewInstanceTask = task.task_type === NEW_INSTANCE_TASK_TYPE;
       const isStatusTask = task.task_type === STATUS_TASK_TYPE;
@@ -132,13 +128,6 @@ export class EnrichmentPoller {
       if (isCleanupTask && task.task_source?.source !== 'lark') {
         logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected cleanup task without lark task_source');
         await this.publishRejection(task, CLEANUP_MISSING_SOURCE_REASON);
-        await this.ackTask(task.task_id);
-        return;
-      }
-
-      if (isKillTask && task.task_source?.source !== 'lark') {
-        logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected kill task without lark task_source');
-        await this.publishRejection(task, KILL_MISSING_SOURCE_REASON);
         await this.ackTask(task.task_id);
         return;
       }
@@ -169,13 +158,6 @@ export class EnrichmentPoller {
         if (isCleanupTask && threadResult.kind === 'not_thread') {
           logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without thread context');
           await this.publishRejection(task, formatThreadOnlyCommandMessage('/end'));
-          await this.ackTask(task.task_id);
-          return;
-        }
-
-        if (isKillTask && threadResult.kind === 'not_thread') {
-          logger.warn({ task_id: task.task_id }, 'Rejected kill task without thread context');
-          await this.publishRejection(task, formatThreadOnlyCommandMessage('/kill'));
           await this.ackTask(task.task_id);
           return;
         }
@@ -235,48 +217,6 @@ export class EnrichmentPoller {
           }
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for gc task — not acking task');
-          return;
-        }
-
-        await this.ackTask(task.task_id);
-        return;
-      }
-
-      if (isKillTask && threadResult?.kind === 'thread' && !threadResult.inheritedSessionId) {
-        logger.warn({ task_id: task.task_id }, 'Rejected kill task without inherited session_id');
-        await this.publishRejection(task, KILL_REJECTION_REASON);
-        await this.ackTask(task.task_id);
-        return;
-      }
-
-      if (isKillTask) {
-        const inheritedType = threadResult?.kind === 'thread' ? (threadResult.inheritedTaskType ?? task.task_type) : task.task_type;
-
-        const enrichmentResult = this.enrichmentService.enrich(
-          { ...task, task_type: KILL_TASK_TYPE, payload: '' },
-          threadResult!.inheritedSessionId!,
-          inheritedType,
-        );
-
-        if (enrichmentResult.type === 'rejected') {
-          logger.warn({ task_id: task.task_id, reason: enrichmentResult.reason }, 'Enrichment rejected kill task');
-          await this.publishRejection(task, enrichmentResult.reason);
-          await this.ackTask(task.task_id);
-          return;
-        }
-
-        try {
-          const jobRes = await fetch(`${this.apiUrl}/jobs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(enrichmentResult.job),
-          });
-          if (jobRes.status !== 201) {
-            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for kill task — not acking task');
-            return;
-          }
-        } catch (jobErr) {
-          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for kill task — not acking task');
           return;
         }
 

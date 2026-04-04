@@ -5,7 +5,7 @@ import type { LarkReplier } from './adapters/lark-replier';
 import type { DedupMap } from './services/dedup';
 
 const logger = createLogger('lark-listener:handler');
-const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end, /kill (in a thread)';
+const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)';
 
 interface LarkMessageEvent {
   sender: {
@@ -117,14 +117,6 @@ export class MessageHandler {
       return { kind: 'usage' };
     }
 
-    if (payload === '/kill') {
-      return { kind: 'submit', taskType: 'kill', taskPayload: '' };
-    }
-
-    if (payload.startsWith('/kill ') || payload.startsWith('/kill\n')) {
-      return { kind: 'usage' };
-    }
-
     if (payload === '/task' || payload.startsWith('/task ') || payload.startsWith('/task\n')) {
       const taskParse = this.parseTaskCommand(payload);
       if (taskParse === null) {
@@ -144,7 +136,7 @@ export class MessageHandler {
       return { kind: 'usage' };
     }
 
-    if (payload.startsWith('/new') || payload.startsWith('/end') || payload.startsWith('/status') || payload.startsWith('/kill') || payload.startsWith('/gc')) {
+    if (payload.startsWith('/new') || payload.startsWith('/end') || payload.startsWith('/status') || payload.startsWith('/gc')) {
       return { kind: 'usage' };
     }
 

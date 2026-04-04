@@ -4,14 +4,7 @@ import { CleanupExecutor } from '../adapters/cleanup-executor';
 import { ClaudeWExecutor } from '../adapters/claude-w-executor';
 import { CursorExecutor } from '../adapters/cursor-executor';
 import { TTCodexExecutor } from '../adapters/ttcodex-executor';
-import {
-  DEFAULT_KILL_GRACE_PERIOD_MS,
-  EXECUTION_KILLED_MESSAGE,
-  ExecutorActiveSession,
-  ExecutorKillResult,
-  TaskExecutor,
-  TaskExecutorLifecycle,
-} from '../ports/task-executor';
+import { TaskExecutor } from '../ports/task-executor';
 import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
 import { SetupHookExecutionError } from '../services/setup-hook-runner';
@@ -25,28 +18,15 @@ const EMPTY_EXECUTION_ENVIRONMENT: ExecutionEnvironment = {
 };
 
 export class TaskOrchestrator {
-  private readonly sessionOwners = new Map<string, ExecutorActiveSession>();
   private readonly executors: Record<TaskExecutorType, TaskExecutor>;
 
   constructor(private readonly jobEnv: JobEnvironment) {
-    const lifecycle: TaskExecutorLifecycle = {
-      onActiveStart: (info) => {
-        this.sessionOwners.set(info.sessionId, info);
-      },
-      onActiveEnd: (info) => {
-        const current = this.sessionOwners.get(info.sessionId);
-        if (current?.runId === info.runId) {
-          this.sessionOwners.delete(info.sessionId);
-        }
-      },
-    };
-
     this.executors = {
-      claude: new ClaudeExecutor(lifecycle),
-      'claude-w': new ClaudeWExecutor(lifecycle),
+      claude: new ClaudeExecutor(),
+      'claude-w': new ClaudeWExecutor(),
       builtin: new CleanupExecutor(),
-      cursor: new CursorExecutor(lifecycle),
-      ttcodex: new TTCodexExecutor(lifecycle),
+      cursor: new CursorExecutor(),
+      ttcodex: new TTCodexExecutor(),
     };
   }
 
@@ -60,10 +40,6 @@ export class TaskOrchestrator {
       logger.info({ job_id: job.job_id, task_id: job.task_id }, 'Processing gc job');
       const gcExecutor = new GcExecutor();
       return gcExecutor.execute(job);
-    }
-
-    if (job.task_type === 'kill') {
-      return this.handleKill(job);
     }
 
     if (job.executors.length === 0) {
@@ -130,10 +106,6 @@ export class TaskOrchestrator {
         return lastResult;
       }
 
-      if (lastResult.stderr === EXECUTION_KILLED_MESSAGE) {
-        return lastResult;
-      }
-
       if (attempt < maxAttempts) {
         logger.warn({ job_id: job.job_id, attempt }, 'new_instance attempt failed, will retry');
       }
@@ -179,10 +151,6 @@ export class TaskOrchestrator {
           return lastResult;
         }
 
-        if (lastResult.stderr === EXECUTION_KILLED_MESSAGE) {
-          return lastResult;
-        }
-
         if (!isLast) {
           logger.warn(
             { job_id: job.job_id, executor: pref.executor, model: pref.executor_model, attempt: i + 1 },
@@ -213,73 +181,6 @@ export class TaskOrchestrator {
     }
 
     return lastResult!;
-  }
-
-  private async handleKill(job: Job): Promise<TaskResultSubmission> {
-    const owner = this.sessionOwners.get(job.session_id);
-
-    if (!owner) {
-      return {
-        job_id: job.job_id,
-        task_id: job.task_id,
-        task_type: job.task_type,
-        session_id: job.session_id,
-        status: 'success',
-        exit_code: 0,
-        stdout: 'Kill outcome: no-op\nNo active process',
-        stderr: '',
-      };
-    }
-
-    const killResult = await this.executors[owner.executor].kill(job.session_id, DEFAULT_KILL_GRACE_PERIOD_MS);
-    if (killResult.status === 'failure') {
-      return {
-        job_id: job.job_id,
-        task_id: job.task_id,
-        task_type: job.task_type,
-        session_id: job.session_id,
-        status: 'failure',
-        exit_code: killResult.exitCode,
-        stdout: killResult.stdout,
-        stderr: killResult.stderr,
-        executor: owner.executor,
-        executor_model: owner.executorModel,
-      };
-    }
-
-    return {
-      job_id: job.job_id,
-      task_id: job.task_id,
-      task_type: job.task_type,
-      session_id: job.session_id,
-      status: 'success',
-      exit_code: 0,
-      stdout: this.formatKillStdout(owner, killResult),
-      stderr: killResult.stderr,
-      executor: owner.executor,
-      executor_model: owner.executorModel,
-    };
-  }
-
-  private formatKillStdout(owner: ExecutorActiveSession, result: ExecutorKillResult): string {
-    if (result.outcome === 'no_active_process') {
-      return 'Kill outcome: no-op\nNo active process';
-    }
-
-    const lines = [
-      'Kill outcome: terminated active process',
-      `Executor: ${owner.executor}`,
-      `Model: ${owner.executorModel}`,
-      `Signal path: ${result.signalPath}`,
-      `Wait duration: ${result.waitDurationMs}ms`,
-      'Captured stdout:',
-    ];
-
-    if (result.stdout) {
-      lines.push(result.stdout);
-    }
-
-    return lines.join('\n');
   }
 
   private resolveExecutor(executor: TaskExecutorType): TaskExecutor {

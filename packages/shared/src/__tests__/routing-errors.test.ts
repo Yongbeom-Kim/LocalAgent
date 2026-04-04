@@ -89,22 +89,19 @@ describe('progressive /task help', () => {
 describe('thread routing guidance messages', () => {
   it('formats thread reply help message', () => {
     expect(formatThreadReplyHelpMessage()).toBe(
-      'Thread replies must be natural language, /status, /new, /end, or /kill.',
+      'Thread replies must be natural language, /status, /new, or /end.',
     );
   });
 
   it('formats /task rejected in thread message', () => {
     expect(formatThreadTaskCommandRejectedMessage()).toBe(
-      'Cannot use /task in a thread. Reply with natural language, /status, /new, /end, or /kill.\nUse /task only as a new root message.',
+      'Cannot use /task in a thread. Reply with natural language, /status, /new, or /end.\nUse /task only as a new root message.',
     );
   });
 
   it('formats thread-only command message', () => {
     expect(formatThreadOnlyCommandMessage('/new')).toBe(
       'The /new command can only be used inside a thread.',
-    );
-    expect(formatThreadOnlyCommandMessage('/kill')).toBe(
-      'The /kill command can only be used inside a thread.',
     );
   });
 
