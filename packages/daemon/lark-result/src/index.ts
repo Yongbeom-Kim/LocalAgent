@@ -7,11 +7,6 @@ async function main() {
   const config = loadLarkDaemonConfig();
   const logger = createLogger('lark-daemon', config.logLevel);
 
-  if (!config.larkAppId?.trim() || !config.larkAppSecret?.trim() || !config.larkRecipientId?.trim()) {
-    logger.fatal('LARK_APP_ID, LARK_APP_SECRET, and LARK_RECIPIENT_ID must be set and non-empty');
-    process.exit(1);
-  }
-
   logger.info(
     { apiUrl: config.apiUrl, pollIntervalMs: config.pollIntervalMs, queueName: DEFAULT_LARK_QUEUE_NAME },
     'Starting lark-daemon',

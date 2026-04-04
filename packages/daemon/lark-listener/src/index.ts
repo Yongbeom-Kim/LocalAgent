@@ -1,61 +1,36 @@
-import * as lark from '@larksuiteoapi/node-sdk';
 import { createLogger } from '@local-agent/shared';
+import { LarkClient } from '@larksuiteoapi/node-sdk';
 import { loadLarkListenerConfig } from './config';
-import { MessageHandler } from './message-handler';
 import { TaskSubmitter } from './adapters/task-submitter';
 import { LarkReactor } from './adapters/lark-reactor';
 import { LarkReplier } from './adapters/lark-replier';
+import { MessageHandler } from './message-handler';
 import { DedupMap } from './services/dedup';
+
+const logger = createLogger('lark-listener');
 
 async function main() {
   const config = loadLarkListenerConfig();
-  const logger = createLogger('lark-listener', config.logLevel);
 
-  if (!config.appId?.trim() || !config.appSecret?.trim()) {
-    logger.fatal('LARK_APP_ID and LARK_APP_SECRET must be set and non-empty');
-    process.exit(1);
-  }
+  logger.info({ apiUrl: config.apiUrl, dedupTtlMs: config.dedupTtlMs }, 'Starting lark-listener');
 
-  logger.info({ apiUrl: config.apiUrl }, 'Starting lark-listener daemon');
-
+  const client = new LarkClient({ appId: config.appId, appSecret: config.appSecret });
   const submitter = new TaskSubmitter(config.apiUrl);
-  const reactor = new LarkReactor(config.appId, config.appSecret);
-  const replier = new LarkReplier(config.appId, config.appSecret);
+  const reactor = new LarkReactor(client);
+  const replier = new LarkReplier(client);
   const dedup = new DedupMap({ ttlMs: config.dedupTtlMs });
   const handler = new MessageHandler(submitter, reactor, replier, dedup);
 
-  const eventDispatcher = new lark.EventDispatcher({}).register({
-    'im.message.receive_v1': async (data: unknown) => {
-      try {
-        await handler.handle(data as Parameters<typeof handler.handle>[0]);
-      } catch (err) {
-        logger.error({ err }, 'Unhandled error in message handler');
-      }
-    },
+  const ws = client.ws;
+  ws.event('im.message.receive_v1', async ({ data }: any) => {
+    if (!data) return;
+    await handler.handle(data);
   });
 
-  const wsClient = new lark.WSClient({
-    appId: config.appId,
-    appSecret: config.appSecret,
-    loggerLevel: lark.LoggerLevel.info,
-  });
-
-  wsClient.start({ eventDispatcher });
-  logger.info('WebSocket client started, listening for messages');
-
-  const shutdown = () => {
-    logger.info('Shutting down lark-listener daemon...');
-    wsClient.close();
-    dedup.destroy();
-    process.exit(0);
-  };
-
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
+  await ws.start();
 }
 
 main().catch((err) => {
-  const logger = createLogger('lark-listener');
   logger.fatal({ err }, 'Fatal error');
   process.exit(1);
 });

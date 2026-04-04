@@ -168,7 +168,7 @@ Important deployment note: `task-enrichment-daemon` and `task-daemon` are separa
 Configuration (recommended):
 
 - `TASK_DAEMON_STATUS_PORT` (task-daemon bind port, default `7070`)
-- `TASK_DAEMON_STATUS_URL` (task-enrichment base URL; examples: `http://task-daemon:7070` in compose, `http://127.0.0.1:7070` for single-host dev)
+- `TASK_DAEMON_STATUS_URL` (task-enrichment base URL; examples: `http://task-daemon:7070` in Compose, `http://127.0.0.1:7070` for local bare-metal or single-host dev)
 
 `docker-compose.yml` should set these env vars for the two services (without publishing the port to the host).
 

@@ -1,8 +1,8 @@
 import {
-  DEFAULT_API_URL,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_LOG_LEVEL,
   loadEnvFromRoot,
+  requireEnvValue,
 } from '@local-agent/shared';
 
 loadEnvFromRoot();
@@ -18,11 +18,11 @@ export interface LarkDaemonConfig {
 
 export function loadLarkDaemonConfig(env: Record<string, string | undefined> = process.env): LarkDaemonConfig {
   return {
-    apiUrl: env.API_URL ?? DEFAULT_API_URL,
+    apiUrl: requireEnvValue(env, 'API_URL'),
     pollIntervalMs: env.POLL_INTERVAL_MS ? parseInt(env.POLL_INTERVAL_MS, 10) : DEFAULT_POLL_INTERVAL_MS,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
-    larkAppId: env.LARK_APP_ID ?? '',
-    larkAppSecret: env.LARK_APP_SECRET ?? '',
-    larkRecipientId: env.LARK_RECIPIENT_ID ?? '',
+    larkAppId: requireEnvValue(env, 'LARK_APP_ID'),
+    larkAppSecret: requireEnvValue(env, 'LARK_APP_SECRET'),
+    larkRecipientId: requireEnvValue(env, 'LARK_RECIPIENT_ID'),
   };
 }

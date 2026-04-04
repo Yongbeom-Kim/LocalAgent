@@ -22,16 +22,18 @@ rush build
 cp .env.example .env
 ```
 
-The defaults work out of the box for localhost. Edit `.env` only if you need to change ports or add notification credentials:
+Copy `.env.example` before starting anything. Service endpoint variables are required and daemons now fail fast if they are missing:
 
 | Variable | Default | Required |
 |----------|---------|----------|
 | `PORT` | `3000` | No |
-| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672` | No |
-| `API_URL` | `http://localhost:3000` | No |
+| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672` | Yes |
+| `API_URL` | `http://localhost:3000` | Yes |
 | `POLL_INTERVAL_MS` | `5000` | No |
-| `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | — | Only for Lark daemon |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Only for Telegram daemon |
+| `TASK_DAEMON_STATUS_PORT` | `7070` | No |
+| `TASK_DAEMON_STATUS_URL` | `http://127.0.0.1:7070` | Yes for `task-enrichment` |
+| `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | — | Yes for Lark services |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Yes for Telegram daemon |
 
 ## 3. Start RabbitMQ
 
