@@ -61,19 +61,24 @@ export class MessageHandler {
 
     const text = this.extractText(message_type, message.content);
     const threadIdentity = await this.metadataResolver.resolve(message_id);
+    const existingThread = threadIdentity.threadId
+      ? await this.historyRepository.getLarkThreadByThreadId(threadIdentity.threadId)
+      : null;
+    const now = Date.now();
+    const sessionId = existingThread?.sessionId ?? threadIdentity.rootMessageId;
 
     await this.historyRepository.upsertInboundLarkMessage({
       rootMessageId: threadIdentity.rootMessageId,
       threadId: threadIdentity.threadId,
-      sessionId: threadIdentity.rootMessageId,
+      sessionId,
       source: 'lark',
       chatType: message.chat_type ?? null,
-      taskType: 'thread_reply',
-      executor: 'claude',
-      executorModel: 'sonnet',
-      status: 'active',
-      threadCreatedAtMs: Date.now(),
-      threadUpdatedAtMs: Date.now(),
+      taskType: existingThread?.taskType ?? 'thread_reply',
+      executor: existingThread?.executor ?? 'claude',
+      executorModel: existingThread?.executorModel ?? 'sonnet',
+      status: existingThread?.status ?? 'active',
+      threadCreatedAtMs: existingThread?.createdAtMs ?? now,
+      threadUpdatedAtMs: now,
       message: {
         messageId: message_id,
         messageType: message_type,
@@ -84,7 +89,7 @@ export class MessageHandler {
           sender_type: event.sender.sender_type,
           mentions: message.mentions ?? [],
         }),
-        createdAtMs: Date.now(),
+        createdAtMs: now,
       },
     });
 
@@ -92,7 +97,7 @@ export class MessageHandler {
 
     if (parsed.kind === 'usage') {
       const replyResult = await this.replier.reply(message_id, USAGE_HINT);
-      await this.persistUsageReply(replyResult, threadIdentity);
+      await this.persistUsageReply(replyResult, threadIdentity, sessionId);
       return;
     }
 
@@ -218,6 +223,7 @@ export class MessageHandler {
   private async persistUsageReply(
     replyResult: LarkReplyResult | null,
     threadIdentity: ResolvedThreadIdentity,
+    sessionId: string,
   ): Promise<void> {
     if (!replyResult?.messageId) {
       return;
@@ -227,7 +233,7 @@ export class MessageHandler {
       messageId: replyResult.messageId,
       source: 'lark',
       rootMessageId: threadIdentity.rootMessageId,
-      sessionId: threadIdentity.rootMessageId,
+      sessionId,
       threadId: threadIdentity.threadId,
       messageType: replyResult.messageType,
       rawContent: replyResult.rawContent,
