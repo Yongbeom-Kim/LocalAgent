@@ -74,8 +74,13 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     }
   });
 
-  router.get('/sessions', (req: Request, res: Response) => {
-    res.status(200).json({ sessions: rabbitmq.listActiveSessions() });
+  router.get('/sessions', async (req: Request, res: Response) => {
+    try {
+      const sessions = await rabbitmq.listSessionQueues();
+      res.status(200).json({ sessions });
+    } catch {
+      res.status(503).json({ error: 'Session queue discovery unavailable' });
+    }
   });
 
   router.get('/next/:sessionId', async (req: Request, res: Response, next: NextFunction) => {

@@ -41,7 +41,16 @@ export {
   formatThreadTaskCommandRejectedMessage,
   formatThreadOnlyCommandMessage,
 } from './routing-errors';
-export { loadApiConfig, loadDaemonConfig, loadEnvFromRoot, requireEnvValue, ApiConfig, DaemonConfig } from './config';
+export {
+  loadApiConfig,
+  loadDaemonConfig,
+  loadEnvFromRoot,
+  requireEnvValue,
+  deriveRabbitMqManagementConfig,
+  type ApiConfig,
+  type DaemonConfig,
+  type RabbitMqManagementConfig,
+} from './config';
 export { createLogger } from './logger';
 export {
   DEFAULT_QUEUE_NAME,
