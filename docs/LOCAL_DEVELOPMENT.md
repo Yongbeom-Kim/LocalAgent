@@ -51,7 +51,9 @@ Copy `.env.example` before starting anything. Service endpoint variables are req
 | `TASK_DAEMON_STATUS_PORT` | `7070` | No |
 | `TASK_DAEMON_DISABLE_MACHINE_LOCK` | unset | No; test/debug only |
 | `TASK_DAEMON_STATUS_URL` | Example: `http://127.0.0.1:7070` | Yes for `task-enrichment` |
-| `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | Provided by your Lark app | Yes for Lark services |
+| `LOCAL_AGENT_DB_PATH` | Example: `/tmp/local-agent.sqlite` | Yes for `task`, `task-enrichment`, `lark-listener`, `lark-result`, `migrator` |
+| `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` | `1` | Recommended for non-migrator services |
+| `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | Provided by your Lark app | Yes for `lark-listener` and `lark-result` |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Provided by your Telegram bot/chat | Yes for Telegram daemon |
 
 ## 3. Start RabbitMQ
@@ -71,7 +73,16 @@ docker compose ps   # should show "healthy"
 
 **Important:** All daemons use `dotenv` and load `.env` from the current working directory. Run every command from the **project root** using `--prefix` so that the root `.env` is picked up correctly.
 
-## 4. Start the API Server
+## 4. Run SQLite Migrations
+
+Run this once before starting DB-backed daemons. The migrator is the only process that should upgrade schema state.
+
+```bash
+# Terminal 2 (project root)
+npm run dev --prefix packages/migrator
+```
+
+## 5. Start the API Server
 
 ```bash
 # Terminal 2 (project root)
@@ -84,7 +95,7 @@ Runs on http://localhost:3000. Verify with:
 curl http://localhost:3000/health
 ```
 
-## 5. Start the Enrichment Daemon
+## 6. Start the Enrichment Daemon
 
 ```bash
 # Terminal 3 (project root)
@@ -93,7 +104,7 @@ npm run dev --prefix packages/daemon/task-enrichment
 
 Consumes from the `tasks` queue, enriches tasks, and posts them to the `jobs` queue.
 
-## 6. Start the Task Daemon
+## 7. Start the Task Daemon
 
 ```bash
 # Terminal 4 (project root)
@@ -106,7 +117,7 @@ Only one `task-daemon` may run per machine at a time. If a second instance start
 
 `TASK_DAEMON_DISABLE_MACHINE_LOCK=1` bypasses this protection, but it is intended only for controlled tests or debugging.
 
-## 7. Start Notification Daemons (optional)
+## 8. Start Notification Daemons (optional)
 
 These require credentials in `.env`.
 
@@ -120,7 +131,14 @@ npm run dev --prefix packages/daemon/lark-result
 npm run dev --prefix packages/daemon/telegram-result
 ```
 
-## 8. Submit a Test Task
+## 9. Start the Lark Listener (optional)
+
+```bash
+# Terminal 7 — Lark listener (project root)
+npm run dev --prefix packages/daemon/lark-listener
+```
+
+## 10. Submit a Test Task
 
 ```bash
 # Any terminal (project root)
@@ -132,10 +150,18 @@ npm run dev --prefix packages/cli -- submit --payload "hello world"
 | Terminal | Component | Command | Required |
 |----------|-----------|---------|----------|
 | 1 | RabbitMQ | `docker compose up rabbitmq -d` | Yes |
-| 2 | API Server | `npm run dev --prefix packages/api` | Yes |
-| 3 | Enrichment Daemon | `npm run dev --prefix packages/daemon/task-enrichment` | Yes |
-| 4 | Task Daemon | `npm run dev --prefix packages/daemon/task` | Yes |
-| 5 | Lark Daemon | `npm run dev --prefix packages/daemon/lark-result` | No |
-| 6 | Telegram Daemon | `npm run dev --prefix packages/daemon/telegram-result` | No |
+| 2 | Migrator | `npm run dev --prefix packages/migrator` | Yes for DB-backed services |
+| 3 | API Server | `npm run dev --prefix packages/api` | Yes |
+| 4 | Enrichment Daemon | `npm run dev --prefix packages/daemon/task-enrichment` | Yes |
+| 5 | Task Daemon | `npm run dev --prefix packages/daemon/task` | Yes |
+| 6 | Lark Result Daemon | `npm run dev --prefix packages/daemon/lark-result` | No |
+| 7 | Lark Listener | `npm run dev --prefix packages/daemon/lark-listener` | No |
+| 8 | Telegram Daemon | `npm run dev --prefix packages/daemon/telegram-result` | No |
 
-Minimum setup: Terminals 1-4.
+Minimum setup: Terminals 1-5.
+
+## Schema Lifecycle
+
+- `packages/migrator` owns schema creation and upgrades.
+- DB-backed daemons open the shared SQLite file in WAL mode and assert `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` on startup.
+- If the schema version does not match, the service exits fast and requires the migrator to run first.

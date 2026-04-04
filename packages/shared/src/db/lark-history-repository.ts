@@ -44,6 +44,21 @@ export interface MarkLarkThreadNewInstanceParams {
   updatedAtMs: number;
 }
 
+export interface UpsertLarkThreadStateParams {
+  rootMessageId: string;
+  threadId: string | null;
+  sessionId: string;
+  source: string;
+  chatType: string | null;
+  taskType: string;
+  executor: string;
+  executorModel: string;
+  status: string;
+  createdAtMs: number;
+  updatedAtMs: number;
+  endedAtMs?: number | null;
+}
+
 export interface LarkThreadRow {
   rootMessageId: string;
   threadId: string | null;
@@ -181,6 +196,26 @@ export class LarkHistoryRepository {
     return row ?? null;
   }
 
+  async getLarkThreadByRootMessageId(rootMessageId: string): Promise<LarkThreadRow | null> {
+    const row = await this.db
+      .select()
+      .from(larkThreadsTable)
+      .where(eq(larkThreadsTable.rootMessageId, rootMessageId))
+      .get();
+
+    return row ?? null;
+  }
+
+  async getLarkMessageByMessageId(messageId: string): Promise<LarkMessageRow | null> {
+    const row = await this.db
+      .select()
+      .from(larkMessagesTable)
+      .where(eq(larkMessagesTable.messageId, messageId))
+      .get();
+
+    return row ?? null;
+  }
+
   async getLarkMessagesForThread(rootMessageId: string): Promise<LarkMessageRow[]> {
     return this.db
       .select()
@@ -211,6 +246,50 @@ export class LarkHistoryRepository {
         updatedAtMs: endedAtMs,
       })
       .where(eq(larkThreadsTable.sessionId, sessionId));
+  }
+
+  async upsertLarkThreadState(params: UpsertLarkThreadStateParams): Promise<void> {
+    await this.db.transaction(async (tx) => {
+      await tx
+        .insert(larkThreadsTable)
+        .values({
+          rootMessageId: params.rootMessageId,
+          threadId: params.threadId,
+          sessionId: params.sessionId,
+          source: params.source,
+          chatType: params.chatType,
+          taskType: params.taskType,
+          executor: params.executor,
+          executorModel: params.executorModel,
+          status: params.status,
+          createdAtMs: params.createdAtMs,
+          updatedAtMs: params.updatedAtMs,
+          endedAtMs: params.endedAtMs ?? null,
+        })
+        .onConflictDoUpdate({
+          target: larkThreadsTable.rootMessageId,
+          set: {
+            threadId: sql`COALESCE(excluded.thread_id, ${larkThreadsTable.threadId})`,
+            sessionId: params.sessionId,
+            source: params.source,
+            chatType: sql`COALESCE(excluded.chat_type, ${larkThreadsTable.chatType})`,
+            taskType: params.taskType,
+            executor: params.executor,
+            executorModel: params.executorModel,
+            status: params.status,
+            updatedAtMs: params.updatedAtMs,
+            endedAtMs: params.endedAtMs ?? null,
+          },
+        });
+
+      await tx
+        .update(larkMessagesTable)
+        .set({
+          sessionId: params.sessionId,
+          threadId: sql`COALESCE(${params.threadId}, ${larkMessagesTable.threadId})`,
+        })
+        .where(eq(larkMessagesTable.rootMessageId, params.rootMessageId));
+    });
   }
 
   async deleteLarkRowsBySessionId(sessionId: string): Promise<void> {

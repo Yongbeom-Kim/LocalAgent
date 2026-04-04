@@ -1,4 +1,9 @@
-import { createLogger } from '@local-agent/shared';
+import {
+  assertExpectedSchemaVersion,
+  createLogger,
+  createSqliteClient,
+  LarkHistoryRepository,
+} from '@local-agent/shared';
 import { loadEnrichmentDaemonConfig } from './config';
 import { EnrichmentService } from './enrichment-service';
 import { EnrichmentPoller } from './enrichment-poller';
@@ -6,7 +11,7 @@ import { ThreadContextFetcher } from './adapters/thread-context-fetcher';
 
 const logger = createLogger('enrichment-daemon');
 
-function main() {
+async function main() {
   const config = loadEnrichmentDaemonConfig();
   logger.info(
     {
@@ -14,6 +19,8 @@ function main() {
       pollIntervalMs: config.pollIntervalMs,
       taskDaemonStatusUrl: config.taskDaemonStatusUrl,
       enrichmentConfigDir: config.enrichmentConfigDir,
+      dbPath: config.dbPath,
+      expectedSchemaVersion: config.expectedSchemaVersion,
     },
     'Starting enrichment daemon',
   );
@@ -21,8 +28,15 @@ function main() {
   const enrichmentService = EnrichmentService.fromDirectory(config.enrichmentConfigDir);
   logger.info({ configDir: config.enrichmentConfigDir }, 'Loaded enrichment config');
 
-  const threadContextFetcher = new ThreadContextFetcher(config.larkAppId, config.larkAppSecret);
-  logger.info('Thread context enrichment enabled');
+  const sqliteClient = await createSqliteClient({
+    dbPath: config.dbPath,
+    expectedSchemaVersion: config.expectedSchemaVersion,
+  });
+  await assertExpectedSchemaVersion(sqliteClient.db, config.expectedSchemaVersion);
+
+  const larkHistoryRepository = new LarkHistoryRepository(sqliteClient.db);
+  const threadContextFetcher = new ThreadContextFetcher(larkHistoryRepository);
+  logger.info('Thread context enrichment enabled via SQLite');
 
   const poller = new EnrichmentPoller(
     config.apiUrl,
@@ -35,6 +49,7 @@ function main() {
   const shutdown = () => {
     logger.info('Shutting down enrichment daemon');
     poller.stop();
+    sqliteClient.close();
     process.exit(0);
   };
 
@@ -42,4 +57,7 @@ function main() {
   process.on('SIGTERM', shutdown);
 }
 
-main();
+main().catch((err) => {
+  logger.fatal({ err }, 'Fatal error');
+  process.exit(1);
+});
