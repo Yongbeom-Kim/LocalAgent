@@ -1,5 +1,10 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
-import { loadDaemonConfig, createLogger, DEFAULT_MAX_CONCURRENT_SESSIONS } from '@local-agent/shared';
+import {
+  loadDaemonConfig,
+  createLogger,
+  DEFAULT_MAX_CONCURRENT_SESSIONS,
+  TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV,
+} from '@local-agent/shared';
 import { TaskPoller } from './task-poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
 import { JobEnvironment } from './services/job-environment';
@@ -7,8 +12,9 @@ import { SessionLockManager } from './services/session-lock';
 import { MachineLockManager, type MachineLockAcquireResult } from './services/machine-lock';
 
 type PollerLike = Pick<TaskPoller, 'start' | 'drain' | 'isSessionActive'>;
-
 type StatusServerLike = Pick<Server, 'listen' | 'close' | 'once' | 'removeListener'>;
+type MachineLockLike = Pick<MachineLockManager, 'acquire' | 'release'>;
+type LoggerLike = ReturnType<typeof createLogger>;
 
 type StartTaskDaemonDeps = {
   loadConfig: typeof loadDaemonConfig;
@@ -16,7 +22,7 @@ type StartTaskDaemonDeps = {
   createJobEnvironment: (debug: boolean) => JobEnvironment;
   createOrchestrator: (jobEnv: JobEnvironment) => TaskOrchestrator;
   createSessionLock: () => SessionLockManager;
-  createMachineLock: () => Pick<MachineLockManager, 'acquire' | 'release'>;
+  createMachineLock: () => MachineLockLike;
   createPoller: (args: {
     apiUrl: string;
     orchestrator: TaskOrchestrator;
@@ -31,6 +37,14 @@ type StartTaskDaemonDeps = {
 interface RunningTaskDaemon {
   shutdown: () => Promise<void>;
   poller: PollerLike;
+}
+
+class NoopMachineLock implements MachineLockLike {
+  acquire(): MachineLockAcquireResult {
+    return { acquired: true };
+  }
+
+  release(): void {}
 }
 
 function writeJson(res: ServerResponse, statusCode: number, body: unknown): void {
@@ -118,70 +132,108 @@ function assertMachineLockAcquired(result: MachineLockAcquireResult): void {
   );
 }
 
+function resolveMachineLock(deps: StartTaskDaemonDeps, logger: LoggerLike): MachineLockLike {
+  if (deps.processObject.env[TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV] === '1') {
+    logger.warn(
+      { envVar: TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV },
+      'Task daemon machine lock disabled for local development',
+    );
+    return new NoopMachineLock();
+  }
+
+  return deps.createMachineLock();
+}
+
+class TaskDaemonApp {
+  private shutdownStarted = false;
+  private statusServer: StatusServerLike | null = null;
+  private statusServerListening = false;
+  private poller: PollerLike | null = null;
+
+  constructor(
+    private readonly deps: StartTaskDaemonDeps,
+    private readonly logger: LoggerLike,
+    private readonly config: ReturnType<typeof loadDaemonConfig>,
+    private readonly debug: boolean,
+    private readonly machineLock: MachineLockLike,
+  ) {}
+
+  async start(): Promise<RunningTaskDaemon> {
+    this.logger.info(
+      {
+        apiUrl: this.config.apiUrl,
+        pollIntervalMs: this.config.pollIntervalMs,
+        statusPort: this.config.statusPort,
+        debug: this.debug,
+      },
+      'Starting task-daemon',
+    );
+
+    const machineLockResult = this.machineLock.acquire();
+    assertMachineLockAcquired(machineLockResult);
+
+    try {
+      const jobEnv = this.deps.createJobEnvironment(this.debug);
+      const orchestrator = this.deps.createOrchestrator(jobEnv);
+      const sessionLock = this.deps.createSessionLock();
+      const maxConcurrency = parseInt(this.deps.processObject.env.MAX_CONCURRENT_SESSIONS ?? '', 10) || DEFAULT_MAX_CONCURRENT_SESSIONS;
+
+      this.logger.info({ maxConcurrency }, 'Concurrency limit');
+
+      this.poller = this.deps.createPoller({
+        apiUrl: this.config.apiUrl,
+        orchestrator,
+        sessionLock,
+        maxConcurrency,
+      });
+      this.statusServer = this.deps.createStatusServer(this.poller);
+      await listen(this.statusServer, this.config.statusPort);
+      this.statusServerListening = true;
+      this.logger.info({ statusPort: this.config.statusPort }, 'Task status server listening');
+      this.poller.start(this.config.pollIntervalMs);
+
+      return {
+        shutdown: () => this.shutdown(),
+        poller: this.poller,
+      };
+    } catch (err) {
+      await this.shutdown();
+      throw err;
+    }
+  }
+
+  async shutdown(): Promise<void> {
+    if (this.shutdownStarted) {
+      return;
+    }
+
+    this.shutdownStarted = true;
+    this.logger.info('Shutting down task-daemon...');
+
+    try {
+      if (this.statusServer && this.statusServerListening) {
+        await closeServer(this.statusServer);
+      }
+    } finally {
+      try {
+        if (this.poller) {
+          await this.poller.drain();
+        }
+      } finally {
+        this.machineLock.release();
+      }
+    }
+  }
+}
+
 export async function startTaskDaemon(overrides: Partial<StartTaskDaemonDeps> = {}): Promise<RunningTaskDaemon> {
   const deps = { ...defaultDeps, ...overrides };
   const config = deps.loadConfig();
   const logger = deps.createLogger('task-daemon', config.logLevel);
   const debug = deps.processObject.env.DEBUG === '1';
+  const machineLock = resolveMachineLock(deps, logger);
 
-  logger.info({ apiUrl: config.apiUrl, pollIntervalMs: config.pollIntervalMs, statusPort: config.statusPort, debug }, 'Starting task-daemon');
-
-  const machineLock = deps.createMachineLock();
-  const machineLockResult = machineLock.acquire();
-  assertMachineLockAcquired(machineLockResult);
-
-  let shutdownStarted = false;
-  let statusServer: StatusServerLike | null = null;
-  let statusServerListening = false;
-  let poller: PollerLike | null = null;
-
-  const shutdown = async () => {
-    if (shutdownStarted) {
-      return;
-    }
-    shutdownStarted = true;
-    logger.info('Shutting down task-daemon...');
-
-    try {
-      if (statusServer && statusServerListening) {
-        await closeServer(statusServer);
-      }
-    } finally {
-      try {
-        if (poller) {
-          await poller.drain();
-        }
-      } finally {
-        machineLock.release();
-      }
-    }
-  };
-
-  try {
-    const jobEnv = deps.createJobEnvironment(debug);
-    const orchestrator = deps.createOrchestrator(jobEnv);
-    const sessionLock = deps.createSessionLock();
-    const maxConcurrency = parseInt(deps.processObject.env.MAX_CONCURRENT_SESSIONS ?? '', 10) || DEFAULT_MAX_CONCURRENT_SESSIONS;
-
-    logger.info({ maxConcurrency }, 'Concurrency limit');
-
-    poller = deps.createPoller({
-      apiUrl: config.apiUrl,
-      orchestrator,
-      sessionLock,
-      maxConcurrency,
-    });
-    statusServer = deps.createStatusServer(poller);
-    await listen(statusServer, config.statusPort);
-    statusServerListening = true;
-    logger.info({ statusPort: config.statusPort }, 'Task status server listening');
-    poller.start(config.pollIntervalMs);
-
-    return { shutdown, poller };
-  } catch (err) {
-    await shutdown();
-    throw err;
-  }
+  return new TaskDaemonApp(deps, logger, config, debug, machineLock).start();
 }
 
 export async function main() {

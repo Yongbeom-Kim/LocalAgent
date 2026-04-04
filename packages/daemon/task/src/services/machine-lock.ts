@@ -1,10 +1,6 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import {
-  createLogger,
-  DEFAULT_TASK_DAEMON_MACHINE_LOCK_PATH,
-  TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV,
-} from '@local-agent/shared';
+import { createLogger, DEFAULT_TASK_DAEMON_MACHINE_LOCK_PATH } from '@local-agent/shared';
 
 const logger = createLogger('task-daemon:machine-lock');
 
@@ -15,7 +11,6 @@ interface MachineLockInfo {
 
 export interface MachineLockManagerOptions {
   lockPath?: string;
-  env?: Record<string, string | undefined>;
 }
 
 export type MachineLockAcquireResult =
@@ -23,21 +18,13 @@ export type MachineLockAcquireResult =
   | { acquired: false; holderPid: number; lockPath: string };
 
 export class MachineLockManager {
-  private readonly env: Record<string, string | undefined>;
-
   private readonly filePath: string;
 
   constructor(options: MachineLockManagerOptions = {}) {
-    this.env = options.env ?? process.env;
     this.filePath = options.lockPath ?? DEFAULT_TASK_DAEMON_MACHINE_LOCK_PATH;
   }
 
   acquire(): MachineLockAcquireResult {
-    if (this.isDisabled()) {
-      logger.warn({ envVar: TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV }, 'Machine lock disabled');
-      return { acquired: true };
-    }
-
     mkdirSync(dirname(this.filePath), { recursive: true });
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -81,10 +68,6 @@ export class MachineLockManager {
   }
 
   release(): void {
-    if (this.isDisabled()) {
-      return;
-    }
-
     if (!existsSync(this.filePath)) {
       return;
     }
@@ -136,10 +119,6 @@ export class MachineLockManager {
     } catch {
       return null;
     }
-  }
-
-  private isDisabled(): boolean {
-    return this.env[TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV] === '1';
   }
 
   private isPidAlive(pid: number): boolean {

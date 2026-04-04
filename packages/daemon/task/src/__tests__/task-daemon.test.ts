@@ -69,6 +69,43 @@ describe('startTaskDaemon', () => {
     vi.restoreAllMocks();
   });
 
+  it('uses a noop machine lock when the disable env var is enabled', async () => {
+    const fakeServer = new FakeServer();
+    const fakePoller = {
+      start: vi.fn(),
+      drain: vi.fn().mockResolvedValue(undefined),
+      isSessionActive: vi.fn().mockReturnValue(false),
+    };
+    const createMachineLock = vi.fn(() => ({
+      acquire: vi.fn().mockReturnValue({ acquired: true }),
+      release: vi.fn(),
+    }));
+
+    const running = await startTaskDaemon({
+      loadConfig: () => ({
+        apiUrl: 'http://localhost:3000',
+        pollIntervalMs: 5000,
+        logLevel: 'info',
+        statusPort: 7070,
+      }),
+      createLogger: () => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn(), fatal: vi.fn() }) as never,
+      createJobEnvironment: vi.fn(() => ({})) as never,
+      createOrchestrator: vi.fn(() => ({})) as never,
+      createSessionLock: vi.fn(() => ({})) as never,
+      createMachineLock,
+      createPoller: vi.fn(() => fakePoller) as never,
+      createStatusServer: vi.fn(() => fakeServer) as never,
+      processObject: { env: { TASK_DAEMON_DISABLE_MACHINE_LOCK: '1' }, on: vi.fn() },
+      exit: vi.fn() as never,
+    });
+
+    expect(createMachineLock).not.toHaveBeenCalled();
+    expect(fakeServer.listen).toHaveBeenCalledTimes(1);
+    expect(fakePoller.start).toHaveBeenCalledTimes(1);
+
+    await running.shutdown();
+  });
+
   it('does not start status server or poller when machine lock is already held', async () => {
     const fakeServer = new FakeServer();
     const fakePoller = {

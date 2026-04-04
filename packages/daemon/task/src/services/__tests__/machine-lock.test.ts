@@ -19,7 +19,7 @@ describe('MachineLockManager', () => {
   });
 
   it('acquires when no lock file exists', () => {
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
 
     expect(manager.acquire()).toEqual({ acquired: true });
     expect(existsSync(lockPath)).toBe(true);
@@ -31,7 +31,7 @@ describe('MachineLockManager', () => {
 
   it('creates the parent directory when missing', () => {
     const nestedLockPath = join(TEST_BASE_DIR, 'nested', 'task-daemon.lock');
-    const manager = new MachineLockManager({ lockPath: nestedLockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath: nestedLockPath });
 
     expect(manager.acquire()).toEqual({ acquired: true });
     expect(existsSync(nestedLockPath)).toBe(true);
@@ -53,7 +53,7 @@ describe('MachineLockManager', () => {
       return originalKill.call(process, pid, signal);
     });
 
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
 
     expect(manager.acquire()).toEqual({ acquired: false, holderPid: otherPid, lockPath });
   });
@@ -65,7 +65,7 @@ describe('MachineLockManager', () => {
       JSON.stringify({ pid: 999999, locked_at: new Date().toISOString() }),
     );
 
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
 
     expect(manager.acquire()).toEqual({ acquired: true });
 
@@ -76,7 +76,7 @@ describe('MachineLockManager', () => {
   it('overwrites corrupt lock files', () => {
     mkdirSync(TEST_BASE_DIR, { recursive: true });
     writeFileSync(lockPath, 'not-json');
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
 
     expect(manager.acquire()).toEqual({ acquired: true });
 
@@ -85,24 +85,14 @@ describe('MachineLockManager', () => {
   });
 
   it('is idempotent for the same pid', () => {
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
 
     expect(manager.acquire()).toEqual({ acquired: true });
     expect(manager.acquire()).toEqual({ acquired: true });
-  });
-
-  it('bypasses lock operations when TASK_DAEMON_DISABLE_MACHINE_LOCK=1', () => {
-    const manager = new MachineLockManager({
-      lockPath,
-      env: { TASK_DAEMON_DISABLE_MACHINE_LOCK: '1' },
-    });
-
-    expect(manager.acquire()).toEqual({ acquired: true });
-    expect(existsSync(lockPath)).toBe(false);
   });
 
   it('removes the lock file on release when enabled', () => {
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
     manager.acquire();
 
     manager.release();
@@ -116,7 +106,7 @@ describe('MachineLockManager', () => {
       lockPath,
       JSON.stringify({ pid: process.pid + 1000, locked_at: new Date().toISOString() }),
     );
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
 
     manager.release();
 
@@ -126,18 +116,15 @@ describe('MachineLockManager', () => {
   it('removes a corrupt lock file during release best-effort', () => {
     mkdirSync(TEST_BASE_DIR, { recursive: true });
     writeFileSync(lockPath, 'not-json');
-    const manager = new MachineLockManager({ lockPath, env: {} });
+    const manager = new MachineLockManager({ lockPath });
 
     manager.release();
 
     expect(existsSync(lockPath)).toBe(false);
   });
 
-  it('is a no-op on release when disabled', () => {
-    const manager = new MachineLockManager({
-      lockPath,
-      env: { TASK_DAEMON_DISABLE_MACHINE_LOCK: '1' },
-    });
+  it('is a no-op on release when the file does not exist', () => {
+    const manager = new MachineLockManager({ lockPath });
 
     expect(() => manager.release()).not.toThrow();
     expect(existsSync(lockPath)).toBe(false);
