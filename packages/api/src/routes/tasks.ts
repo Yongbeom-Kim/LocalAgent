@@ -7,7 +7,7 @@ import {
   isTaskExecutorType,
   isValidExecutorModel,
 } from '@local-agent/shared';
-import { RabbitMQService } from '../services/rabbitmq';
+import { RabbitMQService, RabbitMQUnavailableError } from '../services/rabbitmq';
 
 export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
   const router = Router();
@@ -57,7 +57,7 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         ...(typeof executor_model === 'string' ? { executor_model } : {}),
         ...(task_source ? { task_source } : {}),
       };
-      const buffered = rabbitmq.publish(task);
+      const buffered = await rabbitmq.publish(task);
 
       if (!buffered) {
         res.status(503).json({ error: 'Server busy, try again later' });
@@ -66,6 +66,10 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
 
       res.status(201).json(task);
     } catch (err) {
+      if (err instanceof RabbitMQUnavailableError) {
+        res.status(503).json({ error: 'RabbitMQ temporarily unavailable' });
+        return;
+      }
       next(err);
     }
   });
@@ -79,6 +83,10 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
       }
       res.status(200).json(task);
     } catch (err) {
+      if (err instanceof RabbitMQUnavailableError) {
+        res.status(503).json({ error: 'RabbitMQ temporarily unavailable' });
+        return;
+      }
       next(err);
     }
   });

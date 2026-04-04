@@ -17,9 +17,21 @@ interface GetMessage {
   fields: { deliveryTag: number };
 }
 
+interface TrackedDelivery {
+  message: GetMessage;
+  generation: number;
+}
+
 export interface SessionJobDescriptor {
   session_id: string;
   queue_name: string;
+}
+
+export class RabbitMQUnavailableError extends Error {
+  constructor(message = 'RabbitMQ temporarily unavailable') {
+    super(message);
+    this.name = 'RabbitMQUnavailableError';
+  }
 }
 
 const logger = createLogger('api:rabbitmq');
@@ -27,8 +39,11 @@ const logger = createLogger('api:rabbitmq');
 export class RabbitMQService {
   private connection: amqplib.ChannelModel | null = null;
   private channel: amqplib.Channel | null = null;
-  private deliveryMap = new Map<string, GetMessage>();
-  private queueDeliveryMaps = new Map<string, Map<string, GetMessage>>();
+  private reconnectPromise: Promise<void> | null = null;
+  private closing = false;
+  private connectionGeneration = 0;
+  private deliveryMap = new Map<string, TrackedDelivery>();
+  private queueDeliveryMaps = new Map<string, Map<string, TrackedDelivery>>();
   private activeSessionQueues = new Set<string>();
 
   constructor(
@@ -41,83 +56,80 @@ export class RabbitMQService {
   }
 
   async connect(): Promise<void> {
-    const conn = await amqplib.connect(this.url);
-    conn.on('error', () => {
-      this.connection = null;
-      this.channel = null;
-    });
-    conn.on('close', () => {
-      this.connection = null;
-      this.channel = null;
-    });
-    this.connection = conn;
-    const ch = await conn.createChannel();
-    await ch.assertQueue(this.queueName, { durable: true });
-    await ch.assertExchange(DEFAULT_JOBS_EXCHANGE_NAME, 'direct', { durable: true });
-    await ch.assertExchange(DEFAULT_RESULTS_EXCHANGE_NAME, 'fanout', { durable: true });
-    await ch.assertQueue(DEFAULT_LARK_QUEUE_NAME, { durable: true });
-    await ch.bindQueue(DEFAULT_LARK_QUEUE_NAME, DEFAULT_RESULTS_EXCHANGE_NAME, '');
-    await ch.assertQueue(DEFAULT_TELEGRAM_QUEUE_NAME, { durable: true });
-    await ch.bindQueue(DEFAULT_TELEGRAM_QUEUE_NAME, DEFAULT_RESULTS_EXCHANGE_NAME, '');
-    this.channel = ch;
+    this.closing = false;
+    const connected = await this.ensureConnected();
+    if (!connected) {
+      throw new RabbitMQUnavailableError('RabbitMQ connection unavailable during startup');
+    }
   }
 
   async close(): Promise<void> {
-    await this.connection?.close();
-    this.connection = null;
-    this.channel = null;
+    this.closing = true;
+
+    try {
+      await this.reconnectPromise;
+    } catch {
+      // Ignore reconnect failures while closing.
+    }
+
+    const connection = this.connection;
+    this.clearConnectionState();
+
+    await connection?.close();
   }
 
-  publish(message: Task): boolean {
-    if (!this.channel) throw new Error('Not connected');
+  async publish(message: Task): Promise<boolean> {
     const buffer = Buffer.from(JSON.stringify(message));
-    return this.channel.sendToQueue(this.queueName, buffer, { persistent: true });
+    return this.withChannel('publish task', (channel) =>
+      channel.sendToQueue(this.queueName, buffer, { persistent: true }),
+    );
   }
 
   async ensureSessionJobQueue(sessionId: string): Promise<string> {
-    if (!this.channel) throw new Error('Not connected');
     const queueName = RabbitMQService.getSessionQueueName(sessionId);
-    await this.channel.assertQueue(queueName, {
-      durable: true,
-      arguments: { 'x-expires': DEFAULT_SESSION_QUEUE_IDLE_TTL_MS },
+    await this.withChannel('ensure session queue', async (channel) => {
+      await this.assertSessionJobQueue(channel, sessionId);
     });
-    await this.channel.bindQueue(queueName, DEFAULT_JOBS_EXCHANGE_NAME, sessionId);
-    this.activeSessionQueues.add(sessionId);
     return queueName;
   }
 
   async publishJob(message: Job): Promise<boolean> {
-    if (!this.channel) throw new Error('Not connected');
-    await this.ensureSessionJobQueue(message.session_id);
     const buffer = Buffer.from(JSON.stringify(message));
-    return this.channel.publish(DEFAULT_JOBS_EXCHANGE_NAME, message.session_id, buffer, {
-      persistent: true,
+    return this.withChannel('publish job', async (channel) => {
+      await this.assertSessionJobQueue(channel, message.session_id);
+      return channel.publish(DEFAULT_JOBS_EXCHANGE_NAME, message.session_id, buffer, {
+        persistent: true,
+      });
     });
   }
 
   async getNextJobFromSession(sessionId: string): Promise<Job | null> {
-    if (!this.channel) throw new Error('Not connected');
-    const queueName = RabbitMQService.getSessionQueueName(sessionId);
-    const msg = await this.channel.get(queueName, { noAck: false });
-    if (msg === false) {
-      this.activeSessionQueues.delete(sessionId);
-      return null;
-    }
+    return this.withChannel('get next job from session', async (channel) => {
+      const queueName = RabbitMQService.getSessionQueueName(sessionId);
+      const msg = await channel.get(queueName, { noAck: false });
+      if (msg === false) {
+        this.activeSessionQueues.delete(sessionId);
+        return null;
+      }
 
-    const parsed = JSON.parse(msg.content.toString()) as Job;
-    const deliveryMap = this.getOrCreateDeliveryMap(queueName);
+      const parsed = JSON.parse(msg.content.toString()) as Job;
+      const deliveryMap = this.getOrCreateDeliveryMap(queueName);
 
-    if (deliveryMap.has(parsed.job_id)) {
-      logger.error(
-        { job_id: parsed.job_id, deliveryTag: msg.fields.deliveryTag, queueName },
-        'Duplicate job_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
-      );
-      this.channel.ack(msg);
-      return null;
-    }
+      if (deliveryMap.has(parsed.job_id)) {
+        logger.error(
+          { job_id: parsed.job_id, deliveryTag: msg.fields.deliveryTag, queueName },
+          'Duplicate job_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
+        );
+        channel.ack(msg);
+        return null;
+      }
 
-    deliveryMap.set(parsed.job_id, msg as unknown as GetMessage);
-    return parsed;
+      deliveryMap.set(parsed.job_id, {
+        message: msg as unknown as GetMessage,
+        generation: this.connectionGeneration,
+      });
+      return parsed;
+    });
   }
 
   ackJobFromSession(sessionId: string, jobId: string): boolean {
@@ -142,70 +154,208 @@ export class RabbitMQService {
   }
 
   ack(taskId: string): boolean {
-    if (!this.channel) return false;
-    const delivery = this.deliveryMap.get(taskId);
-    if (!delivery) return false;
-    this.channel.ack(delivery as any);
-    this.deliveryMap.delete(taskId);
-    return true;
+    return this.finalizeTrackedDelivery(this.deliveryMap, taskId, 'ack');
   }
 
   async getNext(): Promise<Task | null> {
-    if (!this.channel) throw new Error('Not connected');
-    const msg = await this.channel.get(this.queueName, { noAck: false });
-    if (msg === false) return null;
+    return this.withChannel('get next task', async (channel) => {
+      const msg = await channel.get(this.queueName, { noAck: false });
+      if (msg === false) return null;
 
-    const parsed = JSON.parse(msg.content.toString()) as Task;
+      const parsed = JSON.parse(msg.content.toString()) as Task;
 
-    if (this.deliveryMap.has(parsed.task_id)) {
-      logger.error(
-        { task_id: parsed.task_id, deliveryTag: msg.fields.deliveryTag },
-        'Duplicate task_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
-      );
-      this.channel.ack(msg);
-      return null;
-    }
+      if (this.deliveryMap.has(parsed.task_id)) {
+        logger.error(
+          { task_id: parsed.task_id, deliveryTag: msg.fields.deliveryTag },
+          'Duplicate task_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
+        );
+        channel.ack(msg);
+        return null;
+      }
 
-    this.deliveryMap.set(parsed.task_id, msg as unknown as GetMessage);
-    return parsed;
+      this.deliveryMap.set(parsed.task_id, {
+        message: msg as unknown as GetMessage,
+        generation: this.connectionGeneration,
+      });
+      return parsed;
+    });
   }
 
-  publishToExchange(exchange: string, message: TaskResult): boolean {
-    if (!this.channel) throw new Error('Not connected');
+  async publishToExchange(exchange: string, message: TaskResult): Promise<boolean> {
     const buffer = Buffer.from(JSON.stringify(message));
-    return this.channel.publish(exchange, '', buffer, { persistent: true });
+    return this.withChannel('publish result', (channel) =>
+      channel.publish(exchange, '', buffer, { persistent: true }),
+    );
   }
 
   async getNextFromQueue(queueName: string): Promise<TaskResult | null> {
-    if (!this.channel) throw new Error('Not connected');
-    const msg = await this.channel.get(queueName, { noAck: false });
-    if (msg === false) return null;
+    return this.withChannel('get next result', async (channel) => {
+      const msg = await channel.get(queueName, { noAck: false });
+      if (msg === false) return null;
 
-    const parsed = JSON.parse(msg.content.toString()) as TaskResult;
-    const deliveryMap = this.getOrCreateDeliveryMap(queueName);
+      const parsed = JSON.parse(msg.content.toString()) as TaskResult;
+      const deliveryMap = this.getOrCreateDeliveryMap(queueName);
 
-    if (deliveryMap.has(parsed.result_id)) {
-      logger.error(
-        { result_id: parsed.result_id, deliveryTag: msg.fields.deliveryTag, queueName },
-        'Duplicate result_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
-      );
-      this.channel.ack(msg);
-      return null;
-    }
+      if (deliveryMap.has(parsed.result_id)) {
+        logger.error(
+          { result_id: parsed.result_id, deliveryTag: msg.fields.deliveryTag, queueName },
+          'Duplicate result_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
+        );
+        channel.ack(msg);
+        return null;
+      }
 
-    deliveryMap.set(parsed.result_id, msg as unknown as GetMessage);
-    return parsed;
+      deliveryMap.set(parsed.result_id, {
+        message: msg as unknown as GetMessage,
+        generation: this.connectionGeneration,
+      });
+      return parsed;
+    });
   }
 
   ackFromQueue(queueName: string, resultId: string): boolean {
-    if (!this.channel) return false;
     const deliveryMap = this.queueDeliveryMaps.get(queueName);
     if (!deliveryMap) return false;
-    const delivery = deliveryMap.get(resultId);
-    if (!delivery) return false;
-    this.channel.ack(delivery as any);
-    deliveryMap.delete(resultId);
-    return true;
+    return this.finalizeTrackedDelivery(deliveryMap, resultId, 'ack');
+  }
+
+  async ensureConnected(): Promise<boolean> {
+    if (this.connection !== null && this.channel !== null) {
+      return true;
+    }
+
+    if (this.closing) {
+      return false;
+    }
+
+    if (!this.reconnectPromise) {
+      this.reconnectPromise = this.establishConnection().finally(() => {
+        this.reconnectPromise = null;
+      });
+    }
+
+    try {
+      await this.reconnectPromise;
+      return this.connection !== null && this.channel !== null;
+    } catch (err) {
+      logger.warn({ err }, 'RabbitMQ reconnect attempt failed');
+      return false;
+    }
+  }
+
+  private async establishConnection(): Promise<void> {
+    const conn = await amqplib.connect(this.url);
+
+    try {
+      const channel = await conn.createChannel();
+      await this.assertBaseTopology(channel);
+      this.attachConnectionListeners(conn);
+      this.connection = conn;
+      this.channel = channel;
+      this.connectionGeneration += 1;
+
+      // Deliveries tied to a dead channel cannot be ACKed safely after reconnect.
+      // Clearing them forces later ACK calls to return false and rely on redelivery.
+      this.clearDeliveryTracking();
+    } catch (err) {
+      await conn.close().catch(() => undefined);
+      throw err;
+    }
+  }
+
+  private attachConnectionListeners(conn: amqplib.ChannelModel): void {
+    conn.on('error', (err) => {
+      logger.warn({ err }, 'RabbitMQ connection error');
+      this.handleConnectionEvent(conn);
+    });
+    conn.on('close', () => {
+      logger.warn('RabbitMQ connection closed');
+      this.handleConnectionEvent(conn);
+    });
+  }
+
+  private handleConnectionEvent(conn: amqplib.ChannelModel): void {
+    if (this.connection !== conn) {
+      return;
+    }
+    this.clearConnectionState();
+  }
+
+  private clearConnectionState(): void {
+    this.connection = null;
+    this.channel = null;
+    this.clearDeliveryTracking();
+  }
+
+  private clearDeliveryTracking(): void {
+    this.deliveryMap.clear();
+    this.queueDeliveryMaps.clear();
+  }
+
+  private async assertBaseTopology(channel: amqplib.Channel): Promise<void> {
+    await channel.assertQueue(this.queueName, { durable: true });
+    await channel.assertExchange(DEFAULT_JOBS_EXCHANGE_NAME, 'direct', { durable: true });
+    await channel.assertExchange(DEFAULT_RESULTS_EXCHANGE_NAME, 'fanout', { durable: true });
+    await channel.assertQueue(DEFAULT_LARK_QUEUE_NAME, { durable: true });
+    await channel.bindQueue(DEFAULT_LARK_QUEUE_NAME, DEFAULT_RESULTS_EXCHANGE_NAME, '');
+    await channel.assertQueue(DEFAULT_TELEGRAM_QUEUE_NAME, { durable: true });
+    await channel.bindQueue(DEFAULT_TELEGRAM_QUEUE_NAME, DEFAULT_RESULTS_EXCHANGE_NAME, '');
+  }
+
+  private async assertSessionJobQueue(channel: amqplib.Channel, sessionId: string): Promise<void> {
+    const queueName = RabbitMQService.getSessionQueueName(sessionId);
+    await channel.assertQueue(queueName, {
+      durable: true,
+      arguments: { 'x-expires': DEFAULT_SESSION_QUEUE_IDLE_TTL_MS },
+    });
+    await channel.bindQueue(queueName, DEFAULT_JOBS_EXCHANGE_NAME, sessionId);
+    this.activeSessionQueues.add(sessionId);
+  }
+
+  private async withChannel<T>(
+    operationName: string,
+    operation: (channel: amqplib.Channel) => Promise<T> | T,
+  ): Promise<T> {
+    if (!(await this.ensureConnected())) {
+      throw new RabbitMQUnavailableError();
+    }
+
+    const channel = this.channel;
+    if (!channel) {
+      throw new RabbitMQUnavailableError();
+    }
+
+    try {
+      return await operation(channel);
+    } catch (err) {
+      if (!this.isRetryableChannelError(err)) {
+        throw err;
+      }
+
+      logger.warn({ err, operationName }, 'RabbitMQ channel unavailable during operation; reconnecting');
+      this.clearConnectionState();
+
+      if (!(await this.ensureConnected())) {
+        throw new RabbitMQUnavailableError();
+      }
+
+      const retryChannel = this.channel;
+      if (!retryChannel) {
+        throw new RabbitMQUnavailableError();
+      }
+
+      try {
+        return await operation(retryChannel);
+      } catch (retryErr) {
+        if (!this.isRetryableChannelError(retryErr)) {
+          throw retryErr;
+        }
+
+        logger.warn({ err: retryErr, operationName }, 'RabbitMQ channel unavailable after reconnect retry');
+        this.clearConnectionState();
+        throw new RabbitMQUnavailableError();
+      }
+    }
   }
 
   private finalizeJobDelivery(
@@ -214,29 +364,72 @@ export class RabbitMQService {
     mode: 'ack' | 'nack',
     requeue = true,
   ): boolean {
-    if (!this.channel) return false;
     const queueName = RabbitMQService.getSessionQueueName(sessionId);
     const deliveryMap = this.queueDeliveryMaps.get(queueName);
     if (!deliveryMap) return false;
-    const delivery = deliveryMap.get(jobId);
-    if (!delivery) return false;
+    return this.finalizeTrackedDelivery(deliveryMap, jobId, mode, requeue);
+  }
 
-    if (mode === 'ack') {
-      this.channel.ack(delivery as any);
-    } else {
-      this.channel.nack(delivery as any, false, requeue);
+  private finalizeTrackedDelivery(
+    deliveryMap: Map<string, TrackedDelivery>,
+    deliveryId: string,
+    mode: 'ack' | 'nack',
+    requeue = true,
+  ): boolean {
+    if (!this.channel) return false;
+
+    const delivery = deliveryMap.get(deliveryId);
+    if (!delivery) return false;
+    if (delivery.generation !== this.connectionGeneration) {
+      deliveryMap.delete(deliveryId);
+      return false;
     }
 
-    deliveryMap.delete(jobId);
+    try {
+      if (mode === 'ack') {
+        this.channel.ack(delivery.message as any);
+      } else {
+        this.channel.nack(delivery.message as any, false, requeue);
+      }
+    } catch (err) {
+      if (this.isRetryableChannelError(err)) {
+        // The original delivery belonged to a dead channel. We intentionally do
+        // not reconnect and re-ACK because that would target the wrong delivery.
+        this.clearConnectionState();
+        deliveryMap.delete(deliveryId);
+        return false;
+      }
+      throw err;
+    }
+
+    deliveryMap.delete(deliveryId);
     return true;
   }
 
-  private getOrCreateDeliveryMap(queueName: string): Map<string, GetMessage> {
+  private getOrCreateDeliveryMap(queueName: string): Map<string, TrackedDelivery> {
     let deliveryMap = this.queueDeliveryMaps.get(queueName);
     if (!deliveryMap) {
-      deliveryMap = new Map<string, GetMessage>();
+      deliveryMap = new Map<string, TrackedDelivery>();
       this.queueDeliveryMaps.set(queueName, deliveryMap);
     }
     return deliveryMap;
+  }
+
+  private isRetryableChannelError(error: unknown): boolean {
+    if (error instanceof RabbitMQUnavailableError) {
+      return true;
+    }
+
+    const message = error instanceof Error ? error.message : String(error);
+    const normalized = message.toLowerCase();
+
+    return (
+      normalized.includes('channel closed') ||
+      normalized.includes('channel ended') ||
+      normalized.includes('connection closed') ||
+      normalized.includes('connection ended') ||
+      normalized.includes('not connected') ||
+      normalized.includes('closing')
+    );
   }
 }

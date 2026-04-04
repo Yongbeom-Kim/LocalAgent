@@ -79,6 +79,18 @@ function createMockResult(jobId: string, sessionId: string, taskType = 'generic'
   };
 }
 
+function sessionPayload(sessionId: string) {
+  return { status: 200, json: () => Promise.resolve({ sessions: [{ session_id: sessionId, queue_name: `jobs.session.${sessionId}` }] }) };
+}
+
+function ackOk() {
+  return { status: 200, json: () => Promise.resolve({ acknowledged: true }) };
+}
+
+function resultOk() {
+  return { status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) };
+}
+
 import { TaskPoller } from '../task-poller';
 import { JobEnvironment } from '../services/job-environment';
 
@@ -112,10 +124,8 @@ describe('TaskPoller Concurrent', () => {
 
     let resolveJob1!: (v: TaskResultSubmission) => void;
     let resolveJob2!: (v: TaskResultSubmission) => void;
-
     const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
     const job2Promise = new Promise<TaskResultSubmission>((r) => { resolveJob2 = r; });
-
     mockClaudeExecute.mockReturnValueOnce(job1Promise).mockReturnValueOnce(job2Promise);
 
     const job1 = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A' });
@@ -132,7 +142,9 @@ describe('TaskPoller Concurrent', () => {
         }),
       })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) });
+      .mockResolvedValueOnce(ackOk())
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
+      .mockResolvedValueOnce(ackOk());
 
     await poller.pollOnce();
     await new Promise((r) => setTimeout(r, 10));
@@ -140,10 +152,8 @@ describe('TaskPoller Concurrent', () => {
     expect(mockClaudeExecute).toHaveBeenCalledTimes(2);
 
     mockFetch
-      .mockResolvedValueOnce({ status: 201 })
-      .mockResolvedValueOnce({ status: 200 })
-      .mockResolvedValueOnce({ status: 201 })
-      .mockResolvedValueOnce({ status: 200 });
+      .mockResolvedValueOnce(resultOk())
+      .mockResolvedValueOnce(resultOk());
 
     resolveJob1(createMockResult('job-1', 'session-A'));
     resolveJob2(createMockResult('job-2', 'session-B'));
@@ -162,46 +172,36 @@ describe('TaskPoller Concurrent', () => {
     let resolveJob2!: (v: TaskResultSubmission) => void;
     const firstPromise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
     const secondPromise = new Promise<TaskResultSubmission>((r) => { resolveJob2 = r; });
-
     mockClaudeExecute.mockReturnValueOnce(firstPromise).mockReturnValueOnce(secondPromise);
 
     const job1 = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A', payload: 'first' });
     const job2 = createJob({ job_id: 'job-2', task_id: 'task-2', session_id: 'session-A', payload: 'second' });
 
     mockFetch
-      .mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-      })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) });
+      .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
+      .mockResolvedValueOnce(ackOk());
 
     await poller.pollOnce();
     await new Promise((r) => setTimeout(r, 10));
 
-    mockFetch.mockResolvedValueOnce({
-      status: 200,
-      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-    });
+    mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
     await poller.pollOnce();
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
 
-    mockFetch
-      .mockResolvedValueOnce({ status: 201 })
-      .mockResolvedValueOnce({ status: 200 });
+    mockFetch.mockResolvedValueOnce(resultOk());
     resolveJob1(createMockResult('job-1', 'session-A'));
     await new Promise((r) => setTimeout(r, 10));
 
     mockFetch
-      .mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-      })
+      .mockResolvedValueOnce(sessionPayload('session-A'))
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
-      .mockResolvedValueOnce({ status: 201 })
-      .mockResolvedValueOnce({ status: 200 });
+      .mockResolvedValueOnce(ackOk());
 
     await poller.pollOnce();
     await new Promise((r) => setTimeout(r, 10));
+
+    mockFetch.mockResolvedValueOnce(resultOk());
     resolveJob2(createMockResult('job-2', 'session-A'));
     await poller.drain();
 
@@ -228,35 +228,25 @@ describe('TaskPoller Concurrent', () => {
     });
 
     mockFetch
-      .mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-      })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) });
+      .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) })
+      .mockResolvedValueOnce(ackOk());
     await poller.pollOnce();
     await new Promise((r) => setTimeout(r, 10));
 
-    mockFetch.mockResolvedValueOnce({
-      status: 200,
-      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-    });
+    mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
     await poller.pollOnce();
     expect(mockCleanupExecute).not.toHaveBeenCalled();
 
-    mockFetch
-      .mockResolvedValueOnce({ status: 201 })
-      .mockResolvedValueOnce({ status: 200 });
+    mockFetch.mockResolvedValueOnce(resultOk());
     resolveActive(createMockResult('job-active', 'session-A'));
     await new Promise((r) => setTimeout(r, 10));
 
     mockFetch
-      .mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-      })
+      .mockResolvedValueOnce(sessionPayload('session-A'))
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
-      .mockResolvedValueOnce({ status: 201 })
-      .mockResolvedValueOnce({ status: 200 });
+      .mockResolvedValueOnce(ackOk())
+      .mockResolvedValueOnce(resultOk());
 
     await poller.pollOnce();
     await poller.drain();
@@ -280,30 +270,63 @@ describe('TaskPoller Concurrent', () => {
     (poller as unknown as { currentPollInterval: number }).currentPollInterval = 1000;
 
     mockFetch
-      .mockResolvedValueOnce({
-        status: 200,
-        json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-      })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) });
+      .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
+      .mockResolvedValueOnce(ackOk());
 
     await poller.pollOnce();
     await vi.advanceTimersByTimeAsync(0);
 
-    mockFetch.mockResolvedValueOnce({
-      status: 200,
-      json: () => Promise.resolve({ sessions: [{ session_id: 'session-A', queue_name: 'jobs.session.session-A' }] }),
-    });
+    mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
     await poller.pollOnce();
 
     expect((poller as unknown as { currentPollInterval: number }).currentPollInterval).toBe(2000);
 
-    mockFetch
-      .mockResolvedValueOnce({ status: 201 })
-      .mockResolvedValueOnce({ status: 200 });
+    mockFetch.mockResolvedValueOnce(resultOk());
     resolveJob1(createMockResult('job-1', 'session-A'));
     await vi.advanceTimersByTimeAsync(0);
 
     expect((poller as unknown as { currentPollInterval: number }).currentPollInterval).toBe(1000);
     vi.useRealTimers();
+  });
+
+  it('keeps the next job in a session from starting before the first lock is released', async () => {
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+
+    let resolveJob1!: (v: TaskResultSubmission) => void;
+    const firstPromise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
+    mockClaudeExecute.mockReturnValueOnce(firstPromise).mockResolvedValueOnce(createMockResult('job-2', 'session-A'));
+
+    const job1 = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A' });
+    const job2 = createJob({ job_id: 'job-2', task_id: 'task-2', session_id: 'session-A' });
+
+    mockFetch
+      .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
+      .mockResolvedValueOnce(ackOk());
+
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 10));
+
+    mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
+    await poller.pollOnce();
+    expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
+
+    mockFetch.mockResolvedValueOnce(resultOk());
+    resolveJob1(createMockResult('job-1', 'session-A'));
+    await new Promise((r) => setTimeout(r, 10));
+
+    mockFetch
+      .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
+      .mockResolvedValueOnce(ackOk())
+      .mockResolvedValueOnce(resultOk());
+
+    await poller.pollOnce();
+    await poller.drain();
+
+    // FIFO is enforced by activeSessions plus SessionLockManager, not by leaving the broker delivery unacked.
+    expect(mockClaudeExecute).toHaveBeenCalledTimes(2);
   });
 });

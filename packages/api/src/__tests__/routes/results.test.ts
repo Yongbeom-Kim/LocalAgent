@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createResultRoutes } from '../../routes/results';
+import { RabbitMQUnavailableError } from '../../services/rabbitmq';
 
 const mockRabbitMQ = {
-  publishToExchange: vi.fn().mockReturnValue(true),
+  publishToExchange: vi.fn().mockResolvedValue(true),
   getNextFromQueue: vi.fn(),
   ackFromQueue: vi.fn(),
 };
@@ -118,10 +119,17 @@ describe('POST /results', () => {
   });
 
   it('returns 503 when exchange publish applies backpressure', async () => {
-    mockRabbitMQ.publishToExchange.mockReturnValueOnce(false);
+    mockRabbitMQ.publishToExchange.mockResolvedValueOnce(false);
     const app = buildApp();
     const res = await request(app).post('/results').send(validSubmission());
     expect(res.status).toBe(503);
+  });
+
+  it('returns 503 when result publish cannot reconnect to RabbitMQ', async () => {
+    mockRabbitMQ.publishToExchange.mockRejectedValueOnce(new RabbitMQUnavailableError());
+    const res = await request(buildApp()).post('/results').send(validSubmission());
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
 
   it('returns 201 with task_source when provided', async () => {
@@ -230,6 +238,13 @@ describe('GET /results/next/:queueName', () => {
     const app = buildApp();
     const res = await request(app).get('/results/next/lark-messages');
     expect(res.status).toBe(204);
+  });
+
+  it('returns 503 when result fetch cannot reconnect to RabbitMQ', async () => {
+    mockRabbitMQ.getNextFromQueue.mockRejectedValueOnce(new RabbitMQUnavailableError());
+    const res = await request(buildApp()).get('/results/next/lark-messages');
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
 });
 

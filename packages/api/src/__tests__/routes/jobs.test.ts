@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createJobRoutes } from '../../routes/jobs';
+import { RabbitMQUnavailableError } from '../../services/rabbitmq';
 
 const mockRabbitMQ = {
   publishJob: vi.fn().mockResolvedValue(true),
@@ -89,6 +90,13 @@ describe('POST /jobs', () => {
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'Server busy, try again later' });
   });
+
+  it('returns 503 when job publish cannot reconnect to RabbitMQ', async () => {
+    mockRabbitMQ.publishJob.mockRejectedValueOnce(new RabbitMQUnavailableError());
+    const res = await request(buildApp()).post('/jobs').send(validJobSubmission());
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
+  });
 });
 
 describe('GET /jobs/sessions', () => {
@@ -137,6 +145,13 @@ describe('GET /jobs/next/:sessionId', () => {
     const res = await request(app).get('/jobs/next/session-123');
     expect(res.status).toBe(204);
   });
+
+  it('returns 503 when job fetch cannot reconnect to RabbitMQ', async () => {
+    mockRabbitMQ.getNextJobFromSession.mockRejectedValueOnce(new RabbitMQUnavailableError());
+    const res = await request(buildApp()).get('/jobs/next/session-123');
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
+  });
 });
 
 describe('POST /jobs/:sessionId/:id/ack', () => {
@@ -150,6 +165,12 @@ describe('POST /jobs/:sessionId/:id/ack', () => {
     expect(res.body).toEqual({ acknowledged: true });
     expect(mockRabbitMQ.ackJobFromSession).toHaveBeenCalledWith('session-123', 'job-abc');
   });
+
+  it('returns 404 when job delivery is no longer available', async () => {
+    mockRabbitMQ.ackJobFromSession.mockReturnValueOnce(false);
+    const res = await request(buildApp()).post('/jobs/session-123/job-abc/ack');
+    expect(res.status).toBe(404);
+  });
 });
 
 describe('POST /jobs/:sessionId/:id/nack', () => {
@@ -162,5 +183,11 @@ describe('POST /jobs/:sessionId/:id/nack', () => {
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ requeued: true });
     expect(mockRabbitMQ.nackJobFromSession).toHaveBeenCalledWith('session-123', 'job-abc');
+  });
+
+  it('returns 404 when job delivery cannot be requeued anymore', async () => {
+    mockRabbitMQ.nackJobFromSession.mockReturnValueOnce(false);
+    const res = await request(buildApp()).post('/jobs/session-123/job-abc/nack');
+    expect(res.status).toBe(404);
   });
 });

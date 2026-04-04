@@ -110,6 +110,27 @@ export class TaskPoller {
     }
 
     try {
+      let acked = false;
+      try {
+        const ackRes = await fetch(
+          `${this.apiUrl}/jobs/${encodeURIComponent(job.session_id)}/${job.job_id}/ack`,
+          { method: 'POST' },
+        );
+        if (ackRes.status !== 200) {
+          logger.warn({ job_id: job.job_id, status: ackRes.status }, 'Immediate ACK failed; refusing execution');
+          return;
+        }
+        acked = true;
+        logger.info({ job_id: job.job_id }, 'Job acknowledged before execution');
+      } catch (ackErr) {
+        logger.error({ job_id: job.job_id, err: ackErr }, 'Immediate ACK request failed; refusing execution');
+        return;
+      }
+
+      if (!acked) {
+        return;
+      }
+
       const result = await this.orchestrator.handle(job);
 
       if (result.stdout.length > MAX_SNIPPET_CHARS) {
@@ -138,22 +159,8 @@ export class TaskPoller {
       } catch (resultErr) {
         logger.error({ job_id: job.job_id, err: resultErr }, 'Result publish request failed');
       }
-
-      try {
-        const ackRes = await fetch(
-          `${this.apiUrl}/jobs/${encodeURIComponent(job.session_id)}/${job.job_id}/ack`,
-          { method: 'POST' },
-        );
-        if (ackRes.status !== 200) {
-          logger.warn({ job_id: job.job_id, status: ackRes.status }, 'ACK failed');
-        } else {
-          logger.info({ job_id: job.job_id }, 'Job acknowledged');
-        }
-      } catch (ackErr) {
-        logger.error({ job_id: job.job_id, err: ackErr }, 'ACK request failed');
-      }
     } catch (err) {
-      logger.error({ job_id: job.job_id, err }, 'Orchestrator error — not acking');
+      logger.error({ job_id: job.job_id, err }, 'Orchestrator error after early ACK');
     } finally {
       this.sessionLock.release(job.session_id);
       this.inFlightJobs.delete(job.job_id);

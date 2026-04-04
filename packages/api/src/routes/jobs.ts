@@ -1,7 +1,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import { Job, isValidExecutorPreferences, isValidTaskSource } from '@local-agent/shared';
-import { RabbitMQService } from '../services/rabbitmq';
+import { RabbitMQService, RabbitMQUnavailableError } from '../services/rabbitmq';
 
 export function createJobRoutes(rabbitmq: RabbitMQService): Router {
   const router = Router();
@@ -66,6 +66,10 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
 
       res.status(201).json(job);
     } catch (err) {
+      if (err instanceof RabbitMQUnavailableError) {
+        res.status(503).json({ error: 'RabbitMQ temporarily unavailable' });
+        return;
+      }
       next(err);
     }
   });
@@ -83,6 +87,10 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
       }
       res.status(200).json(job);
     } catch (err) {
+      if (err instanceof RabbitMQUnavailableError) {
+        res.status(503).json({ error: 'RabbitMQ temporarily unavailable' });
+        return;
+      }
       next(err);
     }
   });

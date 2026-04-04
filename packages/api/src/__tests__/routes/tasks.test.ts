@@ -2,9 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { createTaskRoutes } from '../../routes/tasks';
+import { RabbitMQUnavailableError } from '../../services/rabbitmq';
 
 const mockRabbitMQ = {
-  publish: vi.fn().mockReturnValue(true),
+  publish: vi.fn().mockResolvedValue(true),
   getNext: vi.fn(),
   ack: vi.fn(),
 };
@@ -45,7 +46,7 @@ describe('POST /tasks', () => {
   });
 
   it('returns 503 when broker publish applies backpressure', async () => {
-    mockRabbitMQ.publish.mockReturnValueOnce(false);
+    mockRabbitMQ.publish.mockResolvedValueOnce(false);
     const app = buildApp();
     const res = await request(app)
       .post('/tasks')
@@ -59,6 +60,14 @@ describe('POST /tasks', () => {
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'Server busy, try again later' });
     expect(mockRabbitMQ.publish).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns 503 when task publish cannot reconnect to RabbitMQ', async () => {
+    mockRabbitMQ.publish.mockRejectedValueOnce(new RabbitMQUnavailableError());
+    const app = buildApp();
+    const res = await request(app).post('/tasks').send({ task_type: 'generic', payload: 'hello' });
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
 
   it('returns 400 when task_type missing', async () => {
@@ -366,6 +375,14 @@ describe('GET /tasks/next', () => {
     const app = buildApp();
     const res = await request(app).get('/tasks/next');
     expect(res.status).toBe(204);
+  });
+
+  it('returns 503 when task fetch cannot reconnect to RabbitMQ', async () => {
+    mockRabbitMQ.getNext.mockRejectedValueOnce(new RabbitMQUnavailableError());
+    const app = buildApp();
+    const res = await request(app).get('/tasks/next');
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
 });
 
