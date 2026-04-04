@@ -71,3 +71,7 @@ export {
 export { truncate } from './truncate';
 export { extractLarkMessageContent } from './lark-content';
 export { generateSessionId } from './session';
+export { loadSqliteConfig } from './db/config';
+export { createSqliteClient, assertExpectedSchemaVersion } from './db/client';
+export { sqliteSchema, schemaVersionTable } from './db/schema';
+export type { SqliteConfig, SqliteClient } from './db/types';

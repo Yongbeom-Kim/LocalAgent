@@ -11,12 +11,15 @@
     "clean": "rimraf dist"
   },
   "dependencies": {
+    "@libsql/client": "^0.17.2",
     "dotenv": "~16.4.7",
+    "drizzle-orm": "^0.45.2",
     "pino": "~8.21.0",
     "uuidv7": "^1.2.1"
   },
   "devDependencies": {
     "@types/node": "~20.17.0",
+    "drizzle-kit": "^0.31.10",
     "rimraf": "~5.0.0",
     "typescript": "~5.7.0",
     "vitest": "~1.6.0"
