@@ -27,13 +27,13 @@ Copy `.env.example` before starting anything. Service endpoint variables are req
 | Variable | Default | Required |
 |----------|---------|----------|
 | `PORT` | `3000` | No |
-| `RABBITMQ_URL` | `amqp://guest:guest@localhost:5672` | Yes |
-| `API_URL` | `http://localhost:3000` | Yes |
+| `RABBITMQ_URL` | Example: `amqp://guest:guest@localhost:5672` | Yes |
+| `API_URL` | Example: `http://localhost:3000` | Yes |
 | `POLL_INTERVAL_MS` | `5000` | No |
 | `TASK_DAEMON_STATUS_PORT` | `7070` | No |
-| `TASK_DAEMON_STATUS_URL` | `http://127.0.0.1:7070` | Yes for `task-enrichment` |
-| `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | — | Yes for Lark services |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | — | Yes for Telegram daemon |
+| `TASK_DAEMON_STATUS_URL` | Example: `http://127.0.0.1:7070` | Yes for `task-enrichment` |
+| `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | Provided by your Lark app | Yes for Lark services |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Provided by your Telegram bot/chat | Yes for Telegram daemon |
 
 ## 3. Start RabbitMQ
 
