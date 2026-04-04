@@ -177,6 +177,48 @@ describe('TaskPoller', () => {
       expect(mockClaudeExecute).not.toHaveBeenCalled();
     });
 
+    it('treats 503 from session discovery as an empty cycle', async () => {
+      mockFetch.mockResolvedValueOnce({
+        status: 503,
+        json: () => Promise.resolve({ error: 'Session queue discovery unavailable' }),
+      });
+
+      await expect(poller.pollOnce()).resolves.toBeUndefined();
+      expect(mockClaudeExecute).not.toHaveBeenCalled();
+    });
+
+    it('recovers on the next successful poll after a 503 discovery failure', async () => {
+      const job = createJob();
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 503,
+          json: () => Promise.resolve({ error: 'Session queue discovery unavailable' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+      await poller.pollOnce();
+      await poller.drain();
+
+      expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
+    });
+
     it('forwards task_source from job to result submission', async () => {
       const taskSource = { source: 'lark' as const, message_id: 'om_abc123' };
       const job = createJob({ task_source: taskSource });

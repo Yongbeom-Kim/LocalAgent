@@ -9,7 +9,7 @@ const mockRabbitMQ = {
   getNextJobFromSession: vi.fn(),
   ackJobFromSession: vi.fn(),
   nackJobFromSession: vi.fn(),
-  listActiveSessions: vi.fn().mockReturnValue([]),
+  listSessionQueues: vi.fn().mockResolvedValue([]),
 };
 
 function buildApp() {
@@ -103,7 +103,7 @@ describe('GET /jobs/sessions', () => {
   beforeEach(() => vi.clearAllMocks());
 
   it('returns active sessions', async () => {
-    mockRabbitMQ.listActiveSessions.mockReturnValueOnce([
+    mockRabbitMQ.listSessionQueues.mockResolvedValueOnce([
       { session_id: 'session-a', queue_name: 'jobs.session.session-a' },
       { session_id: 'session-b', queue_name: 'jobs.session.session-b' },
     ]);
@@ -116,6 +116,14 @@ describe('GET /jobs/sessions', () => {
         { session_id: 'session-b', queue_name: 'jobs.session.session-b' },
       ],
     });
+  });
+
+  it('returns 503 when broker-backed discovery fails', async () => {
+    mockRabbitMQ.listSessionQueues.mockRejectedValueOnce(new Error('management unavailable'));
+    const app = buildApp();
+    const res = await request(app).get('/jobs/sessions');
+    expect(res.status).toBe(503);
+    expect(res.body).toEqual({ error: 'Session queue discovery unavailable' });
   });
 });
 
