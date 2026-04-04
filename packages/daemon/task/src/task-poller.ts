@@ -67,6 +67,10 @@ export class TaskPoller {
 
   private async fetchMessageQueueActiveSessions(): Promise<SessionDescriptor[]> {
     const res = await fetch(`${this.apiUrl}/jobs/sessions`);
+    if (res.status === 503) {
+      logger.warn('Session queue discovery unavailable');
+      return [];
+    }
     if (res.status !== 200) {
       logger.warn({ status: res.status }, 'Unexpected response from API while listing sessions');
       return [];

@@ -41,12 +41,46 @@ export interface DaemonConfig {
   statusPort: number;
 }
 
+export interface RabbitMqManagementConfig {
+  baseUrl: string;
+  username: string;
+  password: string;
+  vhost: string;
+  encodedVhost: string;
+}
+
 export function requireEnvValue(env: Record<string, string | undefined>, key: string): string {
   const value = env[key]?.trim();
   if (!value) {
     throw new Error(`${key} is required`);
   }
   return value;
+}
+
+export function deriveRabbitMqManagementConfig(rabbitmqUrl: string): RabbitMqManagementConfig {
+  let parsed: URL;
+
+  try {
+    parsed = new URL(rabbitmqUrl);
+  } catch {
+    throw new Error('RABBITMQ_URL must be a valid URL for management discovery');
+  }
+
+  if (!parsed.username || !parsed.password) {
+    throw new Error('RABBITMQ_URL must include username and password for management discovery');
+  }
+
+  const host = parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname;
+  const pathname = parsed.pathname === '/' ? '' : parsed.pathname;
+  const vhost = pathname ? decodeURIComponent(pathname.slice(1)) : '/';
+
+  return {
+    baseUrl: `http://${host}:15672`,
+    username: decodeURIComponent(parsed.username),
+    password: decodeURIComponent(parsed.password),
+    vhost,
+    encodedVhost: encodeURIComponent(vhost),
+  };
 }
 
 export function loadApiConfig(env: Record<string, string | undefined> = process.env): ApiConfig {

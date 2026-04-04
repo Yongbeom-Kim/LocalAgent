@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { RabbitMQService } from '../../services/rabbitmq';
 
+const mockFetch = vi.fn();
+vi.stubGlobal('fetch', mockFetch);
+
 vi.mock('amqplib', () => {
   const mockCh = {
     assertQueue: vi.fn().mockResolvedValue({}),
@@ -34,6 +37,7 @@ describe('RabbitMQService', () => {
 
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
     amqplibMock = await import('amqplib');
     channel = (amqplibMock as any).__mockChannel;
     connection = (amqplibMock as any).__mockConnection;
@@ -42,7 +46,7 @@ describe('RabbitMQService', () => {
     channel.assertQueue.mockResolvedValue({});
     channel.sendToQueue.mockReturnValue(true);
     channel.publish.mockReturnValue(true);
-    service = new RabbitMQService('amqp://localhost', 'test-queue');
+    service = new RabbitMQService('amqp://guest:guest@localhost:5672', 'test-queue');
   });
 
   describe('connect', () => {
@@ -175,14 +179,34 @@ describe('RabbitMQService', () => {
       expect(channel.ack).toHaveBeenCalledTimes(2);
     });
 
-    it('lists active sessions in stable order', async () => {
+    it('lists session queues from rabbitmq management in stable order', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([
+          { name: 'jobs.session.session-b' },
+          { name: 'tasks' },
+          { name: 'jobs.session.session-a' },
+        ]),
+      });
+
       await service.connect();
-      await service.ensureSessionJobQueue('session-b');
-      await service.ensureSessionJobQueue('session-a');
-      expect(service.listActiveSessions()).toEqual([
+
+      await expect(service.listSessionQueues()).resolves.toEqual([
         { session_id: 'session-a', queue_name: 'jobs.session.session-a' },
         { session_id: 'session-b', queue_name: 'jobs.session.session-b' },
       ]);
+
+      expect(mockFetch).toHaveBeenCalledWith('http://localhost:15672/api/queues/%2F', {
+        headers: { Authorization: `Basic ${Buffer.from('guest:guest').toString('base64')}` },
+        signal: expect.any(AbortSignal),
+      });
+    });
+
+    it('throws when rabbitmq management returns non-2xx', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+      await service.connect();
+      await expect(service.listSessionQueues()).rejects.toThrow('RabbitMQ management returned status 503');
     });
   });
 

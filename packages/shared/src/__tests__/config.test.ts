@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { loadApiConfig, loadDaemonConfig } from '../config';
+import { deriveRabbitMqManagementConfig, loadApiConfig, loadDaemonConfig } from '../config';
 
 describe('loadApiConfig', () => {
   it('returns defaults when required env vars are set', () => {
@@ -56,5 +56,42 @@ describe('loadDaemonConfig', () => {
 
   it('throws when API_URL is missing', () => {
     expect(() => loadDaemonConfig({})).toThrow('API_URL is required');
+  });
+});
+
+describe('deriveRabbitMqManagementConfig', () => {
+  it('derives management config from a standard amqp URL', () => {
+    const config = deriveRabbitMqManagementConfig('amqp://guest:guest@rabbitmq:5672');
+    expect(config).toEqual({
+      baseUrl: 'http://rabbitmq:15672',
+      username: 'guest',
+      password: 'guest',
+      vhost: '/',
+      encodedVhost: '%2F',
+    });
+  });
+
+  it('treats an explicit trailing slash as the default vhost', () => {
+    const config = deriveRabbitMqManagementConfig('amqp://guest:guest@rabbitmq:5672/');
+    expect(config.vhost).toBe('/');
+    expect(config.encodedVhost).toBe('%2F');
+  });
+
+  it('derives encoded vhost when the URL includes a vhost path', () => {
+    const config = deriveRabbitMqManagementConfig('amqp://guest:guest@rabbitmq:5672/my-vhost');
+    expect(config.vhost).toBe('my-vhost');
+    expect(config.encodedVhost).toBe('my-vhost');
+  });
+
+  it('throws when credentials are missing', () => {
+    expect(() => deriveRabbitMqManagementConfig('amqp://rabbitmq:5672/my-vhost')).toThrow(
+      'RABBITMQ_URL must include username and password for management discovery',
+    );
+  });
+
+  it('throws when the URL is invalid', () => {
+    expect(() => deriveRabbitMqManagementConfig('not-a-url')).toThrow(
+      'RABBITMQ_URL must be a valid URL for management discovery',
+    );
   });
 });
