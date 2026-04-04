@@ -4,6 +4,8 @@ import type { TaskSubmitter } from '../adapters/task-submitter';
 import type { LarkReactor } from '../adapters/lark-reactor';
 import type { LarkReplier } from '../adapters/lark-replier';
 import type { DedupMap } from '../services/dedup';
+import type { LarkHistoryRepository } from '@local-agent/shared';
+import type { LarkMessageMetadataResolver } from '../message-handler';
 
 const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)';
 
@@ -30,17 +32,33 @@ describe('MessageHandler', () => {
   let reactor: { react: ReturnType<typeof vi.fn> };
   let replier: { reply: ReturnType<typeof vi.fn> };
   let dedup: { has: ReturnType<typeof vi.fn>; add: ReturnType<typeof vi.fn> };
+  let historyRepository: {
+    upsertInboundLarkMessage: ReturnType<typeof vi.fn>;
+    recordOutboundLarkMessage: ReturnType<typeof vi.fn>;
+    getLarkThreadByThreadId: ReturnType<typeof vi.fn>;
+  };
+  let metadataResolver: { resolve: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     submitter = { submit: vi.fn().mockResolvedValue('task-abc') };
     reactor = { react: vi.fn().mockResolvedValue(undefined) };
-    replier = { reply: vi.fn().mockResolvedValue(undefined) };
+    replier = { reply: vi.fn().mockResolvedValue(null) };
     dedup = { has: vi.fn().mockReturnValue(false), add: vi.fn() };
+    historyRepository = {
+      upsertInboundLarkMessage: vi.fn().mockResolvedValue(undefined),
+      recordOutboundLarkMessage: vi.fn().mockResolvedValue(undefined),
+      getLarkThreadByThreadId: vi.fn().mockResolvedValue(null),
+    };
+    metadataResolver = {
+      resolve: vi.fn().mockResolvedValue({ rootMessageId: 'om_msg1', threadId: null }),
+    };
     handler = new MessageHandler(
       submitter as unknown as TaskSubmitter,
       reactor as unknown as LarkReactor,
       replier as unknown as LarkReplier,
       dedup as unknown as DedupMap,
+      historyRepository as unknown as LarkHistoryRepository,
+      metadataResolver as unknown as LarkMessageMetadataResolver,
     );
   });
 
@@ -56,6 +74,28 @@ describe('MessageHandler', () => {
     );
     expect(replier.reply).not.toHaveBeenCalled();
     expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+  });
+
+  it('persists inbound lark messages before task submission', async () => {
+    await handler.handle(makeEvent());
+
+    expect(historyRepository.upsertInboundLarkMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rootMessageId: 'om_msg1',
+        threadId: null,
+        source: 'lark',
+        message: expect.objectContaining({
+          messageId: 'om_msg1',
+          messageType: 'text',
+          rawContent: JSON.stringify({ text: 'fix the CI pipeline' }),
+          normalizedText: 'fix the CI pipeline',
+        }),
+      }),
+    );
+
+    const persistOrder = historyRepository.upsertInboundLarkMessage.mock.invocationCallOrder[0];
+    const submitOrder = submitter.submit.mock.invocationCallOrder[0];
+    expect(persistOrder).toBeLessThan(submitOrder);
   });
 
   it('skips duplicate messages', async () => {
@@ -140,6 +180,14 @@ describe('MessageHandler', () => {
     });
 
     it('replies with usage hint for bare /task and does not submit', async () => {
+      replier.reply.mockResolvedValue({
+        messageId: 'om_reply1',
+        messageType: 'text',
+        rawContent: JSON.stringify({ text: USAGE_HINT }),
+        normalizedText: USAGE_HINT,
+        createdAtMs: 1700000000000,
+      });
+
       await handler.handle(makeEvent({
         content: JSON.stringify({ text: '/task' }),
       }));
@@ -147,6 +195,18 @@ describe('MessageHandler', () => {
       expect(submitter.submit).not.toHaveBeenCalled();
       expect(reactor.react).not.toHaveBeenCalled();
       expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
+      expect(historyRepository.recordOutboundLarkMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: 'om_reply1',
+          source: 'lark',
+          rootMessageId: 'om_msg1',
+          threadId: null,
+          messageType: 'text',
+          rawContent: JSON.stringify({ text: USAGE_HINT }),
+          normalizedText: USAGE_HINT,
+          createdAtMs: 1700000000000,
+        }),
+      );
     });
 
     it('rejects /task with only type', async () => {
