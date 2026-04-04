@@ -17,7 +17,20 @@ export type MachineLockAcquireResult =
   | { acquired: true }
   | { acquired: false; holderPid: number; lockPath: string };
 
-export class MachineLockManager {
+export interface MachineLockLike {
+  acquire(): MachineLockAcquireResult;
+  release(): void;
+}
+
+export class NoopMachineLock implements MachineLockLike {
+  acquire(): MachineLockAcquireResult {
+    return { acquired: true };
+  }
+
+  release(): void {}
+}
+
+export class MachineLockManager implements MachineLockLike {
   private readonly filePath: string;
 
   constructor(options: MachineLockManagerOptions = {}) {
