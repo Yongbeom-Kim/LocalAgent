@@ -9,11 +9,15 @@ import { TaskPoller } from './task-poller';
 import { TaskOrchestrator } from './core/task-orchestrator';
 import { JobEnvironment } from './services/job-environment';
 import { SessionLockManager } from './services/session-lock';
-import { MachineLockManager, type MachineLockAcquireResult } from './services/machine-lock';
+import {
+  MachineLockManager,
+  NoopMachineLock,
+  type MachineLockAcquireResult,
+  type MachineLockLike,
+} from './services/machine-lock';
 
 type PollerLike = Pick<TaskPoller, 'start' | 'drain' | 'isSessionActive'>;
 type StatusServerLike = Pick<Server, 'listen' | 'close' | 'once' | 'removeListener'>;
-type MachineLockLike = Pick<MachineLockManager, 'acquire' | 'release'>;
 type LoggerLike = ReturnType<typeof createLogger>;
 
 type StartTaskDaemonDeps = {
@@ -37,14 +41,6 @@ type StartTaskDaemonDeps = {
 interface RunningTaskDaemon {
   shutdown: () => Promise<void>;
   poller: PollerLike;
-}
-
-class NoopMachineLock implements MachineLockLike {
-  acquire(): MachineLockAcquireResult {
-    return { acquired: true };
-  }
-
-  release(): void {}
 }
 
 function writeJson(res: ServerResponse, statusCode: number, body: unknown): void {
