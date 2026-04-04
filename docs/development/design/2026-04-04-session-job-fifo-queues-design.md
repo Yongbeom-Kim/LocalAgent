@@ -12,7 +12,7 @@ This is now a correctness bug because the product contract is stricter than the 
 
 - every job for a given `session_id` must run in submission order;
 - only one job in that session may execute at a time;
-- this applies uniformly to all task types, including `kill` and `cleanup`.
+- this applies uniformly to all task types, including `cleanup`.
 
 ## Goals
 
@@ -157,7 +157,7 @@ With one consumer per session queue, same-session contention should not happen i
 That means:
 
 - same-session lock conflicts become unexpected and should be logged as internal errors;
-- `kill`, `cleanup`, and normal jobs all use the same FIFO path;
+- `cleanup` and normal jobs all use the same FIFO path;
 - the current requeue-based ordering behavior is removed from the design contract.
 
 ### 6. Queue lifecycle uses idle expiry, not explicit delete
@@ -230,7 +230,7 @@ Add tests for:
 Replace requeue-oriented concurrency tests with session-queue FIFO tests:
 
 - two jobs for the same session are consumed/executed in order;
-- `kill` and `cleanup` do not bypass earlier queued jobs;
+- `cleanup` does not bypass earlier queued jobs;
 - jobs from different sessions still execute concurrently up to the configured limit;
 - idle session consumer handles are removed when the queue is drained or unavailable.
 

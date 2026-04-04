@@ -150,7 +150,7 @@ export class EnrichmentService {
         return { type: 'rejected', reason: formatMissingPayloadMessage() };
       }
       executors = [{ executor: exec, executor_model: task.executor_model }];
-    } else if (normalizedTaskType === 'cleanup' || normalizedTaskType === 'kill') {
+    } else if (normalizedTaskType === 'cleanup') {
       executors = [{ executor: 'builtin', executor_model: 'none' }];
     } else if (normalizedTaskType === 'new_instance') {
       if (task.executor && task.executor_model) {

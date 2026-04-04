@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import { join } from 'node:path';
 import { JobAttempt, TaskResultSubmission, createLogger } from '@local-agent/shared';
-import { ExecutorKillResult, TaskExecutor } from '../ports/task-executor';
+import { TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:cleanup-executor');
@@ -67,17 +67,5 @@ export class CleanupExecutor implements TaskExecutor {
         stderr: message,
       };
     }
-  }
-
-  async kill(_sessionId: string, _graceMs: number): Promise<ExecutorKillResult> {
-    return {
-      status: 'success',
-      outcome: 'no_active_process',
-      signalPath: 'none',
-      waitDurationMs: 0,
-      exitCode: 0,
-      stdout: 'No active process',
-      stderr: '',
-    };
   }
 }

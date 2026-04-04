@@ -250,22 +250,6 @@ describe('POST /tasks', () => {
     expect(res.status).toBe(201);
   });
 
-  it('returns 201 when kill control task omits executor/model', async () => {
-    const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
-      .send({ task_type: 'kill', payload: '' });
-    expect(res.status).toBe(201);
-  });
-
-  it('returns 400 when kill control task includes invalid executor/model pair', async () => {
-    const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
-      .send({ task_type: 'kill', payload: '', executor: 'foo', executor_model: 'bar' });
-    expect(res.status).toBe(400);
-  });
-
   it('returns 201 when control task uses ttcodex with an allowlisted model', async () => {
     const app = buildApp();
     const res = await request(app)
