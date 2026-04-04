@@ -1,4 +1,10 @@
-import { TaskResult, createLogger, type TaskSource } from '@local-agent/shared';
+import {
+  TaskResult,
+  createLogger,
+  type TaskSource,
+  LarkHistoryRepository,
+  type RecordOutboundLarkMessageParams,
+} from '@local-agent/shared';
 import { DEFAULT_LARK_MAX_RETRIES } from '../constants';
 
 const logger = createLogger('lark-daemon:notifier');
@@ -18,6 +24,10 @@ export class LarkNotifier {
     private readonly appId: string,
     private readonly appSecret: string,
     private readonly recipientId: string,
+    private readonly larkHistoryRepository?: Pick<
+      LarkHistoryRepository,
+      'recordOutboundLarkMessage' | 'markLarkThreadNewInstance'
+    >,
   ) {}
 
   async notify(result: TaskResult): Promise<void> {
@@ -100,16 +110,72 @@ export class LarkNotifier {
       });
     }
 
-    const msgData = await msgRes.json() as { code: number };
+    const msgData = await msgRes.json() as { code: number; data?: { message_id?: string } };
 
     if (msgData.code !== 0) {
       throw new Error(`Lark message send failed with code ${msgData.code}`);
     }
 
+    await this.persistOutboundReply(result, text, msgData.data?.message_id);
+
     // Clean up reactions after successful thread reply
     if (result.task_source?.source === 'lark') {
       await this.removeAllReactions(result.task_source.message_id, tokenData.tenant_access_token);
     }
+  }
+
+  private async persistOutboundReply(
+    result: TaskResult,
+    text: string,
+    messageIdFromResponse?: string,
+  ): Promise<void> {
+    if (result.task_source?.source !== 'lark' || !result.session_id || !this.larkHistoryRepository) {
+      return;
+    }
+
+    const createdAtMs = Date.now();
+    const eventKind = this.getOutboundEventKind(result);
+    const metadataJson = eventKind ? JSON.stringify({ event_kind: eventKind }) : null;
+
+    const outboundParams: RecordOutboundLarkMessageParams = {
+      messageId: messageIdFromResponse ?? this.buildSyntheticOutboundMessageId(result.result_id),
+      source: 'lark',
+      rootMessageId: result.task_source.message_id,
+      sessionId: result.session_id,
+      threadId: null,
+      messageType: 'text',
+      rawContent: JSON.stringify({ text }),
+      normalizedText: text,
+      metadataJson,
+      createdAtMs,
+    };
+
+    await this.larkHistoryRepository.recordOutboundLarkMessage(outboundParams);
+
+    if (result.task_type === 'new_instance' && result.executor && result.executor_model) {
+      await this.larkHistoryRepository.markLarkThreadNewInstance({
+        sessionId: result.session_id,
+        executor: result.executor,
+        executorModel: result.executor_model,
+        updatedAtMs: createdAtMs,
+      });
+    }
+  }
+
+  private getOutboundEventKind(result: TaskResult): string | null {
+    if (result.task_type === 'new_instance') {
+      return 'new_instance_reply';
+    }
+
+    if (result.task_type === 'cleanup') {
+      return 'end_reply';
+    }
+
+    return 'reply';
+  }
+
+  private buildSyntheticOutboundMessageId(resultId: string): string {
+    return `local_outbound_${resultId}`;
   }
 
   /**

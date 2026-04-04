@@ -8,6 +8,7 @@ describe('loadLarkDaemonConfig', () => {
       LARK_APP_ID: 'app123',
       LARK_APP_SECRET: 'secret456',
       LARK_RECIPIENT_ID: 'user789',
+      LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
     });
     expect(config.apiUrl).toBe('http://localhost:3000');
     expect(config.pollIntervalMs).toBe(5000);
@@ -15,6 +16,8 @@ describe('loadLarkDaemonConfig', () => {
     expect(config.larkAppId).toBe('app123');
     expect(config.larkAppSecret).toBe('secret456');
     expect(config.larkRecipientId).toBe('user789');
+    expect(config.dbPath).toBe('/tmp/local-agent.sqlite');
+    expect(config.expectedSchemaVersion).toBeUndefined();
   });
 
   it('reads from env vars', () => {
@@ -25,6 +28,8 @@ describe('loadLarkDaemonConfig', () => {
       LARK_APP_ID: 'app123',
       LARK_APP_SECRET: 'secret456',
       LARK_RECIPIENT_ID: 'user789',
+      LOCAL_AGENT_DB_PATH: '/tmp/other.sqlite',
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '2',
     });
     expect(config.apiUrl).toBe('http://other:4000');
     expect(config.pollIntervalMs).toBe(2000);
@@ -32,17 +37,22 @@ describe('loadLarkDaemonConfig', () => {
     expect(config.larkAppId).toBe('app123');
     expect(config.larkAppSecret).toBe('secret456');
     expect(config.larkRecipientId).toBe('user789');
+    expect(config.dbPath).toBe('/tmp/other.sqlite');
+    expect(config.expectedSchemaVersion).toBe(2);
   });
 
   it('throws when required env vars are missing', () => {
-    expect(() => loadLarkDaemonConfig({ API_URL: 'http://localhost:3000', LARK_APP_SECRET: 'secret456', LARK_RECIPIENT_ID: 'user789' })).toThrow(
+    expect(() => loadLarkDaemonConfig({ API_URL: 'http://localhost:3000', LARK_APP_SECRET: 'secret456', LARK_RECIPIENT_ID: 'user789', LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite' })).toThrow(
       'LARK_APP_ID is required',
     );
-    expect(() => loadLarkDaemonConfig({ API_URL: 'http://localhost:3000', LARK_APP_ID: 'app123', LARK_RECIPIENT_ID: 'user789' })).toThrow(
+    expect(() => loadLarkDaemonConfig({ API_URL: 'http://localhost:3000', LARK_APP_ID: 'app123', LARK_RECIPIENT_ID: 'user789', LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite' })).toThrow(
       'LARK_APP_SECRET is required',
     );
-    expect(() => loadLarkDaemonConfig({ API_URL: 'http://localhost:3000', LARK_APP_ID: 'app123', LARK_APP_SECRET: 'secret456' })).toThrow(
+    expect(() => loadLarkDaemonConfig({ API_URL: 'http://localhost:3000', LARK_APP_ID: 'app123', LARK_APP_SECRET: 'secret456', LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite' })).toThrow(
       'LARK_RECIPIENT_ID is required',
+    );
+    expect(() => loadLarkDaemonConfig({ API_URL: 'http://localhost:3000', LARK_APP_ID: 'app123', LARK_APP_SECRET: 'secret456', LARK_RECIPIENT_ID: 'user789' })).toThrow(
+      'LOCAL_AGENT_DB_PATH is required',
     );
   });
 });
