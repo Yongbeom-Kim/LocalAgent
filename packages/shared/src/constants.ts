@@ -18,7 +18,7 @@ export const DEFAULT_MAX_CONCURRENT_SESSIONS = 5;
 export const DEFAULT_REQUEUE_DELAY_MS = 5000;
 export const DEFAULT_TASK_DAEMON_STATUS_PORT = 7070;
 export const DEFAULT_TASK_DAEMON_STATUS_URL = `http://task-daemon:${DEFAULT_TASK_DAEMON_STATUS_PORT}`;
-export const MAX_SNIPPET_CHARS = 2000;
+export const MAX_SNIPPET_CHARS = 100000;
 
 /** Express `json()` body limit (also headroom for non-result routes). RabbitMQ default max message size is far larger. */
 export const MAX_API_JSON_BODY_BYTES = 1024 * 1024;

@@ -20,7 +20,6 @@ export class TaskPoller {
   private running = false;
   private inFlightJobs = new Map<string, Promise<void>>();
   private activeSessions = new Set<string>();
-  private knownSessions = new Set<string>();
   private basePollInterval = 0;
   private currentPollInterval = 0;
 
@@ -37,21 +36,15 @@ export class TaskPoller {
 
   async pollOnce(): Promise<void> {
     try {
-      const sessions = await this.fetchActiveSessions();
-      this.knownSessions = new Set(sessions.map((session) => session.session_id));
-
-      if (this.inFlightJobs.size >= this.maxConcurrency) {
-        this.increasePollInterval();
-        logger.info(
-          { inFlight: this.inFlightJobs.size, maxConcurrency: this.maxConcurrency },
-          'At capacity, backing off',
-        );
-        return;
-      }
+      const sessions = await this.fetchMessageQueueActiveSessions();
 
       for (const session of sessions) {
         if (this.inFlightJobs.size >= this.maxConcurrency) {
           this.increasePollInterval();
+          logger.info(
+            { inFlight: this.inFlightJobs.size, maxConcurrency: this.maxConcurrency },
+            'At capacity, backing off',
+          );
           break;
         }
         if (this.activeSessions.has(session.session_id)) {
@@ -72,7 +65,7 @@ export class TaskPoller {
     }
   }
 
-  private async fetchActiveSessions(): Promise<SessionDescriptor[]> {
+  private async fetchMessageQueueActiveSessions(): Promise<SessionDescriptor[]> {
     const res = await fetch(`${this.apiUrl}/jobs/sessions`);
     if (res.status !== 200) {
       logger.warn({ status: res.status }, 'Unexpected response from API while listing sessions');
@@ -86,7 +79,6 @@ export class TaskPoller {
     const res = await fetch(`${this.apiUrl}/jobs/next/${encodeURIComponent(sessionId)}`);
 
     if (res.status === 204) {
-      this.knownSessions.delete(sessionId);
       return null;
     }
 
