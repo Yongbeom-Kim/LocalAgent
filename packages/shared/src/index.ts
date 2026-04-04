@@ -45,6 +45,7 @@ export { loadApiConfig, loadDaemonConfig, loadEnvFromRoot, requireEnvValue, ApiC
 export { createLogger } from './logger';
 export {
   DEFAULT_QUEUE_NAME,
+  DEFAULT_API_URL,
   DEFAULT_PORT,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_LOG_LEVEL,

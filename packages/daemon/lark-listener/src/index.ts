@@ -1,5 +1,5 @@
 import { createLogger } from '@local-agent/shared';
-import { LarkClient } from '@larksuiteoapi/node-sdk';
+import { EventDispatcher, LoggerLevel, WSClient } from '@larksuiteoapi/node-sdk';
 import { loadLarkListenerConfig } from './config';
 import { TaskSubmitter } from './adapters/task-submitter';
 import { LarkReactor } from './adapters/lark-reactor';
@@ -14,20 +14,25 @@ async function main() {
 
   logger.info({ apiUrl: config.apiUrl, dedupTtlMs: config.dedupTtlMs }, 'Starting lark-listener');
 
-  const client = new LarkClient({ appId: config.appId, appSecret: config.appSecret });
   const submitter = new TaskSubmitter(config.apiUrl);
-  const reactor = new LarkReactor(client);
-  const replier = new LarkReplier(client);
+  const reactor = new LarkReactor(config.appId, config.appSecret);
+  const replier = new LarkReplier(config.appId, config.appSecret);
   const dedup = new DedupMap({ ttlMs: config.dedupTtlMs });
   const handler = new MessageHandler(submitter, reactor, replier, dedup);
 
-  const ws = client.ws;
-  ws.event('im.message.receive_v1', async ({ data }: any) => {
-    if (!data) return;
-    await handler.handle(data);
+  const eventDispatcher = new EventDispatcher({ loggerLevel: LoggerLevel.info }).register({
+    'im.message.receive_v1': async (data: unknown) => {
+      await handler.handle(data as Parameters<typeof handler.handle>[0]);
+    },
   });
 
-  await ws.start();
+  const wsClient = new WSClient({
+    appId: config.appId,
+    appSecret: config.appSecret,
+    loggerLevel: LoggerLevel.info,
+  });
+
+  await wsClient.start({ eventDispatcher });
 }
 
 main().catch((err) => {
