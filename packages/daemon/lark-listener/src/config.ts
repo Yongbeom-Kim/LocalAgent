@@ -1,13 +1,15 @@
 import {
   DEFAULT_LOG_LEVEL,
   loadEnvFromRoot,
+  loadSqliteConfig,
   requireEnvValue,
+  type SqliteConfig,
 } from '@local-agent/shared';
 import { DEFAULT_DEDUP_TTL_MS } from './constants';
 
 loadEnvFromRoot();
 
-export interface LarkListenerConfig {
+export interface LarkListenerConfig extends SqliteConfig {
   appId: string;
   appSecret: string;
   apiUrl: string;
@@ -18,7 +20,10 @@ export interface LarkListenerConfig {
 export function loadLarkListenerConfig(
   env: Record<string, string | undefined> = process.env,
 ): LarkListenerConfig {
+  const sqlite = loadSqliteConfig(env);
+
   return {
+    ...sqlite,
     appId: requireEnvValue(env, 'LARK_APP_ID'),
     appSecret: requireEnvValue(env, 'LARK_APP_SECRET'),
     apiUrl: requireEnvValue(env, 'API_URL'),

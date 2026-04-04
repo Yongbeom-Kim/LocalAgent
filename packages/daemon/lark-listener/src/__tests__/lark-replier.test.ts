@@ -46,7 +46,7 @@ describe('LarkReplier', () => {
 
   it('does not throw on token fetch failure (best-effort)', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Network error'));
-    await expect(replier.reply('om_msg123', 'hello')).resolves.toBeUndefined();
+    await expect(replier.reply('om_msg123', 'hello')).resolves.toBeNull();
   });
 
   it('does not throw on reply API failure (best-effort)', async () => {
@@ -60,6 +60,30 @@ describe('LarkReplier', () => {
         json: () => Promise.resolve({ code: 99 }),
       });
 
-    await expect(replier.reply('om_msg123', 'hello')).resolves.toBeUndefined();
+    await expect(replier.reply('om_msg123', 'hello')).resolves.toBeNull();
+  });
+
+  it('returns reply metadata when reply succeeds', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_1' } }),
+      });
+
+    const result = await replier.reply('om_msg123', 'hello');
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        messageId: 'om_reply_1',
+        messageType: 'text',
+        rawContent: JSON.stringify({ text: 'hello' }),
+        normalizedText: 'hello',
+        createdAtMs: expect.any(Number),
+      }),
+    );
   });
 });

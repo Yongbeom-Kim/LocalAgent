@@ -1,7 +1,13 @@
-import { createLogger, type TaskSource, extractLarkMessageContent } from '@local-agent/shared';
+import {
+  createLogger,
+  type TaskSource,
+  extractLarkMessageContent,
+  type LarkHistoryRepository,
+} from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
-import type { LarkReplier } from './adapters/lark-replier';
+import type { LarkReplier, LarkReplyResult } from './adapters/lark-replier';
+import type { LarkMessageMetadataResolver, ResolvedThreadIdentity } from './adapters/lark-message-metadata-resolver';
 import type { DedupMap } from './services/dedup';
 
 const logger = createLogger('lark-listener:handler');
@@ -25,12 +31,16 @@ type ParsedSubmit =
   | { kind: 'submit'; taskType: string; taskPayload: string; executor?: string; executorModel?: string }
   | { kind: 'usage' };
 
+export type { LarkMessageMetadataResolver };
+
 export class MessageHandler {
   constructor(
     private readonly submitter: TaskSubmitter,
     private readonly reactor: LarkReactor,
     private readonly replier: LarkReplier,
     private readonly dedup: DedupMap,
+    private readonly historyRepository: LarkHistoryRepository,
+    private readonly metadataResolver: LarkMessageMetadataResolver,
   ) {}
 
   async handle(event: LarkMessageEvent): Promise<void> {
@@ -50,10 +60,39 @@ export class MessageHandler {
     );
 
     const text = this.extractText(message_type, message.content);
+    const threadIdentity = await this.metadataResolver.resolve(message_id);
+
+    await this.historyRepository.upsertInboundLarkMessage({
+      rootMessageId: threadIdentity.rootMessageId,
+      threadId: threadIdentity.threadId,
+      sessionId: threadIdentity.rootMessageId,
+      source: 'lark',
+      chatType: message.chat_type ?? null,
+      taskType: 'thread_reply',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      threadCreatedAtMs: Date.now(),
+      threadUpdatedAtMs: Date.now(),
+      message: {
+        messageId: message_id,
+        messageType: message_type,
+        rawContent: message.content,
+        normalizedText: text,
+        metadataJson: JSON.stringify({
+          sender_open_id: event.sender.sender_id.open_id,
+          sender_type: event.sender.sender_type,
+          mentions: message.mentions ?? [],
+        }),
+        createdAtMs: Date.now(),
+      },
+    });
+
     const parsed = this.parseCommand(text);
 
     if (parsed.kind === 'usage') {
-      await this.replier.reply(message_id, USAGE_HINT);
+      const replyResult = await this.replier.reply(message_id, USAGE_HINT);
+      await this.persistUsageReply(replyResult, threadIdentity);
       return;
     }
 
@@ -174,5 +213,27 @@ export class MessageHandler {
 
   private extractText(messageType: string, content: string): string {
     return extractLarkMessageContent(messageType, content);
+  }
+
+  private async persistUsageReply(
+    replyResult: LarkReplyResult | null,
+    threadIdentity: ResolvedThreadIdentity,
+  ): Promise<void> {
+    if (!replyResult?.messageId) {
+      return;
+    }
+
+    await this.historyRepository.recordOutboundLarkMessage({
+      messageId: replyResult.messageId,
+      source: 'lark',
+      rootMessageId: threadIdentity.rootMessageId,
+      sessionId: threadIdentity.rootMessageId,
+      threadId: threadIdentity.threadId,
+      messageType: replyResult.messageType,
+      rawContent: replyResult.rawContent,
+      normalizedText: replyResult.normalizedText,
+      metadataJson: JSON.stringify({ event_kind: 'usage_reply' }),
+      createdAtMs: replyResult.createdAtMs,
+    });
   }
 }

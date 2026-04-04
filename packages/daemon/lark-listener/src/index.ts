@@ -1,9 +1,10 @@
-import { createLogger } from '@local-agent/shared';
-import { Client, EventDispatcher, WSClient } from '@larksuiteoapi/node-sdk';
+import { createLogger, assertExpectedSchemaVersion, createSqliteClient, LarkHistoryRepository } from '@local-agent/shared';
+import { WSClient, EventDispatcher } from '@larksuiteoapi/node-sdk';
 import { loadLarkListenerConfig } from './config';
 import { TaskSubmitter } from './adapters/task-submitter';
 import { LarkReactor } from './adapters/lark-reactor';
 import { LarkReplier } from './adapters/lark-replier';
+import { LarkOpenApiMessageMetadataResolver } from './adapters/lark-message-metadata-resolver';
 import { MessageHandler } from './message-handler';
 import { DedupMap } from './services/dedup';
 
@@ -14,23 +15,30 @@ async function main() {
 
   logger.info({ apiUrl: config.apiUrl, dedupTtlMs: config.dedupTtlMs }, 'Starting lark-listener');
 
-  const client = new Client({ appId: config.appId, appSecret: config.appSecret });
+  const sqliteClient = await createSqliteClient(config);
+  await assertExpectedSchemaVersion(sqliteClient.db, config.expectedSchemaVersion);
+
   const submitter = new TaskSubmitter(config.apiUrl);
   const reactor = new LarkReactor(config.appId, config.appSecret);
   const replier = new LarkReplier(config.appId, config.appSecret);
+  const historyRepository = new LarkHistoryRepository(sqliteClient.db);
+  const metadataResolver = new LarkOpenApiMessageMetadataResolver(config.appId, config.appSecret);
   const dedup = new DedupMap({ ttlMs: config.dedupTtlMs });
-  const handler = new MessageHandler(submitter, reactor, replier, dedup);
+  const handler = new MessageHandler(submitter, reactor, replier, dedup, historyRepository, metadataResolver);
 
-  const dispatcher = new EventDispatcher({ logger });
-  dispatcher.register({
+  const wsClient = new WSClient({
+    appId: config.appId,
+    appSecret: config.appSecret,
+  });
+
+  const eventDispatcher = new EventDispatcher({}).register({
     'im.message.receive_v1': async (data: any) => {
       if (!data) return;
       await handler.handle(data);
     },
   });
 
-  const ws = new WSClient({ appId: config.appId, appSecret: config.appSecret, logger });
-  await ws.start({ eventDispatcher: dispatcher });
+  await wsClient.start({ eventDispatcher });
 }
 
 main().catch((err) => {

@@ -3,6 +3,14 @@ import { LARK_TOKEN_URL, LARK_REACTION_URL_PREFIX } from '../constants';
 
 const logger = createLogger('lark-listener:replier');
 
+export interface LarkReplyResult {
+  messageId: string;
+  messageType: 'text';
+  rawContent: string;
+  normalizedText: string;
+  createdAtMs: number;
+}
+
 export class LarkReplier {
   constructor(
     private readonly appId: string,
@@ -12,9 +20,11 @@ export class LarkReplier {
   /**
    * Reply to a message in-thread. Best-effort — errors are logged and swallowed.
    */
-  async reply(messageId: string, text: string): Promise<void> {
+  async reply(messageId: string, text: string): Promise<LarkReplyResult | null> {
     try {
       const token = await this.fetchTenantToken();
+      const createdAtMs = Date.now();
+      const rawContent = JSON.stringify({ text });
 
       const res = await fetch(`${LARK_REACTION_URL_PREFIX}/${messageId}/reply`, {
         method: 'POST',
@@ -24,17 +34,31 @@ export class LarkReplier {
         },
         body: JSON.stringify({
           msg_type: 'text',
-          content: JSON.stringify({ text }),
+          content: rawContent,
           reply_in_thread: true,
         }),
       });
 
-      const data = (await res.json()) as { code: number; msg?: string };
+      const data = (await res.json()) as {
+        code: number;
+        msg?: string;
+        data?: { message_id?: string };
+      };
       if (data.code !== 0) {
         logger.warn({ messageId, code: data.code, msg: data.msg }, 'Reply API returned non-zero code');
+        return null;
       }
+
+      return {
+        messageId: data.data?.message_id ?? '',
+        messageType: 'text',
+        rawContent,
+        normalizedText: text,
+        createdAtMs,
+      };
     } catch (err) {
       logger.warn({ messageId, err }, 'Failed to reply (best-effort)');
+      return null;
     }
   }
 
