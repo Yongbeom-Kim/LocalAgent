@@ -73,5 +73,14 @@ export { extractLarkMessageContent } from './lark-content';
 export { generateSessionId } from './session';
 export { loadSqliteConfig } from './db/config';
 export { createSqliteClient, assertExpectedSchemaVersion } from './db/client';
-export { sqliteSchema, schemaVersionTable } from './db/schema';
+export { sqliteSchema, schemaVersionTable, larkThreadsTable, larkMessagesTable } from './db/schema';
+export { LarkHistoryRepository } from './db/lark-history-repository';
+export { formatLarkPromptHistory } from './db/history-format';
 export type { SqliteConfig, SqliteClient } from './db/types';
+export type {
+  LarkMessageRow,
+  LarkThreadRow,
+  UpsertInboundLarkMessageParams,
+  RecordOutboundLarkMessageParams,
+  MarkLarkThreadNewInstanceParams,
+} from './db/lark-history-repository';
