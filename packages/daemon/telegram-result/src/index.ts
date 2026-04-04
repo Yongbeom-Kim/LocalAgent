@@ -7,11 +7,6 @@ async function main() {
   const config = loadTelegramDaemonConfig();
   const logger = createLogger('telegram-daemon', config.logLevel);
 
-  if (!config.telegramBotToken?.trim() || !config.telegramChatId?.trim()) {
-    logger.fatal('TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set and non-empty');
-    process.exit(1);
-  }
-
   const notifier = new TelegramNotifier(config.telegramBotToken, config.telegramChatId);
 
   logger.info('Validating Telegram bot token...');

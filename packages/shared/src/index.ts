@@ -41,13 +41,11 @@ export {
   formatThreadTaskCommandRejectedMessage,
   formatThreadOnlyCommandMessage,
 } from './routing-errors';
-export { loadApiConfig, loadDaemonConfig, loadEnvFromRoot, ApiConfig, DaemonConfig } from './config';
+export { loadApiConfig, loadDaemonConfig, loadEnvFromRoot, requireEnvValue, ApiConfig, DaemonConfig } from './config';
 export { createLogger } from './logger';
 export {
   DEFAULT_QUEUE_NAME,
   DEFAULT_PORT,
-  DEFAULT_RABBITMQ_URL,
-  DEFAULT_API_URL,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_LOG_LEVEL,
   DEFAULT_RESULTS_EXCHANGE_NAME,
@@ -63,7 +61,6 @@ export {
   DEFAULT_MAX_CONCURRENT_SESSIONS,
   DEFAULT_REQUEUE_DELAY_MS,
   DEFAULT_TASK_DAEMON_STATUS_PORT,
-  DEFAULT_TASK_DAEMON_STATUS_URL,
   MAX_SNIPPET_CHARS,
   MAX_API_JSON_BODY_BYTES,
   GLOBAL_SYSTEM_PROMPT,

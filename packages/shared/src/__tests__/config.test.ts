@@ -2,8 +2,10 @@ import { describe, it, expect } from 'vitest';
 import { loadApiConfig, loadDaemonConfig } from '../config';
 
 describe('loadApiConfig', () => {
-  it('returns defaults when no env vars set', () => {
-    const config = loadApiConfig({});
+  it('returns defaults when required env vars are set', () => {
+    const config = loadApiConfig({
+      RABBITMQ_URL: 'amqp://guest:guest@localhost:5672',
+    });
     expect(config.port).toBe(3000);
     expect(config.rabbitmqUrl).toBe('amqp://guest:guest@localhost:5672');
     expect(config.queueName).toBe('tasks');
@@ -22,11 +24,17 @@ describe('loadApiConfig', () => {
     expect(config.queueName).toBe('jobs');
     expect(config.logLevel).toBe('debug');
   });
+
+  it('throws when RABBITMQ_URL is missing', () => {
+    expect(() => loadApiConfig({})).toThrow('RABBITMQ_URL is required');
+  });
 });
 
 describe('loadDaemonConfig', () => {
-  it('returns defaults when no env vars set', () => {
-    const config = loadDaemonConfig({});
+  it('returns defaults when required env vars are set', () => {
+    const config = loadDaemonConfig({
+      API_URL: 'http://localhost:3000',
+    });
     expect(config.apiUrl).toBe('http://localhost:3000');
     expect(config.pollIntervalMs).toBe(5000);
     expect(config.logLevel).toBe('info');
@@ -44,5 +52,9 @@ describe('loadDaemonConfig', () => {
     expect(config.pollIntervalMs).toBe(1000);
     expect(config.logLevel).toBe('warn');
     expect(config.statusPort).toBe(7171);
+  });
+
+  it('throws when API_URL is missing', () => {
+    expect(() => loadDaemonConfig({})).toThrow('API_URL is required');
   });
 });

@@ -295,7 +295,7 @@ git commit -m "feat(task-enrichment): answer thread status from task daemon"
 
 In `docker-compose.yml`:
 - set the task-daemon status listen port env;
-- set `TASK_DAEMON_STATUS_URL` for `task-enrichment-daemon` to the internal service URL (for example `http://task-daemon:<port>`);
+- set `TASK_DAEMON_STATUS_URL` for `task-enrichment-daemon` to the internal service URL (for example `http://task-daemon:<port>` in Compose or `http://127.0.0.1:<port>` for local bare-metal runs);
 - do not publish the internal status port to the host unless explicitly needed.
 
 - [ ] **Step 2: Run the targeted package test suite**

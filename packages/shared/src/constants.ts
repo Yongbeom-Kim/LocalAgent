@@ -1,7 +1,5 @@
 export const DEFAULT_QUEUE_NAME = 'tasks';
 export const DEFAULT_PORT = 3000;
-export const DEFAULT_RABBITMQ_URL = 'amqp://guest:guest@localhost:5672';
-export const DEFAULT_API_URL = 'http://localhost:3000';
 export const DEFAULT_POLL_INTERVAL_MS = 5000;
 export const DEFAULT_LOG_LEVEL = 'info';
 export const DEFAULT_RESULTS_EXCHANGE_NAME = 'results';
@@ -17,7 +15,6 @@ export const SESSION_DIR_TTL_DAYS = 7;
 export const DEFAULT_MAX_CONCURRENT_SESSIONS = 5;
 export const DEFAULT_REQUEUE_DELAY_MS = 5000;
 export const DEFAULT_TASK_DAEMON_STATUS_PORT = 7070;
-export const DEFAULT_TASK_DAEMON_STATUS_URL = `http://task-daemon:${DEFAULT_TASK_DAEMON_STATUS_PORT}`;
 export const MAX_SNIPPET_CHARS = 100000;
 
 /** Express `json()` body limit (also headroom for non-result routes). RabbitMQ default max message size is far larger. */

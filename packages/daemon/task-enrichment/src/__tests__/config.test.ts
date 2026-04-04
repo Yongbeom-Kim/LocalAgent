@@ -2,15 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { loadEnrichmentDaemonConfig } from '../config';
 
 describe('loadEnrichmentDaemonConfig', () => {
-  it('returns defaults when no env vars set', () => {
-    const config = loadEnrichmentDaemonConfig({});
+  it('returns defaults when required env vars are set', () => {
+    const config = loadEnrichmentDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
+      LARK_APP_ID: 'app123',
+      LARK_APP_SECRET: 'secret456',
+    });
     expect(config.apiUrl).toBe('http://localhost:3000');
     expect(config.pollIntervalMs).toBe(5000);
     expect(config.logLevel).toBe('info');
-    expect(config.taskDaemonStatusUrl).toBe('http://task-daemon:7070');
+    expect(config.taskDaemonStatusUrl).toBe('http://127.0.0.1:7070');
     expect(config.enrichmentConfigDir).toMatch(/config$/);
-    expect(config.larkAppId).toBeUndefined();
-    expect(config.larkAppSecret).toBeUndefined();
+    expect(config.larkAppId).toBe('app123');
+    expect(config.larkAppSecret).toBe('secret456');
   });
 
   it('reads from env vars', () => {
@@ -32,19 +37,16 @@ describe('loadEnrichmentDaemonConfig', () => {
     expect(config.larkAppSecret).toBe('secret456');
   });
 
-  it('returns undefined for larkAppId when not set', () => {
-    const config = loadEnrichmentDaemonConfig({
+  it('throws when required env vars are missing', () => {
+    expect(() => loadEnrichmentDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
       LARK_APP_SECRET: 'secret456',
-    });
-    expect(config.larkAppId).toBeUndefined();
-    expect(config.larkAppSecret).toBe('secret456');
-  });
-
-  it('returns undefined for larkAppSecret when not set', () => {
-    const config = loadEnrichmentDaemonConfig({
+    })).toThrow('LARK_APP_ID is required');
+    expect(() => loadEnrichmentDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
       LARK_APP_ID: 'app123',
-    });
-    expect(config.larkAppId).toBe('app123');
-    expect(config.larkAppSecret).toBeUndefined();
+    })).toThrow('LARK_APP_SECRET is required');
   });
 });
