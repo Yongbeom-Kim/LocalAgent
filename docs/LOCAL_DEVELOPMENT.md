@@ -31,6 +31,7 @@ Copy `.env.example` before starting anything. Service endpoint variables are req
 | `API_URL` | Example: `http://localhost:3000` | Yes |
 | `POLL_INTERVAL_MS` | `5000` | No |
 | `TASK_DAEMON_STATUS_PORT` | `7070` | No |
+| `TASK_DAEMON_DISABLE_MACHINE_LOCK` | unset | No; test/debug only |
 | `TASK_DAEMON_STATUS_URL` | Example: `http://127.0.0.1:7070` | Yes for `task-enrichment` |
 | `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | Provided by your Lark app | Yes for Lark services |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Provided by your Telegram bot/chat | Yes for Telegram daemon |
@@ -82,6 +83,10 @@ npm run dev --prefix packages/daemon/task
 ```
 
 Polls `GET /jobs/next`, executes jobs, then ACKs them.
+
+Only one `task-daemon` may run per machine at a time. If a second instance starts while another live `task-daemon` holds the machine lock, startup fails fast with a duplicate-lock error that includes the lock path and holder PID. Stale or corrupt lock files are recovered automatically using PID liveness checks.
+
+`TASK_DAEMON_DISABLE_MACHINE_LOCK=1` bypasses this protection, but it is intended only for controlled tests or debugging.
 
 ## 7. Start Notification Daemons (optional)
 
