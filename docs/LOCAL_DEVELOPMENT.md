@@ -16,6 +16,24 @@ rush install
 rush build
 ```
 
+## Pull Request Gate
+
+Every GitHub pull request runs the `PR Merge Gate` workflow.
+
+The gate executes:
+
+- `node common/scripts/install-run-rush.js update`
+- `node common/scripts/install-run-rush.js build`
+- `node common/scripts/run-rush-project-tests.js`
+
+Run the same checks locally before updating a PR when practical. If you add a new Rush project and expect it to participate in CI automatically, define a `test` script in that project's `package.json`.
+
+## GitHub Rollout
+
+The workflow file does not block merges by itself. Configure GitHub branch protection for the protected branch to require the merge-gate status check after the workflow lands and has appeared on at least one pull request.
+
+In GitHub this typically appears as either `pr-merge-gate` or `PR Merge Gate / pr-merge-gate`. Enable `Require status checks to pass before merging`, then select that check from the branch protection rule.
+
 ## 2. Environment
 
 ```bash
