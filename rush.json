@@ -39,6 +39,10 @@
     {
       "packageName": "@local-agent/lark-listener-daemon",
       "projectFolder": "packages/daemon/lark-listener"
+    },
+    {
+      "packageName": "@local-agent/migrator",
+      "projectFolder": "packages/migrator"
     }
   ]
 }
