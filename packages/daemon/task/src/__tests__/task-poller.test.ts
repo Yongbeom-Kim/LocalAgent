@@ -204,12 +204,12 @@ describe('TaskPoller', () => {
           json: () => Promise.resolve(job),
         })
         .mockResolvedValueOnce({
-          status: 201,
-          json: () => Promise.resolve({ result_id: 'res-1' }),
-        })
-        .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve({ acknowledged: true }),
+        })
+        .mockResolvedValueOnce({
+          status: 201,
+          json: () => Promise.resolve({ result_id: 'res-1' }),
         });
 
       await poller.pollOnce();
