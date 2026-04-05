@@ -43,6 +43,23 @@ describe('TaskSubmitter', () => {
     );
   });
 
+  it('does not include executor routing for lark_inbound tasks', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: () => Promise.resolve({ task_id: 'task-abc' }),
+    });
+
+    await submitter.submit('lark_inbound', '{"hello":true}', { source: 'lark', message_id: 'om_msg1' }, 'claude', 'sonnet');
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body).toEqual({
+      task_type: 'lark_inbound',
+      payload: '{"hello":true}',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+  });
+
   it('retries on failure with exponential backoff and returns null after max retries', async () => {
     mockFetch
       .mockRejectedValueOnce(new Error('Network error'))

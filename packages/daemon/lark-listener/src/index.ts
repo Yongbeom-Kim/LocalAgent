@@ -1,4 +1,4 @@
-import { createLogger, assertExpectedSchemaVersion, createSqliteClient, LarkHistoryRepository } from '@local-agent/shared';
+import { createLogger } from '@local-agent/shared';
 import { WSClient, EventDispatcher } from '@larksuiteoapi/node-sdk';
 import { loadLarkListenerConfig } from './config';
 import { TaskSubmitter } from './adapters/task-submitter';
@@ -15,16 +15,12 @@ async function main() {
 
   logger.info({ apiUrl: config.apiUrl, dedupTtlMs: config.dedupTtlMs }, 'Starting lark-listener');
 
-  const sqliteClient = await createSqliteClient(config);
-  await assertExpectedSchemaVersion(sqliteClient.db, config.expectedSchemaVersion);
-
   const submitter = new TaskSubmitter(config.apiUrl);
   const reactor = new LarkReactor(config.appId, config.appSecret);
   const replier = new LarkReplier(config.appId, config.appSecret);
-  const historyRepository = new LarkHistoryRepository(sqliteClient.db);
   const metadataResolver = new LarkOpenApiMessageMetadataResolver(config.appId, config.appSecret);
   const dedup = new DedupMap({ ttlMs: config.dedupTtlMs });
-  const handler = new MessageHandler(submitter, reactor, replier, dedup, historyRepository, metadataResolver);
+  const handler = new MessageHandler(submitter, reactor, replier, dedup, metadataResolver);
 
   const wsClient = new WSClient({
     appId: config.appId,
