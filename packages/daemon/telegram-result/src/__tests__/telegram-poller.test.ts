@@ -46,7 +46,7 @@ describe('TelegramPoller', () => {
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
-          json: () => Promise.resolve(sampleResult),
+          json: () => Promise.resolve({ event_kind: 'result', event: sampleResult }),
         })
         .mockResolvedValueOnce({
           status: 200,
@@ -58,6 +58,32 @@ describe('TelegramPoller', () => {
       expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages');
       expect(mockNotify).toHaveBeenCalledWith(sampleResult);
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/res-1/ack', {
+        method: 'POST',
+      });
+    });
+
+    it('ignores phase events and acks by event_id', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({
+            event_kind: 'phase',
+            event: {
+              event_id: 'evt-1',
+              task_id: 'task-123',
+              phase: 'queued',
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/evt-1/ack', {
         method: 'POST',
       });
     });
