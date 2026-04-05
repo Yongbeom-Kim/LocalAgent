@@ -23,10 +23,14 @@ function createResult(overrides?: Partial<TaskResult>): TaskResult {
 
 describe('LarkNotifier', () => {
   let notifier: LarkNotifier;
+  let tokenProvider: { getTenantAccessToken: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    notifier = new LarkNotifier('app-id', 'app-secret', 'user-123');
+    tokenProvider = {
+      getTenantAccessToken: vi.fn().mockResolvedValue('token-abc'),
+    };
+    notifier = new LarkNotifier('app-id', 'app-secret', 'user-123', undefined, tokenProvider);
   });
 
   function createRepositoryMocks() {
@@ -42,20 +46,16 @@ describe('LarkNotifier', () => {
 
   it('persists outbound lark replies after successful send', async () => {
     const repository = createRepositoryMocks();
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository);
+    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
 
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_1' } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       });
 
     await dbNotifier.notify(createResult({
@@ -83,20 +83,16 @@ describe('LarkNotifier', () => {
 
   it('updates thread executor/model on /new while preserving session_id', async () => {
     const repository = createRepositoryMocks();
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository);
+    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
 
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_2' } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       });
 
     await dbNotifier.notify(createResult({
@@ -121,20 +117,16 @@ describe('LarkNotifier', () => {
 
   it('does not create a new session on /end replies', async () => {
     const repository = createRepositoryMocks();
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository);
+    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
 
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_3' } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       });
 
     await dbNotifier.notify(createResult({
@@ -181,20 +173,16 @@ describe('LarkNotifier', () => {
       endedAtMs: null,
     });
 
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository);
+    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
 
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       })
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_4' } }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
       });
 
     await dbNotifier.notify(createResult({
@@ -222,25 +210,14 @@ describe('LarkNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult());
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(tokenProvider.getTenantAccessToken).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
     expect(mockFetch).toHaveBeenNthCalledWith(1,
-      'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal',
-      expect.objectContaining({
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ app_id: 'app-id', app_secret: 'app-secret' }),
-      }),
-    );
-    expect(mockFetch).toHaveBeenNthCalledWith(2,
       'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id',
       expect.objectContaining({
         method: 'POST',
@@ -256,16 +233,12 @@ describe('LarkNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult({ stdout: 'x'.repeat(3000) }));
 
-    const sendCall = mockFetch.mock.calls[1];
+    const sendCall = mockFetch.mock.calls[0];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
     expect(content.text).toContain('job-456');
@@ -278,16 +251,12 @@ describe('LarkNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult({ task_type: 'deploy' }));
 
-    const sendCall = mockFetch.mock.calls[1];
+    const sendCall = mockFetch.mock.calls[0];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
     expect(content.text).toContain('task_type: deploy');
@@ -295,10 +264,6 @@ describe('LarkNotifier', () => {
 
   it('prepends executor and model lines when both are present', async () => {
     mockFetch
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ code: 0 }),
@@ -311,7 +276,7 @@ describe('LarkNotifier', () => {
       }),
     );
 
-    const sendCall = mockFetch.mock.calls[1];
+    const sendCall = mockFetch.mock.calls[0];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
     expect(content.text).toContain('executor: cursor');
@@ -322,16 +287,12 @@ describe('LarkNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult({ executor: undefined, executor_model: undefined }));
 
-    const sendCall = mockFetch.mock.calls[1];
+    const sendCall = mockFetch.mock.calls[0];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
     expect(content.text).not.toContain('executor:');
@@ -342,16 +303,12 @@ describe('LarkNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult({ session_id: '0195f2d6-5d6d-7b8d-9f8d-123456789abc' }));
 
-    const sendCall = mockFetch.mock.calls[1];
+    const sendCall = mockFetch.mock.calls[0];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
     expect(content.text).toContain('session_id: 0195f2d6-5d6d-7b8d-9f8d-123456789abc');
@@ -361,52 +318,60 @@ describe('LarkNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult({ session_id: undefined }));
 
-    const sendCall = mockFetch.mock.calls[1];
+    const sendCall = mockFetch.mock.calls[0];
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
     expect(content.text).not.toContain('session_id:');
   });
 
   it('retries up to 3 times on fetch failure then resolves', async () => {
-    mockFetch
+    tokenProvider.getTenantAccessToken
       .mockRejectedValueOnce(new Error('Network error'))
       .mockRejectedValueOnce(new Error('Network error'))
       .mockRejectedValueOnce(new Error('Network error'));
 
     await expect(notifier.notify(createResult())).resolves.toBeUndefined();
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(tokenProvider.getTenantAccessToken).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenCalledTimes(0);
   });
 
   it('succeeds on retry after initial failure', async () => {
-    mockFetch
+    tokenProvider.getTenantAccessToken
       .mockRejectedValueOnce(new Error('Network error'))
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
+      .mockResolvedValueOnce('token-abc');
+    mockFetch
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult());
-    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(tokenProvider.getTenantAccessToken).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 
   it('replies in thread when task_source is lark', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+        json: () => Promise.resolve({
+          code: 0,
+          data: {
+            open_id: 'ou_bot',
+            items: [
+              {
+                reaction_id: 'react-1',
+                reaction_type: { emoji_type: 'OnIt' },
+                operator: { open_id: 'ou_bot' },
+              },
+            ],
+          },
+        }),
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -414,7 +379,7 @@ describe('LarkNotifier', () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
+        json: () => Promise.resolve({ code: 0 }),
       });
 
     const result = createResult({
@@ -423,8 +388,12 @@ describe('LarkNotifier', () => {
     await notifier.notify(result);
 
     expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect(mockFetch).toHaveBeenNthCalledWith(1,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_original_msg/reactions?user_id_type=open_id',
+      expect.objectContaining({ method: 'GET' }),
+    );
     // Should call reply API, not send API
-    expect(mockFetch).toHaveBeenNthCalledWith(2,
+    expect(mockFetch).toHaveBeenNthCalledWith(3,
       'https://open.larksuite.com/open-apis/im/v1/messages/om_original_msg/reply',
       expect.objectContaining({
         method: 'POST',
@@ -435,7 +404,7 @@ describe('LarkNotifier', () => {
       }),
     );
     // Verify reply_in_thread is set
-    const sendCall = mockFetch.mock.calls[1];
+    const sendCall = mockFetch.mock.calls[2];
     const body = JSON.parse(sendCall[1].body);
     expect(body.reply_in_thread).toBe(true);
     expect(body.msg_type).toBe('text');
@@ -445,55 +414,42 @@ describe('LarkNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
         json: () => Promise.resolve({ code: 0 }),
       });
 
     await notifier.notify(createResult()); // no task_source
 
-    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
     // Should call send API (existing DM behavior)
-    expect(mockFetch).toHaveBeenNthCalledWith(2,
+    expect(mockFetch).toHaveBeenNthCalledWith(1,
       'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id',
       expect.objectContaining({ method: 'POST' }),
     );
   });
 
   describe('reaction cleanup', () => {
-    it('removes all reactions after successful thread reply', async () => {
+    it('clears bot-owned phase reactions before sending the final reply', async () => {
       mockFetch
-        // 1. Token fetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-        })
-        // 2. Thread reply
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ code: 0 }),
-        })
-        // 3. List reactions
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({
             code: 0,
             data: {
+              open_id: 'ou_bot',
               items: [
-                { reaction_id: 'react-1' },
-                { reaction_id: 'react-2' },
+                {
+                  reaction_id: 'react-1',
+                  reaction_type: { emoji_type: 'OnIt' },
+                  operator: { open_id: 'ou_bot' },
+                },
               ],
             },
           }),
         })
-        // 4. Delete reaction 1
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ code: 0 }),
         })
-        // 5. Delete reaction 2
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ code: 0 }),
@@ -504,9 +460,9 @@ describe('LarkNotifier', () => {
       });
       await notifier.notify(result);
 
-      expect(mockFetch).toHaveBeenCalledTimes(5);
+      expect(mockFetch).toHaveBeenCalledTimes(3);
       // Verify list reactions call
-      expect(mockFetch).toHaveBeenNthCalledWith(3,
+      expect(mockFetch).toHaveBeenNthCalledWith(1,
         'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions?user_id_type=open_id',
         expect.objectContaining({
           method: 'GET',
@@ -516,13 +472,69 @@ describe('LarkNotifier', () => {
         }),
       );
       // Verify delete calls
-      expect(mockFetch).toHaveBeenNthCalledWith(4,
+      expect(mockFetch).toHaveBeenNthCalledWith(2,
         'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-1',
         expect.objectContaining({ method: 'DELETE' }),
       );
-      expect(mockFetch).toHaveBeenNthCalledWith(5,
-        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-2',
+      expect(mockFetch).toHaveBeenNthCalledWith(3,
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reply',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('does not remove user reactions or non-phase reactions during cleanup', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({
+            code: 0,
+            data: {
+              open_id: 'ou_bot',
+              items: [
+                {
+                  reaction_id: 'react-phase-user',
+                  reaction_type: { emoji_type: 'OnIt' },
+                  operator: { open_id: 'ou_user' },
+                },
+                {
+                  reaction_id: 'react-non-phase-bot',
+                  reaction_type: { emoji_type: 'ThumbsUp' },
+                  operator: { open_id: 'ou_bot' },
+                },
+                {
+                  reaction_id: 'react-phase-bot',
+                  reaction_type: { emoji_type: 'Runner' },
+                  operator: { open_id: 'ou_bot' },
+                },
+              ],
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        });
+
+      await notifier.notify(createResult({
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }));
+
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenNthCalledWith(2,
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-phase-bot',
         expect.objectContaining({ method: 'DELETE' }),
+      );
+      expect(mockFetch).not.toHaveBeenCalledWith(
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-phase-user',
+        expect.anything(),
+      );
+      expect(mockFetch).not.toHaveBeenCalledWith(
+        'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-non-phase-bot',
+        expect.anything(),
       );
     });
 
@@ -530,30 +542,22 @@ describe('LarkNotifier', () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
           json: () => Promise.resolve({ code: 0 }),
         });
 
       await notifier.notify(createResult()); // no task_source
-      expect(mockFetch).toHaveBeenCalledTimes(2); // only token + DM send
+      expect(mockFetch).toHaveBeenCalledTimes(1); // only DM send
     });
 
     it('skips deletion when reaction list is empty', async () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+          json: () => Promise.resolve({ code: 0, data: { items: [] } }),
         })
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ code: 0 }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ code: 0, data: { items: [] } }),
         });
 
       const result = createResult({
@@ -561,47 +565,47 @@ describe('LarkNotifier', () => {
       });
       await notifier.notify(result);
 
-      expect(mockFetch).toHaveBeenCalledTimes(3); // token + reply + list reactions (no deletes)
+      expect(mockFetch).toHaveBeenCalledTimes(2); // list reactions + reply
     });
 
     it('continues notification when reaction list API fails', async () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
+          json: () => Promise.resolve({ code: 99, msg: 'bad' }),
         })
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ code: 0 }),
-        })
-        .mockRejectedValueOnce(new Error('Network error'));
+        });
 
       const result = createResult({
         task_source: { source: 'lark', message_id: 'om_msg1' },
       });
       // Should not throw — reaction cleanup is best-effort
       await expect(notifier.notify(result)).resolves.toBeUndefined();
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenCalledTimes(2);
     });
 
     it('continues deleting remaining reactions when one DELETE fails', async () => {
       mockFetch
         .mockResolvedValueOnce({
           ok: true,
-          json: () => Promise.resolve({ tenant_access_token: 'token-abc', code: 0 }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ code: 0 }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
           json: () => Promise.resolve({
             code: 0,
             data: {
+              open_id: 'ou_bot',
               items: [
-                { reaction_id: 'react-1' },
-                { reaction_id: 'react-2' },
+                {
+                  reaction_id: 'react-1',
+                  reaction_type: { emoji_type: 'OnIt' },
+                  operator: { open_id: 'ou_bot' },
+                },
+                {
+                  reaction_id: 'react-2',
+                  reaction_type: { emoji_type: 'Runner' },
+                  operator: { open_id: 'ou_bot' },
+                },
               ],
             },
           }),
@@ -609,6 +613,10 @@ describe('LarkNotifier', () => {
         // Delete react-1 fails
         .mockRejectedValueOnce(new Error('Network error'))
         // Delete react-2 succeeds
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve({ code: 0 }),
+        })
         .mockResolvedValueOnce({
           ok: true,
           json: () => Promise.resolve({ code: 0 }),
@@ -620,8 +628,8 @@ describe('LarkNotifier', () => {
       await expect(notifier.notify(result)).resolves.toBeUndefined();
 
       // Should still attempt to delete react-2 after react-1 fails
-      expect(mockFetch).toHaveBeenCalledTimes(5);
-      expect(mockFetch).toHaveBeenNthCalledWith(5,
+      expect(mockFetch).toHaveBeenCalledTimes(4);
+      expect(mockFetch).toHaveBeenNthCalledWith(3,
         'https://open.larksuite.com/open-apis/im/v1/messages/om_msg1/reactions/react-2',
         expect.objectContaining({ method: 'DELETE' }),
       );

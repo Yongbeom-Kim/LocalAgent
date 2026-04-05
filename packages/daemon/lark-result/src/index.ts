@@ -8,6 +8,7 @@ import {
 } from '@local-agent/shared';
 import { LarkPoller } from './lark-poller';
 import { LarkNotifier } from './adapters/lark-notifier';
+import { LarkPhaseNotifier, LarkTenantTokenProvider } from './adapters/lark-phase-notifier';
 
 async function main() {
   const config = loadLarkDaemonConfig();
@@ -40,7 +41,10 @@ async function main() {
     config.larkRecipientId,
     larkHistoryRepository,
   );
-  const poller = new LarkPoller(config.apiUrl, DEFAULT_LARK_QUEUE_NAME, notifier);
+
+  const tokenProvider = new LarkTenantTokenProvider(config.larkAppId, config.larkAppSecret);
+  const phaseNotifier = new LarkPhaseNotifier(tokenProvider, larkHistoryRepository);
+  const poller = new LarkPoller(config.apiUrl, DEFAULT_LARK_QUEUE_NAME, notifier, phaseNotifier);
   poller.start(config.pollIntervalMs);
 
   const shutdown = () => {

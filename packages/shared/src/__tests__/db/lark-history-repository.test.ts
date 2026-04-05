@@ -136,6 +136,136 @@ describe('LarkHistoryRepository', () => {
     }
   });
 
+  it('records phase reaction metadata attempts and last state on success', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({
+      dbPath: join(tempDir, 'history.sqlite'),
+    });
+
+    try {
+      await bootstrapLarkTables(client.connection);
+      const repository = new LarkHistoryRepository(client.db);
+
+      await repository.upsertInboundLarkMessage({
+        rootMessageId: 'om_root_4',
+        threadId: 'omt_thread_4',
+        sessionId: 'session_4',
+        source: 'lark',
+        chatType: 'group',
+        taskType: 'generic',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        threadCreatedAtMs: 100,
+        threadUpdatedAtMs: 100,
+        message: {
+          messageId: 'om_41',
+          messageType: 'text',
+          rawContent: '{"text":"start"}',
+          normalizedText: 'start',
+          metadataJson: '{"event_kind":"reply"}',
+          createdAtMs: 100,
+        },
+      });
+
+      await repository.appendLarkPhaseReactionAttempt('om_41', {
+        phase: 'queued',
+        action: 'set',
+        ok: true,
+        at: '2026-04-05T10:00:00.000Z',
+        event_id: 'evt_phase_1',
+      });
+
+      const row = await repository.getLarkMessageByMessageId('om_41');
+      const metadata = JSON.parse(row?.metadataJson ?? '{}') as Record<string, unknown>;
+      const phaseReactions = metadata.phase_reactions as Record<string, unknown>;
+
+      expect(metadata.event_kind).toBe('reply');
+      expect(phaseReactions.last).toEqual({
+        phase: 'queued',
+        applied_at: '2026-04-05T10:00:00.000Z',
+        event_id: 'evt_phase_1',
+      });
+      expect(phaseReactions.attempts).toEqual([
+        {
+          phase: 'queued',
+          action: 'set',
+          ok: true,
+          at: '2026-04-05T10:00:00.000Z',
+          event_id: 'evt_phase_1',
+        },
+      ]);
+    } finally {
+      client.close();
+    }
+  });
+
+  it('records phase reaction failure markers when updates fail', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({
+      dbPath: join(tempDir, 'history.sqlite'),
+    });
+
+    try {
+      await bootstrapLarkTables(client.connection);
+      const repository = new LarkHistoryRepository(client.db);
+
+      await repository.upsertInboundLarkMessage({
+        rootMessageId: 'om_root_5',
+        threadId: 'omt_thread_5',
+        sessionId: 'session_5',
+        source: 'lark',
+        chatType: 'group',
+        taskType: 'generic',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        threadCreatedAtMs: 100,
+        threadUpdatedAtMs: 100,
+        message: {
+          messageId: 'om_51',
+          messageType: 'text',
+          rawContent: '{"text":"start"}',
+          normalizedText: 'start',
+          metadataJson: 'not-json',
+          createdAtMs: 100,
+        },
+      });
+
+      await repository.appendLarkPhaseReactionAttempt('om_51', {
+        phase: 'completed',
+        action: 'clear',
+        ok: false,
+        at: '2026-04-05T10:01:00.000Z',
+        event_id: 'evt_phase_2',
+        error: 'list reactions failed',
+      });
+
+      const row = await repository.getLarkMessageByMessageId('om_51');
+      const metadata = JSON.parse(row?.metadataJson ?? '{}') as Record<string, unknown>;
+      const phaseReactions = metadata.phase_reactions as Record<string, unknown>;
+      const attempts = phaseReactions.attempts as Record<string, unknown>[];
+
+      expect(phaseReactions.last).toBeUndefined();
+      expect(attempts).toEqual([
+        {
+          phase: 'completed',
+          action: 'clear',
+          ok: false,
+          at: '2026-04-05T10:01:00.000Z',
+          event_id: 'evt_phase_2',
+          error: 'list reactions failed',
+        },
+      ]);
+    } finally {
+      client.close();
+    }
+  });
+
   it('deletes lark rows by session_id', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
     tempDirs.push(tempDir);

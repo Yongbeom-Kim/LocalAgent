@@ -89,6 +89,17 @@ export interface LarkMessageRow {
   createdAtMs: number;
 }
 
+export type LarkPhaseReactionAction = 'set' | 'clear';
+
+export interface LarkPhaseReactionAttempt {
+  phase: string;
+  action: LarkPhaseReactionAction;
+  ok: boolean;
+  at: string;
+  event_id?: string;
+  error?: string;
+}
+
 export class LarkHistoryRepository {
   constructor(private readonly db: LibSQLDatabase<SqliteSchema>) {}
 
@@ -292,10 +303,77 @@ export class LarkHistoryRepository {
     });
   }
 
+  async appendLarkPhaseReactionAttempt(
+    messageId: string,
+    attempt: LarkPhaseReactionAttempt,
+  ): Promise<void> {
+    const message = await this.getLarkMessageByMessageId(messageId);
+    if (!message) {
+      return;
+    }
+
+    const metadata = this.parseMetadata(message.metadataJson);
+    const phaseReactions = this.parseObject(metadata.phase_reactions);
+    const existingAttempts = Array.isArray(phaseReactions.attempts)
+      ? phaseReactions.attempts.filter((entry): entry is Record<string, unknown> => this.isObject(entry))
+      : [];
+
+    const nextAttempt: Record<string, unknown> = {
+      phase: attempt.phase,
+      action: attempt.action,
+      ok: attempt.ok,
+      at: attempt.at,
+      ...(attempt.event_id ? { event_id: attempt.event_id } : {}),
+      ...(attempt.error ? { error: attempt.error } : {}),
+    };
+
+    const attempts = [...existingAttempts, nextAttempt].slice(-20);
+
+    phaseReactions.attempts = attempts;
+    if (attempt.ok) {
+      phaseReactions.last = {
+        phase: attempt.phase,
+        applied_at: attempt.at,
+        ...(attempt.event_id ? { event_id: attempt.event_id } : {}),
+      };
+    }
+
+    metadata.phase_reactions = phaseReactions;
+
+    await this.db
+      .update(larkMessagesTable)
+      .set({ metadataJson: JSON.stringify(metadata) })
+      .where(eq(larkMessagesTable.messageId, messageId));
+  }
+
   async deleteLarkRowsBySessionId(sessionId: string): Promise<void> {
     await this.db.transaction(async (tx) => {
       await tx.delete(larkMessagesTable).where(eq(larkMessagesTable.sessionId, sessionId));
       await tx.delete(larkThreadsTable).where(eq(larkThreadsTable.sessionId, sessionId));
     });
+  }
+
+  private parseMetadata(metadataJson: string | null): Record<string, unknown> {
+    if (!metadataJson) {
+      return {};
+    }
+
+    try {
+      const parsed = JSON.parse(metadataJson);
+      return this.parseObject(parsed);
+    } catch {
+      return {};
+    }
+  }
+
+  private parseObject(value: unknown): Record<string, unknown> {
+    if (!this.isObject(value)) {
+      return {};
+    }
+    return { ...value };
+  }
+
+  private isObject(value: unknown): value is Record<string, unknown> {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
   }
 }

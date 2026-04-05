@@ -5,17 +5,18 @@ import {
   type RecordOutboundLarkMessageParams,
 } from '@local-agent/shared';
 import { DEFAULT_LARK_MAX_RETRIES } from '../constants';
+import {
+  clearBotOwnedPhaseReactions,
+  LarkTenantTokenProvider,
+  type TokenProvider,
+} from './lark-phase-notifier';
+import { getPhaseReactionTypes } from '../phase-reaction-mapper';
 
 const logger = createLogger('lark-daemon:notifier');
 
-const LARK_TOKEN_URL = 'https://open.larksuite.com/open-apis/auth/v3/tenant_access_token/internal';
 const LARK_MESSAGE_URL = 'https://open.larksuite.com/open-apis/im/v1/messages?receive_id_type=open_id';
 const LARK_REPLY_URL = (messageId: string) =>
   `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reply`;
-const LARK_REACTIONS_URL = (messageId: string) =>
-  `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions?user_id_type=open_id`;
-const LARK_DELETE_REACTION_URL = (messageId: string, reactionId: string) =>
-  `https://open.larksuite.com/open-apis/im/v1/messages/${messageId}/reactions/${reactionId}`;
 const MAX_RETRIES = DEFAULT_LARK_MAX_RETRIES;
 const NEW_INSTANCE_MARKER = 'New session instance started.';
 
@@ -33,6 +34,7 @@ export class LarkNotifier {
       | 'upsertLarkThreadState'
       | 'deleteLarkRowsBySessionId'
     >,
+    private readonly tokenProvider: TokenProvider = new LarkTenantTokenProvider(appId, appSecret),
   ) {}
 
   async notify(result: TaskResult): Promise<void> {
@@ -56,19 +58,7 @@ export class LarkNotifier {
   }
 
   private async sendNotification(result: TaskResult): Promise<void> {
-    const tokenRes = await fetch(LARK_TOKEN_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ app_id: this.appId, app_secret: this.appSecret }),
-    });
-    if (!tokenRes.ok) {
-      throw new Error(`Lark token request failed with HTTP status ${tokenRes.status}`);
-    }
-    const tokenData = await tokenRes.json() as { tenant_access_token: string; code: number };
-
-    if (tokenData.code !== 0) {
-      throw new Error(`Lark token request failed with code ${tokenData.code}`);
-    }
+    const token = await this.tokenProvider.getTenantAccessToken();
 
     const text = [
       ...(result.executor && result.executor_model
@@ -86,12 +76,14 @@ export class LarkNotifier {
     let msgRes: Response;
 
     if (result.task_source?.source === 'lark') {
+      await this.clearBotOwnedPhaseReactionsBeforeReply(result.task_source.message_id, token);
+
       // Reply in thread to the original Lark message
       msgRes = await fetch(LARK_REPLY_URL(result.task_source.message_id), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokenData.tenant_access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           msg_type: 'text',
@@ -105,7 +97,7 @@ export class LarkNotifier {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${tokenData.tenant_access_token}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({
           receive_id: this.recipientId,
@@ -122,11 +114,6 @@ export class LarkNotifier {
     }
 
     await this.persistOutboundReply(result, text, msgData.data?.message_id);
-
-    // Clean up reactions after successful thread reply
-    if (result.task_source?.source === 'lark') {
-      await this.removeAllReactions(result.task_source.message_id, tokenData.tenant_access_token);
-    }
   }
 
   private async persistOutboundReply(
@@ -209,56 +196,15 @@ export class LarkNotifier {
     return result.task_type === 'new_instance' || result.stdout.includes(NEW_INSTANCE_MARKER);
   }
 
-  /**
-   * Remove all reactions on a message. Best-effort — errors are logged and swallowed.
-   *
-   * We attempt to delete every reaction on the message rather than filtering by
-   * bot identity. Reactions not owned by the bot will fail with a permission
-   * error from the Lark API, which is expected and harmless. This avoids the
-   * need to fetch the bot's open_id and keeps the logic simple.
-   */
-  private async removeAllReactions(messageId: string, token: string): Promise<void> {
+  private async clearBotOwnedPhaseReactionsBeforeReply(messageId: string, token: string): Promise<void> {
     try {
-      const listRes = await fetch(LARK_REACTIONS_URL(messageId), {
-        method: 'GET',
-        headers: { 'Authorization': `Bearer ${token}` },
+      await clearBotOwnedPhaseReactions({
+        messageId,
+        token,
+        expectedReactionTypes: getPhaseReactionTypes(),
       });
-
-      const listData = await listRes.json() as {
-        code: number;
-        data?: { items?: { reaction_id: string }[] };
-      };
-
-      if (listData.code !== 0) {
-        logger.warn({ messageId, code: listData.code }, 'Failed to list reactions');
-        return;
-      }
-
-      const items = listData.data?.items ?? [];
-      if (items.length === 0) return;
-
-      for (const item of items) {
-        try {
-          const delRes = await fetch(LARK_DELETE_REACTION_URL(messageId, item.reaction_id), {
-            method: 'DELETE',
-            headers: { 'Authorization': `Bearer ${token}` },
-          });
-          const delData = await delRes.json() as { code: number };
-          if (delData.code !== 0) {
-            logger.debug(
-              { messageId, reactionId: item.reaction_id, code: delData.code },
-              'Failed to delete reaction (may not be owned by bot)',
-            );
-          }
-        } catch (err) {
-          logger.warn(
-            { messageId, reactionId: item.reaction_id, err },
-            'Error deleting reaction',
-          );
-        }
-      }
     } catch (err) {
-      logger.warn({ messageId, err }, 'Failed to remove reactions (best-effort)');
+      logger.warn({ messageId, err }, 'Failed to clear bot-owned phase reactions before final reply');
     }
   }
 }
