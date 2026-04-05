@@ -21,7 +21,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
 }
 
 function createEnvelope(overrides: Partial<LarkInboundEnvelope> = {}): LarkInboundEnvelope {
-  return {
+  const base: LarkInboundEnvelope = {
     platform: 'lark',
     schema_version: 1,
     message_id: 'om_root',
@@ -36,8 +36,12 @@ function createEnvelope(overrides: Partial<LarkInboundEnvelope> = {}): LarkInbou
     mentions: [],
     is_normalizable: true,
     occurred_at_ms: 1710000000000,
-    ...overrides,
   };
+
+  return {
+    ...base,
+    ...overrides,
+  } as LarkInboundEnvelope;
 }
 
 describe('classifyLarkInboundEnvelope', () => {
