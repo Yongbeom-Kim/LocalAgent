@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { extractLarkMessageContent } from '../lark-content';
+import {
+  extractLarkMessageContent,
+  isLarkMessageTypeNormalizable,
+  normalizeLarkInboundContent,
+} from '../lark-content';
 
 describe('extractLarkMessageContent', () => {
   it('extracts text from text message', () => {
@@ -49,5 +53,33 @@ describe('extractLarkMessageContent', () => {
 
   it('handles malformed JSON for non-text types gracefully', () => {
     expect(extractLarkMessageContent('image', 'not json')).toBe('[image message]');
+  });
+});
+
+describe('normalizeLarkInboundContent', () => {
+  it('returns is_normalizable=true with normalized_text for text', () => {
+    const raw = JSON.stringify({ text: 'hello world' });
+    expect(normalizeLarkInboundContent('text', raw)).toEqual({
+      is_normalizable: true,
+      normalized_text: 'hello world',
+    });
+    expect(isLarkMessageTypeNormalizable('text')).toBe(true);
+  });
+
+  it('returns is_normalizable=true with normalized_text for post', () => {
+    const raw = JSON.stringify({
+      content: [[{ tag: 'text', text: 'Hello' }, { tag: 'text', text: 'world' }]],
+    });
+    expect(normalizeLarkInboundContent('post', raw)).toEqual({
+      is_normalizable: true,
+      normalized_text: 'Hello world',
+    });
+    expect(isLarkMessageTypeNormalizable('post')).toBe(true);
+  });
+
+  it('returns is_normalizable=false and omits normalized_text for unknown/unusable message types', () => {
+    const raw = JSON.stringify({ sticker_id: 'abc' });
+    expect(normalizeLarkInboundContent('sticker', raw)).toEqual({ is_normalizable: false });
+    expect(isLarkMessageTypeNormalizable('sticker')).toBe(false);
   });
 });

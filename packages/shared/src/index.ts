@@ -36,6 +36,10 @@ export {
   type ResultStatus,
   RESULT_STATUSES,
   MAX_RESULT_OUTPUT_BYTES,
+  LARK_INBOUND_SCHEMA_VERSION_V1,
+  isValidLarkInboundEnvelope,
+  type LarkInboundEnvelope,
+  type LarkMention,
 } from './types';
 export {
   TASK_COMMAND_USAGE,
@@ -89,7 +93,13 @@ export {
   GLOBAL_SYSTEM_PROMPT,
 } from './constants';
 export { truncate } from './truncate';
-export { extractLarkMessageContent } from './lark-content';
+export {
+  extractLarkMessageContent,
+  isLarkMessageTypeNormalizable,
+  normalizeLarkInboundContent,
+  type LarkInboundContentNormalization,
+  type NormalizableLarkMessageType,
+} from './lark-content';
 export { generateSessionId } from './session';
 export { loadSqliteConfig } from './db/config';
 export { createSqliteClient, assertExpectedSchemaVersion } from './db/client';
