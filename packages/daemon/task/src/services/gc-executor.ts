@@ -5,26 +5,15 @@ import { SessionLockManager } from './session-lock';
 
 const logger = createLogger('task-daemon:gc-executor');
 
-type ListEndedSessionIds = () => Promise<string[]>;
+type ListStaleSessionIds = (cutoffMs: number) => Promise<string[]>;
 type DeleteRowsBySessionId = (sessionId: string) => Promise<void>;
 
-const listEndedSessionIdsFromDb: ListEndedSessionIds = async (): Promise<string[]> => {
+const listStaleSessionIdsFromDb: ListStaleSessionIds = async (cutoffMs: number): Promise<string[]> => {
   const client = await createSqliteClient(loadSqliteConfig());
 
   try {
-    const queryResult = await client.connection.execute(
-      "SELECT session_id FROM lark_threads WHERE status = 'ended'",
-    );
-
-    return queryResult.rows
-      .map((row) => {
-        if (!row || typeof row !== 'object') {
-          return '';
-        }
-        const raw = (row as Record<string, unknown>).session_id;
-        return typeof raw === 'string' ? raw : '';
-      })
-      .filter((sessionId) => sessionId.length > 0);
+    const repository = new LarkHistoryRepository(client.db);
+    return await repository.getStaleLarkSessionIdsBeforeUpdatedAt(cutoffMs);
   } finally {
     client.close();
   }
@@ -45,13 +34,15 @@ export class GcExecutor {
   private readonly sessionLock = new SessionLockManager();
 
   constructor(
-    private readonly listEndedSessionIds: ListEndedSessionIds = listEndedSessionIdsFromDb,
+    private readonly listStaleSessionIds: ListStaleSessionIds = listStaleSessionIdsFromDb,
     private readonly deleteRowsBySessionId: DeleteRowsBySessionId = deleteRowsBySessionIdFromDb,
   ) {}
 
   async execute(job: Job): Promise<TaskResultSubmission> {
+    const cutoff = Date.now() - SESSION_DIR_TTL_DAYS * 24 * 60 * 60 * 1000;
+
     if (!existsSync(SESSION_BASE_DIR)) {
-      await this.cleanupEndedRows(job);
+      const dbCleanup = await this.cleanupStaleRows(job, cutoff);
       return {
         job_id: job.job_id,
         task_id: job.task_id,
@@ -59,12 +50,16 @@ export class GcExecutor {
         ...(job.task_source ? { task_source: job.task_source } : {}),
         status: 'success',
         exit_code: 0,
-        stdout: 'GC complete: no session directories found.',
+        stdout: this.formatSummary({
+          removedDirs: 0,
+          retainedDirs: 0,
+          deletedDbSessions: dbCleanup.deleted,
+          errors: dbCleanup.errors,
+        }),
         stderr: '',
       };
     }
 
-    const cutoff = Date.now() - SESSION_DIR_TTL_DAYS * 24 * 60 * 60 * 1000;
     let removed = 0;
     let retained = 0;
     let errors = 0;
@@ -102,7 +97,8 @@ export class GcExecutor {
       }
     }
 
-    await this.cleanupEndedRows(job);
+    const dbCleanup = await this.cleanupStaleRows(job, cutoff);
+    errors += dbCleanup.errors;
 
     return {
       job_id: job.job_id,
@@ -111,30 +107,51 @@ export class GcExecutor {
       ...(job.task_source ? { task_source: job.task_source } : {}),
       status: 'success',
       exit_code: 0,
-      stdout: `GC complete: removed ${removed} session(s), retained ${retained}.${errors > 0 ? ` Errors: ${errors}.` : ''}`,
+      stdout: this.formatSummary({
+        removedDirs: removed,
+        retainedDirs: retained,
+        deletedDbSessions: dbCleanup.deleted,
+        errors,
+      }),
       stderr: '',
     };
   }
 
-  private async cleanupEndedRows(job: Job): Promise<void> {
-    let endedSessionIds: string[];
+  private async cleanupStaleRows(job: Job, cutoffMs: number): Promise<{ deleted: number; errors: number }> {
+    let staleSessionIds: string[];
     try {
-      endedSessionIds = await this.listEndedSessionIds();
+      staleSessionIds = await this.listStaleSessionIds(cutoffMs);
     } catch (error) {
-      logger.error({ job_id: job.job_id, err: error }, 'Failed to query ended sessions for DB cleanup');
-      return;
+      logger.error({ job_id: job.job_id, cutoff_ms: cutoffMs, err: error }, 'Failed to query stale sessions for DB cleanup');
+      return { deleted: 0, errors: 1 };
     }
 
-    if (endedSessionIds.length === 0) {
-      return;
+    if (staleSessionIds.length === 0) {
+      return { deleted: 0, errors: 0 };
     }
 
-    for (const sessionId of endedSessionIds) {
+    let deleted = 0;
+    let errors = 0;
+
+    for (const sessionId of staleSessionIds) {
       try {
         await this.deleteRowsBySessionId(sessionId);
+        deleted += 1;
       } catch (error) {
-        logger.error({ job_id: job.job_id, session_id: sessionId, err: error }, 'Failed to delete ended session DB rows');
+        errors += 1;
+        logger.error({ job_id: job.job_id, session_id: sessionId, err: error }, 'Failed to delete stale session DB rows');
       }
     }
+
+    return { deleted, errors };
+  }
+
+  private formatSummary(params: {
+    removedDirs: number;
+    retainedDirs: number;
+    deletedDbSessions: number;
+    errors: number;
+  }): string {
+    return `GC complete: removed ${params.removedDirs} session dir(s), retained ${params.retainedDirs} session dir(s), deleted ${params.deletedDbSessions} DB session(s).${params.errors > 0 ? ` Errors: ${params.errors}.` : ''}`;
   }
 }
