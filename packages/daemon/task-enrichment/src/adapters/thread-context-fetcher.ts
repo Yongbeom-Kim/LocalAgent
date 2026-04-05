@@ -6,6 +6,8 @@ import {
 } from '@local-agent/shared';
 
 const NEW_INSTANCE_MARKER = 'New session instance started.';
+const AUDIT_ONLY_THREAD_REASON =
+  'This thread has not been classified yet. Please retry after the root message is processed.';
 
 export type ThreadContextResult =
   | {
@@ -63,6 +65,10 @@ export class ThreadContextFetcher {
         return this.errorResult(
           `Failed to recover thread state for root message ${sourceMessage.rootMessageId}.`,
         );
+      }
+
+      if (thread.status === 'audit_only') {
+        return this.errorResult(AUDIT_ONLY_THREAD_REASON);
       }
 
       const messages = await this.larkHistoryRepository.getLarkMessagesForThread(

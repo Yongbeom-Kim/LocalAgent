@@ -14,6 +14,170 @@ afterEach(() => {
 });
 
 describe('LarkHistoryRepository', () => {
+  it('records inbound audit rows with an audit-only placeholder and deduplicates by message_id', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({
+      dbPath: join(tempDir, 'history.sqlite'),
+    });
+
+    try {
+      await bootstrapLarkTables(client.connection);
+      const repository = new LarkHistoryRepository(client.db);
+
+      await expect(
+        repository.recordInboundAuditMessage({
+          envelope: {
+            platform: 'lark',
+            schema_version: 1,
+            message_id: 'om_audit_1',
+            root_message_id: 'om_root_audit',
+            thread_id: 'omt_audit',
+            chat_type: 'group',
+            sender_open_id: 'ou_audit',
+            sender_type: 'user',
+            message_type: 'text',
+            raw_content: '{"text":"/task deploy claude sonnet ship it"}',
+            normalized_text: '/task deploy claude sonnet ship it',
+            mentions: [{ key: '@bot', name: 'Bot', open_id: 'ou_bot' }],
+            is_normalizable: true,
+            occurred_at_ms: 100,
+          },
+        }),
+      ).resolves.toBe(true);
+
+      await expect(
+        repository.recordInboundAuditMessage({
+          envelope: {
+            platform: 'lark',
+            schema_version: 1,
+            message_id: 'om_audit_1',
+            root_message_id: 'om_root_audit',
+            thread_id: 'omt_audit',
+            chat_type: 'group',
+            sender_open_id: 'ou_audit',
+            sender_type: 'user',
+            message_type: 'text',
+            raw_content: '{"text":"/task deploy claude sonnet ship it"}',
+            normalized_text: '/task deploy claude sonnet ship it',
+            mentions: [],
+            is_normalizable: true,
+            occurred_at_ms: 100,
+          },
+        }),
+      ).resolves.toBe(false);
+
+      const thread = await repository.getLarkThreadByRootMessageId('om_root_audit');
+      expect(thread).toEqual(
+        expect.objectContaining({
+          rootMessageId: 'om_root_audit',
+          threadId: 'omt_audit',
+          sessionId: 'om_root_audit',
+          taskType: 'unknown',
+          executor: 'claude',
+          executorModel: 'sonnet',
+          status: 'audit_only',
+        }),
+      );
+
+      const rows = await repository.getLarkMessagesForThread('om_root_audit');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual(
+        expect.objectContaining({
+          messageId: 'om_audit_1',
+          sessionId: 'om_root_audit',
+          rootMessageId: 'om_root_audit',
+          threadId: 'omt_audit',
+          normalizedText: '/task deploy claude sonnet ship it',
+        }),
+      );
+
+      expect(JSON.parse(rows[0].metadataJson ?? '{}')).toEqual({
+        platform: 'lark',
+        schema_version: 1,
+        sender_open_id: 'ou_audit',
+        mentions: [{ key: '@bot', name: 'Bot', open_id: 'ou_bot' }],
+      });
+    } finally {
+      client.close();
+    }
+  });
+
+  it('promotes audit-only placeholder state to authoritative thread state without losing inbound history', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({
+      dbPath: join(tempDir, 'history.sqlite'),
+    });
+
+    try {
+      await bootstrapLarkTables(client.connection);
+      const repository = new LarkHistoryRepository(client.db);
+
+      await repository.recordInboundAuditMessage({
+        envelope: {
+          platform: 'lark',
+          schema_version: 1,
+          message_id: 'om_root_promote',
+          root_message_id: 'om_root_promote',
+          thread_id: null,
+          chat_type: 'p2p',
+          sender_open_id: 'ou_promote',
+          sender_type: 'user',
+          message_type: 'text',
+          raw_content: '{"text":"/task code_review claude sonnet review this"}',
+          normalized_text: '/task code_review claude sonnet review this',
+          mentions: [],
+          is_normalizable: true,
+          occurred_at_ms: 1000,
+        },
+      });
+
+      await repository.upsertLarkThreadState({
+        rootMessageId: 'om_root_promote',
+        threadId: 'omt_promote',
+        sessionId: 'session_promote',
+        source: 'lark',
+        chatType: 'p2p',
+        taskType: 'code_review',
+        executor: 'cursor',
+        executorModel: 'auto',
+        status: 'active',
+        createdAtMs: 1000,
+        updatedAtMs: 1200,
+        endedAtMs: null,
+      });
+
+      const thread = await repository.getLarkThreadByRootMessageId('om_root_promote');
+      expect(thread).toEqual(
+        expect.objectContaining({
+          rootMessageId: 'om_root_promote',
+          threadId: 'omt_promote',
+          sessionId: 'session_promote',
+          taskType: 'code_review',
+          executor: 'cursor',
+          executorModel: 'auto',
+          status: 'active',
+          updatedAtMs: 1200,
+        }),
+      );
+
+      const rows = await repository.getLarkMessagesForThread('om_root_promote');
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toEqual(
+        expect.objectContaining({
+          messageId: 'om_root_promote',
+          sessionId: 'session_promote',
+          threadId: 'omt_promote',
+        }),
+      );
+    } finally {
+      client.close();
+    }
+  });
+
   it('upserts a lark thread row and inserts inbound message rows', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
     tempDirs.push(tempDir);

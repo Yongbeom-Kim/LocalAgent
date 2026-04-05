@@ -43,6 +43,8 @@ async function main() {
     config.taskDaemonStatusUrl,
     enrichmentService,
     threadContextFetcher,
+    undefined,
+    larkHistoryRepository,
   );
   poller.start(config.pollIntervalMs);
 

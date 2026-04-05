@@ -223,4 +223,48 @@ describe('ThreadContextFetcher', () => {
       inheritedExecutorModel: 'auto',
     });
   });
+
+  it('returns error for thread replies when the root thread is still audit-only', async () => {
+    repository.getLarkMessageByMessageId.mockResolvedValue({
+      messageId: 'om_reply_pending',
+      source: 'lark',
+      rootMessageId: 'om_root_pending',
+      sessionId: 'om_root_pending',
+      threadId: 'omt_pending',
+      direction: 'inbound',
+      senderType: 'user',
+      messageType: 'text',
+      rawContent: '{"text":"follow up"}',
+      normalizedText: 'follow up',
+      metadataJson: null,
+      createdAtMs: 200,
+    });
+    repository.getLarkThreadByRootMessageId.mockResolvedValue({
+      rootMessageId: 'om_root_pending',
+      threadId: 'omt_pending',
+      sessionId: 'om_root_pending',
+      source: 'lark',
+      chatType: 'p2p',
+      taskType: 'unknown',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'audit_only',
+      createdAtMs: 100,
+      updatedAtMs: 200,
+      endedAtMs: null,
+    });
+
+    const result = await fetcher.fetchThreadContext('om_reply_pending', validTypes);
+
+    expect(result).toEqual({
+      kind: 'error',
+      reason: 'This thread has not been classified yet. Please retry after the root message is processed.',
+      threadContext: null,
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
+    });
+    expect(repository.getLarkMessagesForThread).not.toHaveBeenCalled();
+  });
 });

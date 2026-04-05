@@ -110,6 +110,7 @@ export type { SqliteConfig, SqliteClient } from './db/types';
 export type {
   LarkMessageRow,
   LarkThreadRow,
+  RecordInboundAuditMessageParams,
   UpsertInboundLarkMessageParams,
   RecordOutboundLarkMessageParams,
   MarkLarkThreadNewInstanceParams,
