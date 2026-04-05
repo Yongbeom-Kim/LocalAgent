@@ -3,9 +3,12 @@ import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Job } from '@local-agent/shared';
 
-const { TEST_SESSION_BASE_DIR } = vi.hoisted(() => ({
-  TEST_SESSION_BASE_DIR: '/tmp/local-agent-job-environment-test/session',
-}));
+const { TEST_SESSION_BASE_DIR } = vi.hoisted(() => {
+  const unique = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return {
+    TEST_SESSION_BASE_DIR: `/tmp/local-agent-job-environment-test-${unique}/session`,
+  };
+});
 
 vi.mock('@local-agent/shared', async () => {
   const actual = await vi.importActual<typeof import('@local-agent/shared')>('@local-agent/shared');
