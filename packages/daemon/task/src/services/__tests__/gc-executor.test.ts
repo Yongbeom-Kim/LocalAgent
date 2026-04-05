@@ -108,7 +108,7 @@ describe('GcExecutor', () => {
 
     const result = await executor.execute(createJob({ payload: '24h' }));
 
-    expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
+    expect(result.stdout).toBe('GC complete: removed 1 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).');
   });
 
   it('falls back to default gc age threshold when payload is invalid', async () => {
@@ -117,7 +117,7 @@ describe('GcExecutor', () => {
 
     const result = await executor.execute(createJob({ payload: 'later' }));
 
-    expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 1.');
+    expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 1 session dir(s), deleted 0 DB session(s).');
   });
 
   it('handles mixed stale and fresh directories', async () => {
