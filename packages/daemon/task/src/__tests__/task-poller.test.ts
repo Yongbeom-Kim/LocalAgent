@@ -3,6 +3,7 @@ import { Job, TaskResultSubmission, MAX_SNIPPET_CHARS } from '@local-agent/share
 import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ClaudeExecutor } from '../adapters/claude-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
+import { TaskPhasePublisher } from '../adapters/task-phase-publisher';
 
 const mockEnv: ExecutionEnvironment = {
   workDir: '/tmp/localagent-job-test',
@@ -44,6 +45,13 @@ vi.mock('../adapters/claude-executor', () => {
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+const mockPhasePublish = vi.fn();
+
+vi.mock('../adapters/task-phase-publisher', () => ({
+  TaskPhasePublisher: vi.fn().mockImplementation(function () {
+    this.publish = mockPhasePublish;
+  }),
+}));
 
 function createJob(overrides?: Partial<Job>): Job {
   return {
@@ -77,6 +85,8 @@ describe('TaskPoller', () => {
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);
+    mockPhasePublish.mockClear().mockResolvedValue(undefined);
+    vi.mocked(TaskPhasePublisher).mockClear();
     vi.mocked(ClaudeExecutor).mockClear();
     (mockSessionLock.acquire as ReturnType<typeof vi.fn>).mockClear().mockReturnValue(true);
     (mockSessionLock.release as ReturnType<typeof vi.fn>).mockClear();
@@ -113,6 +123,8 @@ describe('TaskPoller', () => {
       await poller.pollOnce();
       await poller.drain();
 
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(1, job, 'executing');
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(2, job, 'completed');
       expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/jobs/sessions');
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs/next/session-789');
       expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/session-789/job-456/ack', {
@@ -143,6 +155,8 @@ describe('TaskPoller', () => {
       await poller.pollOnce();
       await poller.drain();
 
+      expect(mockPhasePublish).toHaveBeenCalledWith(job, 'executing');
+      expect(mockPhasePublish).not.toHaveBeenCalledWith(job, 'completed');
       expect(mockFetch).toHaveBeenCalledTimes(4);
       expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/session-789/job-456/ack', {
         method: 'POST',
@@ -167,6 +181,7 @@ describe('TaskPoller', () => {
       await poller.drain();
 
       expect(mockClaudeExecute).not.toHaveBeenCalled();
+      expect(mockPhasePublish).not.toHaveBeenCalled();
       expect(mockFetch).toHaveBeenCalledTimes(3);
       expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/results'))).toBe(false);
     });
@@ -237,6 +252,7 @@ describe('TaskPoller', () => {
 
       const resultPostBody = JSON.parse(mockFetch.mock.calls[3][1].body);
       expect(resultPostBody.task_source).toEqual(taskSource);
+      expect(mockPhasePublish).toHaveBeenCalledWith(job, 'executing');
     });
 
     it('truncates stdout and stderr to snippet length before publishing', async () => {
@@ -262,11 +278,41 @@ describe('TaskPoller', () => {
       const body = JSON.parse(mockFetch.mock.calls[3][1].body);
       expect(body.stdout).toHaveLength(MAX_SNIPPET_CHARS);
       expect(body.stderr).toHaveLength(MAX_SNIPPET_CHARS);
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(1, job, 'executing');
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(2, job, 'completed');
     });
 
     it('handles active-session fetch errors gracefully', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
       await expect(poller.pollOnce()).resolves.toBeUndefined();
+      expect(mockPhasePublish).not.toHaveBeenCalled();
+    });
+
+    it('continues job flow when phase publish fails', async () => {
+      const job = createJob();
+      mockPhasePublish.mockRejectedValueOnce(new Error('phase unavailable'));
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve(job),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) });
+
+      await poller.pollOnce();
+      await poller.drain();
+
+      expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(mockResultSubmission),
+      });
     });
   });
 });

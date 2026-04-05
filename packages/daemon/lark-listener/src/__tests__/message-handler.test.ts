@@ -4,7 +4,7 @@ import type { TaskSubmitter } from '../adapters/task-submitter';
 import type { LarkReactor } from '../adapters/lark-reactor';
 import type { LarkReplier } from '../adapters/lark-replier';
 import type { DedupMap } from '../services/dedup';
-import type { LarkHistoryRepository } from '@local-agent/shared';
+import type { LarkHistoryRepository, TaskPhaseEventSubmission } from '@local-agent/shared';
 import type { LarkMessageMetadataResolver } from '../message-handler';
 
 const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)';
@@ -28,7 +28,7 @@ function makeEvent(overrides: Record<string, unknown> = {}) {
 
 describe('MessageHandler', () => {
   let handler: MessageHandler;
-  let submitter: { submit: ReturnType<typeof vi.fn> };
+  let submitter: { submit: ReturnType<typeof vi.fn>; publishPhase: ReturnType<typeof vi.fn> };
   let reactor: { react: ReturnType<typeof vi.fn> };
   let replier: { reply: ReturnType<typeof vi.fn> };
   let dedup: { has: ReturnType<typeof vi.fn>; add: ReturnType<typeof vi.fn> };
@@ -41,7 +41,7 @@ describe('MessageHandler', () => {
   let metadataResolver: { resolve: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
-    submitter = { submit: vi.fn().mockResolvedValue('task-abc') };
+    submitter = { submit: vi.fn().mockResolvedValue('task-abc'), publishPhase: vi.fn().mockResolvedValue(undefined) };
     reactor = { react: vi.fn().mockResolvedValue(undefined) };
     replier = { reply: vi.fn().mockResolvedValue(null) };
     dedup = { has: vi.fn().mockReturnValue(false), add: vi.fn() };
@@ -75,7 +75,13 @@ describe('MessageHandler', () => {
       undefined,
     );
     expect(replier.reply).not.toHaveBeenCalled();
-    expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    expect(submitter.publishPhase).toHaveBeenCalledWith({
+      task_id: 'task-abc',
+      task_type: 'thread_reply',
+      phase: 'received',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+      metadata: { emitted_by: 'lark-listener' },
+    } satisfies TaskPhaseEventSubmission);
   });
 
   it('persists inbound lark messages before task submission', async () => {
@@ -106,7 +112,7 @@ describe('MessageHandler', () => {
     await handler.handle(makeEvent());
 
     expect(submitter.submit).not.toHaveBeenCalled();
-    expect(reactor.react).not.toHaveBeenCalled();
+    expect(submitter.publishPhase).not.toHaveBeenCalled();
   });
 
   it('submits non-text messages as normalized thread_reply', async () => {
@@ -125,10 +131,10 @@ describe('MessageHandler', () => {
       undefined,
     );
     expect(replier.reply).not.toHaveBeenCalled();
-    expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    expect(submitter.publishPhase).toHaveBeenCalledTimes(1);
   });
 
-  it('still reacts even if submit returns null (failure)', async () => {
+  it('does not publish received phase when submit returns null (failure)', async () => {
     submitter.submit.mockResolvedValue(null);
 
     await handler.handle(
@@ -140,7 +146,17 @@ describe('MessageHandler', () => {
     );
 
     expect(dedup.add).toHaveBeenCalledWith('om_msg1');
-    expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+    expect(submitter.publishPhase).not.toHaveBeenCalled();
+  });
+
+  it('keeps flow non-blocking when phase publish fails', async () => {
+    submitter.publishPhase.mockRejectedValueOnce(new Error('phase unavailable'));
+
+    await handler.handle(makeEvent());
+
+    expect(submitter.submit).toHaveBeenCalledTimes(1);
+    expect(submitter.publishPhase).toHaveBeenCalledTimes(1);
+    expect(replier.reply).not.toHaveBeenCalled();
   });
 
   describe('/task command parsing', () => {
@@ -160,7 +176,13 @@ describe('MessageHandler', () => {
         'cursor',
         'gpt-5.4-medium-fast',
       );
-      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+      expect(submitter.publishPhase).toHaveBeenCalledWith({
+        task_id: 'task-abc',
+        task_type: 'code_review',
+        phase: 'received',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+        metadata: { emitted_by: 'lark-listener' },
+      } satisfies TaskPhaseEventSubmission);
     });
 
     it('preserves multiline payload after the first line', async () => {
@@ -195,7 +217,7 @@ describe('MessageHandler', () => {
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
-      expect(reactor.react).not.toHaveBeenCalled();
+      expect(submitter.publishPhase).not.toHaveBeenCalled();
       expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
       expect(historyRepository.recordOutboundLarkMessage).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -260,7 +282,13 @@ describe('MessageHandler', () => {
         undefined,
       );
       expect(replier.reply).not.toHaveBeenCalled();
-      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+      expect(submitter.publishPhase).toHaveBeenCalledWith({
+        task_id: 'task-abc',
+        task_type: 'gc',
+        phase: 'received',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+        metadata: { emitted_by: 'lark-listener' },
+      } satisfies TaskPhaseEventSubmission);
     });
 
     it('replies with usage hint for /gc with args', async () => {
@@ -285,7 +313,13 @@ describe('MessageHandler', () => {
         undefined,
       );
       expect(replier.reply).not.toHaveBeenCalled();
-      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+      expect(submitter.publishPhase).toHaveBeenCalledWith({
+        task_id: 'task-abc',
+        task_type: 'cleanup',
+        phase: 'received',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+        metadata: { emitted_by: 'lark-listener' },
+      } satisfies TaskPhaseEventSubmission);
     });
 
     it('replies with usage hint for /end with args and does not submit', async () => {
@@ -294,7 +328,7 @@ describe('MessageHandler', () => {
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
-      expect(reactor.react).not.toHaveBeenCalled();
+      expect(submitter.publishPhase).not.toHaveBeenCalled();
       expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
 
@@ -311,7 +345,13 @@ describe('MessageHandler', () => {
         undefined,
       );
       expect(replier.reply).not.toHaveBeenCalled();
-      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+      expect(submitter.publishPhase).toHaveBeenCalledWith({
+        task_id: 'task-abc',
+        task_type: 'new_instance',
+        phase: 'received',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+        metadata: { emitted_by: 'lark-listener' },
+      } satisfies TaskPhaseEventSubmission);
     });
 
     it('rejects /new with only one arg', async () => {
@@ -345,7 +385,13 @@ describe('MessageHandler', () => {
         'sonnet',
       );
       expect(replier.reply).not.toHaveBeenCalled();
-      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+      expect(submitter.publishPhase).toHaveBeenCalledWith({
+        task_id: 'task-abc',
+        task_type: 'new_instance',
+        phase: 'received',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+        metadata: { emitted_by: 'lark-listener' },
+      } satisfies TaskPhaseEventSubmission);
     });
 
     it('does not treat /newfoo as a /new command', async () => {
@@ -370,7 +416,13 @@ describe('MessageHandler', () => {
         undefined,
       );
       expect(replier.reply).not.toHaveBeenCalled();
-      expect(reactor.react).toHaveBeenCalledWith('om_msg1');
+      expect(submitter.publishPhase).toHaveBeenCalledWith({
+        task_id: 'task-abc',
+        task_type: 'status',
+        phase: 'received',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+        metadata: { emitted_by: 'lark-listener' },
+      } satisfies TaskPhaseEventSubmission);
     });
 
     it('replies with usage hint for /status with args and does not submit', async () => {
@@ -379,7 +431,7 @@ describe('MessageHandler', () => {
       }));
 
       expect(submitter.submit).not.toHaveBeenCalled();
-      expect(reactor.react).not.toHaveBeenCalled();
+      expect(submitter.publishPhase).not.toHaveBeenCalled();
       expect(replier.reply).toHaveBeenCalledWith('om_msg1', USAGE_HINT);
     });
 

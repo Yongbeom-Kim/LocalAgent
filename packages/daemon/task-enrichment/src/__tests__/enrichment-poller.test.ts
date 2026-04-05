@@ -10,6 +10,7 @@ import {
 } from '@local-agent/shared';
 import { EnrichmentService, EnrichmentResult } from '../enrichment-service';
 import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
+import { TaskPhasePublisher } from '../adapters/task-phase-publisher';
 
 const mockEnrich = vi.fn();
 const mockGetValidTaskTypes = vi.fn().mockReturnValue(new Set(['deploy', 'code_review', 'default']));
@@ -38,6 +39,13 @@ vi.mock('../enrichment-service', () => ({
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+const mockPhasePublish = vi.fn();
+
+vi.mock('../adapters/task-phase-publisher', () => ({
+  TaskPhasePublisher: vi.fn().mockImplementation(function () {
+    this.publish = mockPhasePublish;
+  }),
+}));
 
 function createTask(overrides?: Partial<Task>): Task {
   return {
@@ -78,6 +86,8 @@ describe('EnrichmentPoller', () => {
     mockGetValidTaskTypes.mockReturnValue(new Set(['deploy', 'code_review', 'default']));
     mockGenerateSessionId.mockReset();
     mockGenerateSessionId.mockReturnValue('generated-session-id');
+    mockPhasePublish.mockReset().mockResolvedValue(undefined);
+    vi.mocked(TaskPhasePublisher).mockClear();
     const service = new EnrichmentService() as any;
     poller = new EnrichmentPoller('http://localhost:3000', 'http://task-daemon:7070', service);
   });
@@ -108,6 +118,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'queued');
     expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next');
     expect(mockEnrich).toHaveBeenCalledWith(task, 'generated-session-id', undefined);
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
@@ -125,6 +137,7 @@ describe('EnrichmentPoller', () => {
     await poller.pollOnce();
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(mockPhasePublish).not.toHaveBeenCalled();
   });
 
   it('publishes failed result and acks task when enrichment rejects (no task_source)', async () => {
@@ -151,6 +164,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
@@ -195,6 +210,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     // Verify POST /results with failure
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
@@ -245,6 +262,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -289,6 +308,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -335,6 +356,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -364,6 +387,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenCalledTimes(3);
@@ -399,6 +424,8 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'queued');
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
@@ -430,6 +457,7 @@ describe('EnrichmentPoller', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/tasks/task-123/ack', {
@@ -440,6 +468,40 @@ describe('EnrichmentPoller', () => {
   it('handles fetch errors gracefully', async () => {
     mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
     await expect(poller.pollOnce()).resolves.toBeUndefined();
+    expect(mockPhasePublish).not.toHaveBeenCalled();
+  });
+
+  it('continues main workflow when phase publish fails', async () => {
+    const task = createTask();
+    const jobSubmission = createJobSubmission();
+    const enrichmentResult: EnrichmentResult = { type: 'enriched', job: jobSubmission };
+    mockEnrich.mockReturnValue(enrichmentResult);
+    mockPhasePublish.mockRejectedValueOnce(new Error('phase unavailable'));
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve(task),
+      })
+      .mockResolvedValueOnce({
+        status: 201,
+        json: () => Promise.resolve({ job_id: 'job-456', ...jobSubmission }),
+      })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ acknowledged: true }),
+      });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(jobSubmission),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
   });
 });
 
@@ -455,6 +517,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     mockGetValidTaskTypes.mockReturnValue(new Set(['deploy', 'code_review', 'default']));
     mockGenerateSessionId.mockReset();
     mockGenerateSessionId.mockReturnValue('generated-session-id');
+    mockPhasePublish.mockReset().mockResolvedValue(undefined);
+    vi.mocked(TaskPhasePublisher).mockClear();
     const service = new EnrichmentService() as any;
     mockThreadFetcher = { fetchThreadContext: vi.fn() };
     poller = new EnrichmentPoller(
@@ -1066,6 +1130,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://task-daemon:7070/status/thread-session-id', {
       signal: expect.any(AbortSignal),
     });
@@ -1111,6 +1177,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

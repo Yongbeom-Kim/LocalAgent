@@ -1,5 +1,6 @@
 import {
   Job,
+  TaskPhase,
   TaskResultSubmission,
   createLogger,
   MAX_SNIPPET_CHARS,
@@ -7,6 +8,7 @@ import {
 } from '@local-agent/shared';
 import { TaskOrchestrator } from './core/task-orchestrator';
 import { SessionLockManager } from './services/session-lock';
+import { TaskPhasePublisher } from './adapters/task-phase-publisher';
 
 const logger = createLogger('task-daemon:poller');
 
@@ -28,6 +30,7 @@ export class TaskPoller {
     private readonly orchestrator: TaskOrchestrator,
     private readonly sessionLock: SessionLockManager,
     private readonly maxConcurrency: number = DEFAULT_MAX_CONCURRENT_SESSIONS,
+    private readonly phasePublisher: TaskPhasePublisher = new TaskPhasePublisher(apiUrl),
   ) {}
 
   isSessionActive(sessionId: string): boolean {
@@ -135,6 +138,8 @@ export class TaskPoller {
         return;
       }
 
+      await this.publishPhase(job, 'executing');
+
       const result = await this.orchestrator.handle(job);
 
       if (result.stdout.length > MAX_SNIPPET_CHARS) {
@@ -159,6 +164,8 @@ export class TaskPoller {
         });
         if (resultRes.status !== 201) {
           logger.warn({ job_id: job.job_id, status: resultRes.status }, 'Result publish failed');
+        } else {
+          await this.publishPhase(job, 'completed');
         }
       } catch (resultErr) {
         logger.error({ job_id: job.job_id, err: resultErr }, 'Result publish request failed');
@@ -173,6 +180,17 @@ export class TaskPoller {
       logger.info(
         { job_id: job.job_id, inFlight: this.inFlightJobs.size },
         'Job completed, slot freed',
+      );
+    }
+  }
+
+  private async publishPhase(job: Job, phase: TaskPhase): Promise<void> {
+    try {
+      await this.phasePublisher.publish(job, phase);
+    } catch (err) {
+      logger.warn(
+        { job_id: job.job_id, task_id: job.task_id, task_type: job.task_type, phase, err },
+        'Failed to publish task phase',
       );
     }
   }

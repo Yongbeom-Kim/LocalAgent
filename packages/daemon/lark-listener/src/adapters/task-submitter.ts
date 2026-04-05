@@ -1,4 +1,9 @@
-import { createLogger, type TaskSubmission, type TaskSource } from '@local-agent/shared';
+import {
+  createLogger,
+  type TaskPhaseEventSubmission,
+  type TaskSubmission,
+  type TaskSource,
+} from '@local-agent/shared';
 import { DEFAULT_MAX_RETRIES } from '../constants';
 
 const logger = createLogger('lark-listener:submitter');
@@ -54,5 +59,17 @@ export class TaskSubmitter {
 
     logger.error({ payload: payload.substring(0, 100) }, 'Task submission failed after all retries');
     return null;
+  }
+
+  async publishPhase(phaseEvent: TaskPhaseEventSubmission): Promise<void> {
+    const res = await fetch(`${this.apiUrl}/results`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event_kind: 'phase', ...phaseEvent }),
+    });
+
+    if (!res.ok) {
+      throw new Error(`Phase publish failed with status ${res.status}`);
+    }
   }
 }

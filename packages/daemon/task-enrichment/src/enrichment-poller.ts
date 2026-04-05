@@ -1,6 +1,7 @@
 import {
   Task,
   JobSubmission,
+  TaskPhase,
   createLogger,
   generateSessionId,
   isControlTaskType,
@@ -11,6 +12,7 @@ import {
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
+import { TaskPhasePublisher } from './adapters/task-phase-publisher';
 
 const logger = createLogger('enrichment-daemon:poller');
 const CLEANUP_TASK_TYPE = 'cleanup';
@@ -99,6 +101,7 @@ export class EnrichmentPoller {
     private readonly taskDaemonStatusUrl: string,
     private readonly enrichmentService: EnrichmentService,
     private readonly threadContextFetcher?: ThreadContextFetcher,
+    private readonly phasePublisher: TaskPhasePublisher = new TaskPhasePublisher(apiUrl),
   ) {}
 
   async pollOnce(): Promise<void> {
@@ -117,6 +120,7 @@ export class EnrichmentPoller {
 
       const task = (await res.json()) as Task;
       logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
+      await this.publishPhase(task, 'enriching');
 
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
       const isGcTask = task.task_type === GC_TASK_TYPE;
@@ -215,6 +219,7 @@ export class EnrichmentPoller {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for gc task — not acking task');
             return;
           }
+          await this.publishPhase(task, 'queued');
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for gc task — not acking task');
           return;
@@ -309,6 +314,7 @@ export class EnrichmentPoller {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for new_instance — not acking');
             return;
           }
+          await this.publishPhase(task, 'queued');
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for new_instance — not acking');
           return;
@@ -360,6 +366,7 @@ export class EnrichmentPoller {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for thread_reply rewrite — not acking task');
             return;
           }
+          await this.publishPhase(task, 'queued');
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for thread_reply rewrite — not acking task');
           return;
@@ -407,6 +414,7 @@ export class EnrichmentPoller {
           logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed — not acking task');
           return;
         }
+        await this.publishPhase(task, 'queued');
       } catch (jobErr) {
         logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed — not acking task');
         return;
@@ -419,6 +427,8 @@ export class EnrichmentPoller {
   }
 
   private async publishRejection(task: Task, reason: string): Promise<void> {
+    await this.publishPhase(task, 'completed');
+
     try {
       const body = {
         job_id: task.task_id,
@@ -447,11 +457,21 @@ export class EnrichmentPoller {
     }
   }
 
+  private async publishPhase(task: Task, phase: TaskPhase): Promise<void> {
+    try {
+      await this.phasePublisher.publish(task, phase);
+    } catch (err) {
+      logger.warn({ task_id: task.task_id, task_type: task.task_type, phase, err }, 'Failed to publish task phase');
+    }
+  }
+
   private async publishStatusResult(
     task: Task,
     threadResult: ThreadContextResult,
     running: boolean,
   ): Promise<void> {
+    await this.publishPhase(task, 'completed');
+
     try {
       const body = {
         job_id: task.task_id,
