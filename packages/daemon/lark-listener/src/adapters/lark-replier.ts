@@ -62,6 +62,13 @@ export class LarkReplier {
     }
   }
 
+  /**
+   * Generic helper for enqueue failures.
+   */
+  async replyEnqueueFailure(messageId: string): Promise<LarkReplyResult | null> {
+    return this.reply(messageId, 'Failed to enqueue task. Please try again.');
+  }
+
   private async fetchTenantToken(): Promise<string> {
     const res = await fetch(LARK_TOKEN_URL, {
       method: 'POST',

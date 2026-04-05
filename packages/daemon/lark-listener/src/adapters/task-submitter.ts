@@ -25,6 +25,12 @@ export class TaskSubmitter {
     executor?: string,
     executorModel?: string,
   ): Promise<string | null> {
+    // Listener should avoid routing knobs for normalized inbound messages.
+    if (taskType === 'lark_inbound') {
+      executor = undefined;
+      executorModel = undefined;
+    }
+
     const body: TaskSubmission = {
       task_type: taskType,
       payload,

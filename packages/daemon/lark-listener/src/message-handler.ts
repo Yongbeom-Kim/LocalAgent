@@ -1,266 +1,149 @@
 import {
   createLogger,
-  type TaskPhaseEventSubmission,
   type TaskSource,
-  extractLarkMessageContent,
-  type LarkHistoryRepository,
+  LARK_INBOUND_SCHEMA_VERSION_V1,
+  type LarkInboundEnvelope,
+  normalizeLarkInboundContent,
 } from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
-import type { LarkReplier, LarkReplyResult } from './adapters/lark-replier';
+import type { LarkReplier } from './adapters/lark-replier';
 import type { LarkMessageMetadataResolver, ResolvedThreadIdentity } from './adapters/lark-message-metadata-resolver';
 import type { DedupMap } from './services/dedup';
 
 const logger = createLogger('lark-listener:handler');
-const USAGE_HINT = 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)';
 
 interface LarkMessageEvent {
+  event_time?: string;
+  timestamp?: string;
+  create_time?: string;
   sender: {
     sender_id: { open_id: string };
     sender_type: string;
   };
   message: {
-    message_id: string;
+    message_id?: string;
     chat_type: string;
     message_type: string;
-    content: string;
+    content?: string;
     mentions?: Array<{ key: string; name: string; id: { open_id: string } }>;
   };
 }
-
-type ParsedSubmit =
-  | { kind: 'submit'; taskType: string; taskPayload: string; executor?: string; executorModel?: string }
-  | { kind: 'usage' };
 
 export type { LarkMessageMetadataResolver };
 
 export class MessageHandler {
   constructor(
     private readonly submitter: TaskSubmitter,
-    private readonly _reactor: LarkReactor,
+    private readonly reactor: LarkReactor,
     private readonly replier: LarkReplier,
     private readonly dedup: DedupMap,
-    private readonly historyRepository: LarkHistoryRepository,
     private readonly metadataResolver: LarkMessageMetadataResolver,
   ) {}
 
   async handle(event: LarkMessageEvent): Promise<void> {
     const { message } = event;
-    const { message_id, message_type } = message;
+    const messageId = message.message_id;
+    const messageType = message.message_type;
+    const rawContent = message.content;
 
-    if (this.dedup.has(message_id)) {
-      logger.debug({ message_id }, 'Duplicate message, skipping');
+    if (!messageId || !rawContent) {
+      logger.warn(
+        {
+          has_message_id: Boolean(messageId),
+          has_content: Boolean(rawContent),
+          message_type: messageType,
+        },
+        'Skipping enqueue: cannot construct minimally valid inbound envelope',
+      );
+
+      if (messageId) {
+        await this.replier.replyEnqueueFailure(messageId);
+      }
       return;
     }
 
-    this.dedup.add(message_id);
+    if (this.dedup.has(messageId)) {
+      logger.debug({ message_id: messageId }, 'Duplicate message, skipping');
+      return;
+    }
+
+    this.dedup.add(messageId);
 
     logger.info(
-      { message_id, message_type, chat_type: message.chat_type, sender: event.sender.sender_id.open_id },
+      { message_id: messageId, message_type: messageType, chat_type: message.chat_type, sender: event.sender.sender_id.open_id },
       'Processing message',
     );
 
-    const text = this.extractText(message_type, message.content);
-    const threadIdentity = await this.metadataResolver.resolve(message_id);
-    const existingThread =
-      (threadIdentity.threadId
-        ? await this.historyRepository.getLarkThreadByThreadId(threadIdentity.threadId)
-        : null) ?? (await this.historyRepository.getLarkThreadByRootMessageId(threadIdentity.rootMessageId));
-    const now = Date.now();
-    const sessionId = existingThread?.sessionId ?? threadIdentity.rootMessageId;
+    const threadIdentity = await this.metadataResolver.resolve(messageId);
 
-    await this.historyRepository.upsertInboundLarkMessage({
-      rootMessageId: threadIdentity.rootMessageId,
-      threadId: threadIdentity.threadId,
-      sessionId,
-      source: 'lark',
-      chatType: message.chat_type ?? null,
-      taskType: existingThread?.taskType ?? 'thread_reply',
-      executor: existingThread?.executor ?? 'claude',
-      executorModel: existingThread?.executorModel ?? 'sonnet',
-      status: existingThread?.status ?? 'active',
-      threadCreatedAtMs: existingThread?.createdAtMs ?? now,
-      threadUpdatedAtMs: now,
-      message: {
-        messageId: message_id,
-        messageType: message_type,
-        rawContent: message.content,
-        normalizedText: text,
-        metadataJson: JSON.stringify({
-          sender_open_id: event.sender.sender_id.open_id,
-          sender_type: event.sender.sender_type,
-          mentions: message.mentions ?? [],
-        }),
-        createdAtMs: now,
-      },
-    });
+    const envelope = this.buildEnvelope(event, threadIdentity);
+    const taskSource: TaskSource = { source: 'lark', message_id: messageId };
 
-    const parsed = this.parseCommand(text);
-
-    if (parsed.kind === 'usage') {
-      const replyResult = await this.replier.reply(message_id, USAGE_HINT);
-      await this.persistUsageReply(replyResult, threadIdentity, sessionId);
+    const taskId = await this.submitter.submit('lark_inbound', JSON.stringify(envelope), taskSource);
+    if (!taskId) {
+      logger.error({ message_id: messageId }, 'Failed to enqueue task');
+      await this.replier.replyEnqueueFailure(messageId);
       return;
     }
 
-    const taskSource: TaskSource = { source: 'lark' as const, message_id: message.message_id };
-    const taskId = await this.submitter.submit(
-      parsed.taskType,
-      parsed.taskPayload,
-      taskSource,
-      parsed.executor,
-      parsed.executorModel,
-    );
-
-    if (taskId) {
-      logger.info({ message_id, task_id: taskId, task_type: parsed.taskType }, 'Task enqueued');
-      await this.publishReceivedPhase(taskId, parsed.taskType, taskSource);
-    } else {
-      logger.error({ message_id }, 'Failed to enqueue task');
-    }
+    logger.info({ message_id: messageId, task_id: taskId, task_type: 'lark_inbound' }, 'Task enqueued');
+    await this.reactor.react(messageId);
   }
 
-  private async publishReceivedPhase(taskId: string, taskType: string, taskSource: TaskSource): Promise<void> {
-    const phaseEvent: TaskPhaseEventSubmission = {
-      task_id: taskId,
-      task_type: taskType,
-      phase: 'received',
-      task_source: taskSource,
-      metadata: { emitted_by: 'lark-listener' },
+  private buildEnvelope(event: LarkMessageEvent, threadIdentity: ResolvedThreadIdentity): LarkInboundEnvelope {
+    const messageId = event.message.message_id as string;
+    const rawContent = event.message.content as string;
+    const messageType = event.message.message_type;
+    const occurredAtMs = this.extractOccurredAtMs(event) ?? Date.now();
+
+    const mentions = (event.message.mentions ?? [])
+      .filter((m) => Boolean(m?.id?.open_id))
+      .map((m) => ({
+        key: m.key,
+        name: m.name,
+        open_id: m.id.open_id,
+      }));
+
+    const normalized = normalizeLarkInboundContent(messageType, rawContent);
+    const base = {
+      platform: 'lark' as const,
+      schema_version: LARK_INBOUND_SCHEMA_VERSION_V1,
+      message_id: messageId,
+      root_message_id: threadIdentity.rootMessageId,
+      thread_id: threadIdentity.threadId,
+      chat_type: event.message.chat_type,
+      sender_open_id: event.sender.sender_id.open_id,
+      sender_type: event.sender.sender_type,
+      message_type: messageType,
+      raw_content: rawContent,
+      mentions,
+      occurred_at_ms: occurredAtMs,
     };
 
-    try {
-      await this.submitter.publishPhase(phaseEvent);
-      logger.info({ task_id: taskId, task_type: taskType, phase: 'received' }, 'Published task phase');
-    } catch (err) {
-      logger.warn(
-        { task_id: taskId, task_type: taskType, phase: 'received', err },
-        'Failed to publish task phase',
-      );
-    }
-  }
-
-  private parseCommand(payload: string): ParsedSubmit {
-    if (payload === '/gc') {
-      return { kind: 'submit', taskType: 'gc', taskPayload: '' };
-    }
-
-    if (payload === '/new') {
-      return { kind: 'submit', taskType: 'new_instance', taskPayload: '' };
-    }
-
-    if (payload === '/status') {
-      return { kind: 'submit', taskType: 'status', taskPayload: '' };
-    }
-
-    if (payload.startsWith('/new ') || payload.startsWith('/new\n')) {
-      const rest = payload.slice('/new'.length).trim();
-      const args = rest.split(/\s+/);
-
-      if (args.length === 2) {
-        return {
-          kind: 'submit',
-          taskType: 'new_instance',
-          taskPayload: '',
-          executor: args[0],
-          executorModel: args[1],
-        };
-      }
-
-      return { kind: 'usage' };
-    }
-
-    if (payload === '/end') {
-      return { kind: 'submit', taskType: 'cleanup', taskPayload: '' };
-    }
-
-    if (payload.startsWith('/end ') || payload.startsWith('/end\n')) {
-      return { kind: 'usage' };
-    }
-
-    if (payload.startsWith('/status ') || payload.startsWith('/status\n')) {
-      return { kind: 'usage' };
-    }
-
-    if (payload === '/task' || payload.startsWith('/task ') || payload.startsWith('/task\n')) {
-      const taskParse = this.parseTaskCommand(payload);
-      if (taskParse === null) {
-        return { kind: 'usage' };
-      }
-
+    if (normalized.is_normalizable) {
       return {
-        kind: 'submit',
-        taskType: taskParse.taskType,
-        taskPayload: taskParse.taskPayload,
-        executor: taskParse.executor,
-        executorModel: taskParse.executorModel,
+        ...base,
+        is_normalizable: true,
+        normalized_text: normalized.normalized_text,
       };
     }
 
-    if (payload.startsWith('/task')) {
-      return { kind: 'usage' };
-    }
-
-    if (payload.startsWith('/new') || payload.startsWith('/end') || payload.startsWith('/status') || payload.startsWith('/gc')) {
-      return { kind: 'usage' };
-    }
-
     return {
-      kind: 'submit',
-      taskType: 'thread_reply',
-      taskPayload: payload,
+      ...base,
+      is_normalizable: false,
     };
   }
 
-  private parseTaskCommand(text: string): {
-    taskType: string;
-    taskPayload: string;
-    executor: string;
-    executorModel: string;
-  } | null {
-    const firstNl = text.indexOf('\n');
-    const firstLine = firstNl === -1 ? text : text.substring(0, firstNl);
-    const restAfterFirstLine = firstNl === -1 ? '' : text.substring(firstNl + 1);
-    if (!firstLine.startsWith('/task ')) {
-      return null;
+  private extractOccurredAtMs(event: LarkMessageEvent): number | null {
+    const candidates = [event.event_time, event.timestamp, event.create_time];
+    for (const c of candidates) {
+      if (!c) continue;
+      const n = Number(c);
+      if (!Number.isFinite(n)) continue;
+      // Heuristic: allow seconds or ms.
+      return n < 10_000_000_000 ? n * 1000 : n;
     }
-
-    const afterCmd = firstLine.slice('/task'.length).trimStart();
-    const parsed = /^(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(afterCmd);
-    if (!parsed) {
-      return null;
-    }
-
-    const [, taskType, executor, executorModel, payloadStart] = parsed;
-    const taskPayload = restAfterFirstLine ? `${payloadStart}\n${restAfterFirstLine}` : payloadStart;
-
-    return { taskType, taskPayload, executor, executorModel };
-  }
-
-  private extractText(messageType: string, content: string): string {
-    return extractLarkMessageContent(messageType, content);
-  }
-
-  private async persistUsageReply(
-    replyResult: LarkReplyResult | null,
-    threadIdentity: ResolvedThreadIdentity,
-    sessionId: string,
-  ): Promise<void> {
-    if (!replyResult?.messageId) {
-      return;
-    }
-
-    await this.historyRepository.recordOutboundLarkMessage({
-      messageId: replyResult.messageId,
-      source: 'lark',
-      rootMessageId: threadIdentity.rootMessageId,
-      sessionId,
-      threadId: threadIdentity.threadId,
-      messageType: replyResult.messageType,
-      rawContent: replyResult.rawContent,
-      normalizedText: replyResult.normalizedText,
-      metadataJson: JSON.stringify({ event_kind: 'usage_reply' }),
-      createdAtMs: replyResult.createdAtMs,
-    });
+    return null;
   }
 }
