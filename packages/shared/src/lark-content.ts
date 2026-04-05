@@ -26,6 +26,31 @@ export function extractLarkMessageContent(msgType: string, content: string): str
   }
 }
 
+const NORMALIZABLE_LARK_MESSAGE_TYPES = ['text', 'post'] as const;
+export type NormalizableLarkMessageType = (typeof NORMALIZABLE_LARK_MESSAGE_TYPES)[number];
+
+export function isLarkMessageTypeNormalizable(messageType: string): messageType is NormalizableLarkMessageType {
+  return (NORMALIZABLE_LARK_MESSAGE_TYPES as readonly string[]).includes(messageType);
+}
+
+export type LarkInboundContentNormalization =
+  | { is_normalizable: true; normalized_text: string }
+  | { is_normalizable: false };
+
+// Listener-facing helper: this intentionally does not encode downstream policy about whether
+// placeholders like "[Image: ...]" should be accepted; it only distinguishes types that
+// produce a reliable human-usable normalized text.
+export function normalizeLarkInboundContent(
+  messageType: string,
+  rawContent: string,
+): LarkInboundContentNormalization {
+  if (!isLarkMessageTypeNormalizable(messageType)) {
+    return { is_normalizable: false };
+  }
+
+  return { is_normalizable: true, normalized_text: extractLarkMessageContent(messageType, rawContent) };
+}
+
 function extractText(content: string): string {
   try {
     const parsed = JSON.parse(content);

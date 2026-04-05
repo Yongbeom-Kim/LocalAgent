@@ -13,6 +13,9 @@ import {
   type TaskResultSubmission,
   isControlTaskType,
   type TaskSubmission,
+  LARK_INBOUND_SCHEMA_VERSION_V1,
+  isValidLarkInboundEnvelope,
+  type LarkInboundEnvelope,
 } from '../types';
 
 /** Exact static allowlist order for `cursor` (must match `EXECUTOR_MODELS.cursor`). */
@@ -414,5 +417,71 @@ describe('task phase events', () => {
     expect(compareTaskPhases('queued', 'executing')).toBeLessThan(0);
     expect(compareTaskPhases('executing', 'queued')).toBeGreaterThan(0);
     expect(compareTaskPhases('completed', 'completed')).toBe(0);
+  });
+});
+
+describe('LarkInboundEnvelope (normalized lark_inbound contract)', () => {
+  it('accepts a minimally valid root-message envelope (root_message_id = message_id; thread_id = null)', () => {
+    const env: LarkInboundEnvelope = {
+      platform: 'lark',
+      schema_version: LARK_INBOUND_SCHEMA_VERSION_V1,
+      message_id: 'om_root',
+      root_message_id: 'om_root',
+      thread_id: null,
+      chat_type: 'p2p',
+      sender_open_id: 'ou_123',
+      sender_type: 'user',
+      message_type: 'text',
+      raw_content: JSON.stringify({ text: 'hello' }),
+      normalized_text: 'hello',
+      mentions: [],
+      is_normalizable: true,
+      occurred_at_ms: 1743811200000,
+    };
+
+    expect(isValidLarkInboundEnvelope(env)).toBe(true);
+    // Serialization-safe primitives (no functions, Dates, or non-JSON values).
+    const roundTrip = JSON.parse(JSON.stringify(env)) as unknown;
+    expect(isValidLarkInboundEnvelope(roundTrip)).toBe(true);
+  });
+
+  it('requires normalized_text when is_normalizable = true', () => {
+    const env = {
+      platform: 'lark',
+      schema_version: 1,
+      message_id: 'om_1',
+      root_message_id: 'om_1',
+      chat_type: 'p2p',
+      sender_open_id: 'ou_123',
+      sender_type: 'user',
+      message_type: 'text',
+      raw_content: JSON.stringify({ text: 'hello' }),
+      mentions: [],
+      is_normalizable: true,
+      occurred_at_ms: 1,
+    };
+
+    expect(isValidLarkInboundEnvelope(env)).toBe(false);
+  });
+
+  it('allows non-normalizable envelopes to omit normalized_text', () => {
+    const env = {
+      platform: 'lark',
+      schema_version: 1,
+      message_id: 'om_child',
+      root_message_id: 'om_root',
+      thread_id: 'omt_1',
+      chat_type: 'group',
+      sender_open_id: 'ou_999',
+      sender_type: 'user',
+      message_type: 'sticker',
+      raw_content: JSON.stringify({ sticker_id: 'abc' }),
+      mentions: [],
+      is_normalizable: false,
+      occurred_at_ms: 2,
+    };
+
+    expect(isValidLarkInboundEnvelope(env)).toBe(true);
+    expect(JSON.stringify(env)).toContain('"raw_content"');
   });
 });

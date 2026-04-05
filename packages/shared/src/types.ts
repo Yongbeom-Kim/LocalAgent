@@ -283,6 +283,97 @@ export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
 export const MAX_RESULT_OUTPUT_BYTES = 100 * 1024; // 100KB
 
+// --- Normalized Lark inbound envelope ---
+
+export const LARK_INBOUND_SCHEMA_VERSION_V1 = 1 as const;
+export type LarkInboundSchemaVersion = typeof LARK_INBOUND_SCHEMA_VERSION_V1;
+
+export interface LarkMention {
+  key: string;
+  name: string;
+  open_id: string;
+}
+
+export type LarkInboundEnvelope =
+  | {
+      platform: 'lark';
+      schema_version: LarkInboundSchemaVersion;
+      message_id: string;
+      root_message_id: string;
+      thread_id?: string | null;
+      chat_type: string;
+      sender_open_id: string;
+      sender_type: string;
+      message_type: string;
+      raw_content: string;
+      mentions: LarkMention[];
+      is_normalizable: true;
+      normalized_text: string;
+      occurred_at_ms: number;
+    }
+  | {
+      platform: 'lark';
+      schema_version: LarkInboundSchemaVersion;
+      message_id: string;
+      root_message_id: string;
+      thread_id?: string | null;
+      chat_type: string;
+      sender_open_id: string;
+      sender_type: string;
+      message_type: string;
+      raw_content: string;
+      mentions: LarkMention[];
+      is_normalizable: false;
+      normalized_text?: undefined;
+      occurred_at_ms: number;
+    };
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.length > 0;
+}
+
+export function isValidLarkInboundEnvelope(value: unknown): value is LarkInboundEnvelope {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+
+  if (obj.platform !== 'lark') return false;
+  if (obj.schema_version !== LARK_INBOUND_SCHEMA_VERSION_V1) return false;
+
+  if (!isNonEmptyString(obj.message_id)) return false;
+  if (!isNonEmptyString(obj.root_message_id)) return false;
+  if (!isNonEmptyString(obj.chat_type)) return false;
+  if (!isNonEmptyString(obj.sender_open_id)) return false;
+  if (!isNonEmptyString(obj.sender_type)) return false;
+  if (!isNonEmptyString(obj.message_type)) return false;
+  if (typeof obj.raw_content !== 'string') return false;
+  if (typeof obj.occurred_at_ms !== 'number' || !Number.isFinite(obj.occurred_at_ms)) return false;
+
+  if ('thread_id' in obj) {
+    if (!(typeof obj.thread_id === 'string' || obj.thread_id === null || obj.thread_id === undefined)) {
+      return false;
+    }
+  }
+
+  if (!Array.isArray(obj.mentions)) return false;
+  for (const m of obj.mentions) {
+    if (typeof m !== 'object' || m === null) return false;
+    const mention = m as Record<string, unknown>;
+    if (!isNonEmptyString(mention.key)) return false;
+    if (!isNonEmptyString(mention.name)) return false;
+    if (!isNonEmptyString(mention.open_id)) return false;
+  }
+
+  if (obj.is_normalizable === true) {
+    return typeof obj.normalized_text === 'string';
+  }
+
+  if (obj.is_normalizable === false) {
+    return obj.normalized_text === undefined;
+  }
+
+  return false;
+}
+
 export interface TaskResultSubmission {
   job_id: string;
   task_id: string;
