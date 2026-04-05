@@ -1,5 +1,6 @@
 import {
   createLogger,
+  type TaskPhaseEventSubmission,
   type TaskSource,
   extractLarkMessageContent,
   type LarkHistoryRepository,
@@ -36,7 +37,7 @@ export type { LarkMessageMetadataResolver };
 export class MessageHandler {
   constructor(
     private readonly submitter: TaskSubmitter,
-    private readonly reactor: LarkReactor,
+    private readonly _reactor: LarkReactor,
     private readonly replier: LarkReplier,
     private readonly dedup: DedupMap,
     private readonly historyRepository: LarkHistoryRepository,
@@ -113,11 +114,30 @@ export class MessageHandler {
 
     if (taskId) {
       logger.info({ message_id, task_id: taskId, task_type: parsed.taskType }, 'Task enqueued');
+      await this.publishReceivedPhase(taskId, parsed.taskType, taskSource);
     } else {
       logger.error({ message_id }, 'Failed to enqueue task');
     }
+  }
 
-    await this.reactor.react(message_id);
+  private async publishReceivedPhase(taskId: string, taskType: string, taskSource: TaskSource): Promise<void> {
+    const phaseEvent: TaskPhaseEventSubmission = {
+      task_id: taskId,
+      task_type: taskType,
+      phase: 'received',
+      task_source: taskSource,
+      metadata: { emitted_by: 'lark-listener' },
+    };
+
+    try {
+      await this.submitter.publishPhase(phaseEvent);
+      logger.info({ task_id: taskId, task_type: taskType, phase: 'received' }, 'Published task phase');
+    } catch (err) {
+      logger.warn(
+        { task_id: taskId, task_type: taskType, phase: 'received', err },
+        'Failed to publish task phase',
+      );
+    }
   }
 
   private parseCommand(payload: string): ParsedSubmit {

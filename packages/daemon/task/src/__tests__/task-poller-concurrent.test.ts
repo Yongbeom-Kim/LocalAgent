@@ -17,6 +17,7 @@ vi.mock('@local-agent/shared', async () => {
 import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ExecutionEnvironment } from '../services/job-environment';
 import { SessionLockManager } from '../services/session-lock';
+import { TaskPhasePublisher } from '../adapters/task-phase-publisher';
 
 const mockEnv: ExecutionEnvironment = {
   workDir: '/tmp/localagent-job-test',
@@ -51,6 +52,13 @@ vi.mock('../adapters/cleanup-executor', () => ({
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
+const mockPhasePublish = vi.fn();
+
+vi.mock('../adapters/task-phase-publisher', () => ({
+  TaskPhasePublisher: vi.fn().mockImplementation(function () {
+    this.publish = mockPhasePublish;
+  }),
+}));
 
 function createJob(overrides?: Partial<Job>): Job {
   return {
@@ -105,6 +113,8 @@ describe('TaskPoller Concurrent', () => {
     mockCleanupExecute.mockReset();
     mockSetup.mockReset().mockResolvedValue(mockEnv);
     mockTeardown.mockReset().mockResolvedValue(undefined);
+    mockPhasePublish.mockReset().mockResolvedValue(undefined);
+    vi.mocked(TaskPhasePublisher).mockClear();
 
     mockSessionLock = {
       acquire: vi.fn().mockReturnValue(true),
