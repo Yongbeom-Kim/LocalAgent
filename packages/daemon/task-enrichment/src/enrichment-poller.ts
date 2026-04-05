@@ -43,6 +43,12 @@ const LARK_INBOUND_DECODE_FAILURE_REASON = 'Failed to decode inbound Lark messag
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
 
+type StatusLookupResponse = {
+  running?: boolean;
+  active_session_count?: number;
+  session_directory_count?: number;
+};
+
 type LarkHistoryWriter = Pick<
   LarkHistoryRepository,
   'recordInboundAuditMessage' | 'upsertLarkThreadState' | 'getLarkThreadByRootMessageId'
@@ -125,6 +131,22 @@ function normalizeThreadResult(
     inheritedExecutor: result.inheritedExecutor,
     inheritedExecutorModel: result.inheritedExecutorModel,
   };
+}
+
+function formatStatusSummary(status: StatusLookupResponse): string {
+  const lines = [
+    `Current thread session: ${status.running === true ? 'executor running' : 'idle'}`,
+  ];
+
+  if (typeof status.active_session_count === 'number') {
+    lines.push(`Sessions with ongoing executor: ${status.active_session_count}`);
+  }
+
+  if (typeof status.session_directory_count === 'number') {
+    lines.push(`Session directories on disk: ${status.session_directory_count}`);
+  }
+
+  return lines.join('\n');
 }
 
 export class EnrichmentPoller {
@@ -377,8 +399,8 @@ export class EnrichmentPoller {
             return;
           }
 
-          const statusBody = (await statusRes.json()) as { running?: boolean };
-          const published = await this.publishStatusResult(task, threadResult, statusBody.running === true);
+          const statusBody = (await statusRes.json()) as StatusLookupResponse;
+          const published = await this.publishStatusResult(task, threadResult, statusBody);
           if (published) {
             await this.ackTask(task.task_id);
           }
@@ -701,7 +723,7 @@ export class EnrichmentPoller {
   private async publishStatusResult(
     task: Task,
     threadResult: ThreadContextResult,
-    running: boolean,
+    status: StatusLookupResponse,
   ): Promise<boolean> {
     await this.publishPhase(task, 'completed');
 
@@ -715,7 +737,7 @@ export class EnrichmentPoller {
         executor_model: threadResult.inheritedExecutorModel!,
         status: 'success' as const,
         exit_code: 0,
-        stdout: running ? 'Executor is running' : 'Executor is not running',
+        stdout: formatStatusSummary(status),
         stderr: '',
         ...(task.task_source ? { task_source: task.task_source } : {}),
       };

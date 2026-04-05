@@ -3,6 +3,14 @@ import { resolve } from 'node:path';
 import { defineConfig } from 'vitest/config';
 
 const require = createRequire(import.meta.url);
+const libsqlSqlite3Entry = require.resolve('@libsql/client/sqlite3');
+const drizzleOrmEntry = require.resolve('drizzle-orm');
+// Drizzle uses deep ESM/CJS exports; Vitest+Vite module resolution can be flaky in Rush monorepos.
+// Alias these to their resolved entries to make tests stable.
+const drizzleLibsqlSqlite3Entry = require.resolve('drizzle-orm/libsql/sqlite3');
+const drizzleLibsqlEntry = require.resolve('drizzle-orm/libsql');
+const drizzleSqliteCoreEntry = require.resolve('drizzle-orm/sqlite-core');
+const drizzleOrmSqlEntry = require.resolve('drizzle-orm/sql');
 const dotenvEntry = require.resolve('dotenv');
 const pinoEntry = require.resolve('pino');
 const uuidv7Entry = require.resolve('uuidv7');
@@ -10,12 +18,18 @@ const sharedSource = resolve(__dirname, '../../shared/src/index.ts');
 
 export default defineConfig({
   resolve: {
-    alias: {
-      '@local-agent/shared': sharedSource,
-      dotenv: dotenvEntry,
-      pino: pinoEntry,
-      uuidv7: uuidv7Entry,
-    },
+    alias: [
+      { find: '@local-agent/shared', replacement: sharedSource },
+      { find: '@libsql/client/sqlite3', replacement: libsqlSqlite3Entry },
+      { find: /^drizzle-orm\/libsql\/sqlite3$/, replacement: drizzleLibsqlSqlite3Entry },
+      { find: /^drizzle-orm\/libsql$/, replacement: drizzleLibsqlEntry },
+      { find: /^drizzle-orm\/sqlite-core$/, replacement: drizzleSqliteCoreEntry },
+      { find: /^drizzle-orm\/sql$/, replacement: drizzleOrmSqlEntry },
+      { find: /^drizzle-orm$/, replacement: drizzleOrmEntry },
+      { find: /^dotenv$/, replacement: dotenvEntry },
+      { find: /^pino$/, replacement: pinoEntry },
+      { find: /^uuidv7$/, replacement: uuidv7Entry },
+    ],
   },
   test: {
     include: ['src/**/*.test.ts'],

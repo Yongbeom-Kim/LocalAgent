@@ -1146,7 +1146,10 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ running: true }) })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ running: true, active_session_count: 2, session_directory_count: 17 }),
+      })
       .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
 
@@ -1169,7 +1172,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         executor_model: 'sonnet',
         status: 'success',
         exit_code: 0,
-        stdout: 'Executor is running',
+        stdout: 'Current thread session: executor running\nSessions with ongoing executor: 2\nSession directories on disk: 17',
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
@@ -1193,7 +1196,10 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ running: false }) })
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({ running: false, active_session_count: 0, session_directory_count: 21 }),
+      })
       .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
 
@@ -1213,7 +1219,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         executor_model: 'auto',
         status: 'success',
         exit_code: 0,
-        stdout: 'Executor is not running',
+        stdout: 'Current thread session: idle\nSessions with ongoing executor: 0\nSession directories on disk: 21',
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),

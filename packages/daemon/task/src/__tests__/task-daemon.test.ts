@@ -1,6 +1,17 @@
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AddressInfo } from 'node:net';
+import type { Dirent } from 'node:fs';
+
+const readdirSyncMock = vi.hoisted(() => vi.fn<unknown[], [string, { withFileTypes: true }]>());
+
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  return {
+    ...actual,
+    readdirSync: readdirSyncMock,
+  };
+});
 import { createStatusServer, startTaskDaemon } from '../task-daemon';
 
 const servers: Array<ReturnType<typeof createStatusServer>> = [];
@@ -8,6 +19,7 @@ const servers: Array<ReturnType<typeof createStatusServer>> = [];
 async function startServer(activeSessions: Set<string>) {
   const server = createStatusServer({
     isSessionActive: (sessionId: string) => activeSessions.has(sessionId),
+    getActiveSessionCount: () => activeSessions.size,
   });
   servers.push(server);
   await new Promise<void>((resolve) => server.listen(0, resolve));
@@ -32,6 +44,8 @@ class FakeServer extends EventEmitter {
 
 describe('createStatusServer', () => {
   afterEach(async () => {
+    vi.restoreAllMocks();
+    readdirSyncMock.mockReset();
     await Promise.all(
       servers.splice(0).map(
         (server) => new Promise<void>((resolve, reject) => server.close((err) => (err ? reject(err) : resolve()))),
@@ -40,6 +54,7 @@ describe('createStatusServer', () => {
   });
 
   it('returns running false for an unknown session', async () => {
+    readdirSyncMock.mockReturnValue([] as unknown as Dirent[]);
     const { baseUrl } = await startServer(new Set());
 
     const res = await fetch(`${baseUrl}/status/session-missing`);
@@ -48,10 +63,17 @@ describe('createStatusServer', () => {
     await expect(res.json()).resolves.toEqual({
       session_id: 'session-missing',
       running: false,
+      active_session_count: 0,
+      session_directory_count: 0,
     });
   });
 
   it('returns running true for an active session', async () => {
+    readdirSyncMock.mockReturnValue([
+      { isDirectory: () => true },
+      { isDirectory: () => true },
+      { isDirectory: () => false },
+    ] as unknown as Dirent[]);
     const { baseUrl } = await startServer(new Set(['session-active']));
 
     const res = await fetch(`${baseUrl}/status/session-active`);
@@ -60,6 +82,8 @@ describe('createStatusServer', () => {
     await expect(res.json()).resolves.toEqual({
       session_id: 'session-active',
       running: true,
+      active_session_count: 1,
+      session_directory_count: 2,
     });
   });
 });
@@ -75,6 +99,7 @@ describe('startTaskDaemon', () => {
       start: vi.fn(),
       drain: vi.fn().mockResolvedValue(undefined),
       isSessionActive: vi.fn().mockReturnValue(false),
+      getActiveSessionCount: vi.fn().mockReturnValue(0),
     };
     const createMachineLock = vi.fn(() => ({
       acquire: vi.fn().mockReturnValue({ acquired: true }),
@@ -112,6 +137,7 @@ describe('startTaskDaemon', () => {
       start: vi.fn(),
       drain: vi.fn().mockResolvedValue(undefined),
       isSessionActive: vi.fn().mockReturnValue(false),
+      getActiveSessionCount: vi.fn().mockReturnValue(0),
     };
 
     await expect(
@@ -152,6 +178,7 @@ describe('startTaskDaemon', () => {
       start: vi.fn(),
       drain: vi.fn().mockResolvedValue(undefined),
       isSessionActive: vi.fn().mockReturnValue(false),
+      getActiveSessionCount: vi.fn().mockReturnValue(0),
     };
     const machineLock = {
       acquire: vi.fn().mockReturnValue({ acquired: true }),
@@ -188,6 +215,7 @@ describe('startTaskDaemon', () => {
       start: vi.fn(),
       drain: vi.fn().mockResolvedValue(undefined),
       isSessionActive: vi.fn().mockReturnValue(false),
+      getActiveSessionCount: vi.fn().mockReturnValue(0),
     };
     const machineLock = {
       acquire: vi.fn().mockReturnValue({ acquired: true }),

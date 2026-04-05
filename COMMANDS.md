@@ -136,7 +136,7 @@ Valid (explicitly choose executor and model for the new instance):
 
 **Purpose**
 
-Report whether the current thread session has an executor actively running.
+Report a summary of current system status for the thread's session context.
 
 **Grammar**
 
@@ -170,7 +170,7 @@ Invalid (extra content):
 **Notes**
 
 - `/status` is rejected unless it can be associated with an existing thread session.
-- When accepted, the reply reports only whether an executor is currently running.
+- When accepted, the reply reports whether the current thread session has an active executor, how many sessions currently have an ongoing executor, and how many session directories are present on local disk.
 
 ### /end
 
