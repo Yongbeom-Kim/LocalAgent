@@ -3,6 +3,9 @@ import {
   EXECUTOR_MODELS,
   isValidExecutorModel,
   getExecutorModelOptions,
+  TASK_PHASES,
+  isValidTaskPhase,
+  compareTaskPhases,
   type Job,
   type MarketplaceConfig,
   isValidExecutorPreferences,
@@ -392,5 +395,24 @@ describe('TaskSubmission routing fields', () => {
       payload: '',
     };
     expect(task.executor).toBeUndefined();
+  });
+});
+
+describe('task phase events', () => {
+  it('exports the supported task phases in lifecycle order', () => {
+    expect(TASK_PHASES).toEqual(['received', 'enriching', 'queued', 'executing', 'completed']);
+  });
+
+  it('validates task phase payload values', () => {
+    expect(isValidTaskPhase('queued')).toBe(true);
+    expect(isValidTaskPhase('completed')).toBe(true);
+    expect(isValidTaskPhase('unknown')).toBe(false);
+    expect(isValidTaskPhase(123)).toBe(false);
+  });
+
+  it('compares task phases monotonically', () => {
+    expect(compareTaskPhases('queued', 'executing')).toBeLessThan(0);
+    expect(compareTaskPhases('executing', 'queued')).toBeGreaterThan(0);
+    expect(compareTaskPhases('completed', 'completed')).toBe(0);
   });
 });
