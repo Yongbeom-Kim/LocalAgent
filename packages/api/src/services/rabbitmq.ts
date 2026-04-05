@@ -4,6 +4,7 @@ import {
   Job,
   TaskResult,
   createLogger,
+  deriveRabbitMqManagementConfig,
   DEFAULT_RESULTS_EXCHANGE_NAME,
   DEFAULT_LARK_QUEUE_NAME,
   DEFAULT_JOBS_EXCHANGE_NAME,
@@ -35,6 +36,11 @@ export class RabbitMQUnavailableError extends Error {
 }
 
 const logger = createLogger('api:rabbitmq');
+const MANAGEMENT_REQUEST_TIMEOUT_MS = 3_000;
+
+interface RabbitMqManagementQueue {
+  name?: string;
+}
 
 export class RabbitMQService {
   private connection: amqplib.ChannelModel | null = null;
@@ -44,7 +50,6 @@ export class RabbitMQService {
   private connectionGeneration = 0;
   private deliveryMap = new Map<string, TrackedDelivery>();
   private queueDeliveryMaps = new Map<string, Map<string, TrackedDelivery>>();
-  private activeSessionQueues = new Set<string>();
 
   constructor(
     private readonly url: string,
@@ -108,7 +113,6 @@ export class RabbitMQService {
       const queueName = RabbitMQService.getSessionQueueName(sessionId);
       const msg = await channel.get(queueName, { noAck: false });
       if (msg === false) {
-        this.activeSessionQueues.delete(sessionId);
         return null;
       }
 
@@ -140,13 +144,40 @@ export class RabbitMQService {
     return this.finalizeJobDelivery(sessionId, jobId, 'nack', requeue);
   }
 
-  listActiveSessions(): SessionJobDescriptor[] {
-    return Array.from(this.activeSessionQueues)
-      .sort()
-      .map((session_id) => ({
-        session_id,
-        queue_name: RabbitMQService.getSessionQueueName(session_id),
-      }));
+  async listSessionQueues(): Promise<SessionJobDescriptor[]> {
+    const management = deriveRabbitMqManagementConfig(this.url);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), MANAGEMENT_REQUEST_TIMEOUT_MS);
+
+    try {
+      const auth = Buffer.from(`${management.username}:${management.password}`).toString('base64');
+      const response = await fetch(`${management.baseUrl}/api/queues/${management.encodedVhost}`, {
+        headers: { Authorization: `Basic ${auth}` },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        logger.warn({ status: response.status }, 'RabbitMQ management queue discovery failed');
+        throw new Error(`RabbitMQ management returned status ${response.status}`);
+      }
+
+      const queues = (await response.json()) as RabbitMqManagementQueue[];
+
+      return queues
+        .filter((queue): queue is Required<Pick<RabbitMqManagementQueue, 'name'>> =>
+          typeof queue.name === 'string' && queue.name.startsWith(`${DEFAULT_SESSION_JOBS_QUEUE_PREFIX}.`),
+        )
+        .map((queue) => ({
+          queue_name: queue.name,
+          session_id: queue.name.slice(`${DEFAULT_SESSION_JOBS_QUEUE_PREFIX}.`.length),
+        }))
+        .sort((a, b) => a.queue_name.localeCompare(b.queue_name));
+    } catch (err) {
+      logger.warn({ err }, 'RabbitMQ management session discovery failed');
+      throw err;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 
   isConnected(): boolean {
@@ -309,7 +340,6 @@ export class RabbitMQService {
       arguments: { 'x-expires': DEFAULT_SESSION_QUEUE_IDLE_TTL_MS },
     });
     await channel.bindQueue(queueName, DEFAULT_JOBS_EXCHANGE_NAME, sessionId);
-    this.activeSessionQueues.add(sessionId);
   }
 
   private async withChannel<T>(
