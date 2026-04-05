@@ -455,7 +455,7 @@ describe('EnrichmentPoller', () => {
       body: JSON.stringify({
         task_id: 'task-123',
         task_type: 'gc',
-        payload: '',
+        payload: 'ignored payload',
         executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         submitted_at: '2026-03-29T00:00:00.000Z',
         session_id: 'generated-session-id',
@@ -762,7 +762,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
   it('includes generated session_id, task_source, and placeholder executors in gc job', async () => {
     const task = createTask({
       task_type: 'gc',
-      payload: '',
+      payload: '24h',
       task_source: { source: 'lark', message_id: 'om_msg1' },
     });
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
@@ -782,7 +782,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       body: JSON.stringify({
         task_id: 'task-123',
         task_type: 'gc',
-        payload: '',
+        payload: '24h',
         executors: [{ executor: 'claude', executor_model: 'sonnet' }],
         submitted_at: '2026-03-29T00:00:00.000Z',
         session_id: 'generated-session-id',

@@ -1,6 +1,7 @@
 import { TASK_EXECUTOR_OPTIONS, getExecutorModelOptions, type TaskExecutorType } from './types';
 
 export const TASK_COMMAND_USAGE = '/task <type> <executor> <model> <payload>';
+export const GC_COMMAND_USAGE = '/gc [age]';
 
 export type RoutingCommandLabel = '/task' | '/new';
 
@@ -56,4 +57,8 @@ export function formatThreadTaskCommandRejectedMessage(): string {
 
 export function formatThreadOnlyCommandMessage(command: '/status' | '/new' | '/end'): string {
   return `The ${command} command can only be used inside a thread.`;
+}
+
+export function formatGcCommandUsageMessage(): string {
+  return `Usage: ${GC_COMMAND_USAGE}\nAge must be a positive integer followed by s, m, h, d, or w.`;
 }

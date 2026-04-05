@@ -1,6 +1,16 @@
 import { readdirSync, statSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { Job, TaskResultSubmission, SESSION_BASE_DIR, SESSION_DIR_TTL_DAYS, createLogger, LarkHistoryRepository, createSqliteClient, loadSqliteConfig } from '@local-agent/shared';
+import {
+  Job,
+  TaskResultSubmission,
+  SESSION_BASE_DIR,
+  createLogger,
+  LarkHistoryRepository,
+  createSqliteClient,
+  loadSqliteConfig,
+  parseGcAgeThresholdPayload,
+  DEFAULT_GC_AGE_THRESHOLD_MS,
+} from '@local-agent/shared';
 import { SessionLockManager } from './session-lock';
 
 const logger = createLogger('task-daemon:gc-executor');
@@ -39,7 +49,9 @@ export class GcExecutor {
   ) {}
 
   async execute(job: Job): Promise<TaskResultSubmission> {
-    const cutoff = Date.now() - SESSION_DIR_TTL_DAYS * 24 * 60 * 60 * 1000;
+    const ageThresholdMs = parseGcAgeThresholdPayload(job.payload);
+    const cutoffAgeMs = ageThresholdMs ?? DEFAULT_GC_AGE_THRESHOLD_MS;
+    const cutoff = Date.now() - cutoffAgeMs;
 
     if (!existsSync(SESSION_BASE_DIR)) {
       const dbCleanup = await this.cleanupStaleRows(job, cutoff);
