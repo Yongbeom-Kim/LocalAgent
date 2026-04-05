@@ -2,9 +2,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   Task,
   JobSubmission,
+  type LarkInboundEnvelope,
   formatUnknownTaskTypeMessage,
   formatMissingTaskTypeMessage,
   formatMissingPayloadMessage,
+  formatThreadReplyHelpMessage,
   formatThreadTaskCommandRejectedMessage,
   formatThreadOnlyCommandMessage,
 } from '@local-agent/shared';
@@ -69,6 +71,26 @@ function createJobSubmission(overrides?: Partial<JobSubmission>): JobSubmission 
       { executor: 'claude', executor_model: 'opus' },
     ],
     submitted_at: '2026-03-29T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
+function createInboundEnvelope(overrides?: Partial<LarkInboundEnvelope>): LarkInboundEnvelope {
+  return {
+    platform: 'lark',
+    schema_version: 1,
+    message_id: 'om_root_inbound',
+    root_message_id: 'om_root_inbound',
+    thread_id: null,
+    chat_type: 'p2p',
+    sender_open_id: 'ou_sender',
+    sender_type: 'user',
+    message_type: 'text',
+    raw_content: '{"text":"/task deploy claude sonnet fix prod"}',
+    normalized_text: '/task deploy claude sonnet fix prod',
+    mentions: [],
+    is_normalizable: true,
+    occurred_at_ms: 1710000000000,
     ...overrides,
   };
 }
@@ -1234,6 +1256,241 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
+    });
+  });
+});
+
+describe('EnrichmentPoller lark_inbound flow', () => {
+  let poller: EnrichmentPoller;
+  let mockThreadFetcher: { fetchThreadContext: ReturnType<typeof vi.fn> };
+  let mockHistoryRepository: {
+    recordInboundAuditMessage: ReturnType<typeof vi.fn>;
+    upsertLarkThreadState: ReturnType<typeof vi.fn>;
+    getLarkThreadByRootMessageId: ReturnType<typeof vi.fn>;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFetch.mockReset();
+    mockEnrich.mockReset();
+    mockGetValidTaskTypes.mockReset();
+    mockGetValidTaskTypes.mockReturnValue(new Set(['deploy', 'code_review', 'default']));
+    mockGenerateSessionId.mockReset();
+    mockGenerateSessionId.mockReturnValue('generated-session-id');
+    mockPhasePublish.mockReset().mockResolvedValue(undefined);
+    vi.mocked(TaskPhasePublisher).mockClear();
+    const service = new EnrichmentService() as any;
+    mockThreadFetcher = { fetchThreadContext: vi.fn() };
+    mockHistoryRepository = {
+      recordInboundAuditMessage: vi.fn().mockResolvedValue(true),
+      upsertLarkThreadState: vi.fn().mockResolvedValue(undefined),
+      getLarkThreadByRootMessageId: vi.fn().mockResolvedValue(null),
+    };
+    poller = new EnrichmentPoller(
+      'http://localhost:3000',
+      'http://task-daemon:7070',
+      service,
+      mockThreadFetcher as unknown as ThreadContextFetcher,
+      undefined,
+      mockHistoryRepository as any,
+    );
+  });
+
+  afterEach(() => {
+    poller.stop();
+  });
+
+  it('persists inbound audit before thread lookup and materializes root state only after accepted classification', async () => {
+    const envelope = createInboundEnvelope();
+    const task = createTask({
+      task_type: 'lark_inbound',
+      payload: JSON.stringify(envelope),
+      executor: undefined,
+      executor_model: undefined,
+      task_source: undefined,
+    });
+    const jobSubmission = createJobSubmission({
+      task_type: 'deploy',
+      payload: 'fix prod',
+      session_id: 'generated-session-id',
+    });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
+    expect(mockThreadFetcher.fetchThreadContext).toHaveBeenCalledWith('om_root_inbound', expect.any(Set));
+    expect(mockHistoryRepository.upsertLarkThreadState).toHaveBeenCalledWith({
+      rootMessageId: 'om_root_inbound',
+      threadId: null,
+      sessionId: 'generated-session-id',
+      source: 'lark',
+      chatType: 'p2p',
+      taskType: 'deploy',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 1710000000000,
+      updatedAtMs: 1710000000000,
+      endedAtMs: null,
+    });
+    expect(mockEnrich).toHaveBeenCalledWith(
+      expect.objectContaining({
+        task_type: 'deploy',
+        payload: 'fix prod',
+        executor: 'claude',
+        executor_model: 'sonnet',
+        task_source: { source: 'lark', message_id: 'om_root_inbound' },
+      }),
+      'generated-session-id',
+      undefined,
+    );
+  });
+
+  it('rejects malformed root /task after persisting the inbound audit row', async () => {
+    const envelope = createInboundEnvelope({ normalized_text: '/task deploy', raw_content: '{"text":"/task deploy"}' });
+    const task = createTask({
+      task_type: 'lark_inbound',
+      payload: JSON.stringify(envelope),
+      executor: undefined,
+      executor_model: undefined,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
+    expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'deploy',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_root_inbound' },
+      }),
+    });
+  });
+
+  it('rejects threaded /task after persisting inbound history and preserves task_source', async () => {
+    const envelope = createInboundEnvelope({
+      message_id: 'om_reply_inbound',
+      root_message_id: 'om_root_inbound',
+      thread_id: 'omt_inbound',
+      normalized_text: '/task deploy claude sonnet nope',
+      raw_content: '{"text":"/task deploy claude sonnet nope"}',
+    });
+    const task = createTask({
+      task_type: 'lark_inbound',
+      payload: JSON.stringify(envelope),
+      executor: undefined,
+      executor_model: undefined,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
+    expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'deploy',
+        status: 'failure',
+        exit_code: null,
+        stdout: formatThreadTaskCommandRejectedMessage(),
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_reply_inbound' },
+      }),
+    });
+  });
+
+  it('rejects non-normalizable threaded input downstream after audit persistence', async () => {
+    const envelope = createInboundEnvelope({
+      message_id: 'om_reply_non_normalizable',
+      root_message_id: 'om_root_inbound',
+      thread_id: 'omt_inbound',
+      message_type: 'image',
+      raw_content: '{"image_key":"img_1"}',
+      is_normalizable: false,
+      normalized_text: undefined,
+    } as unknown as Partial<LarkInboundEnvelope>);
+    const task = createTask({
+      task_type: 'lark_inbound',
+      payload: JSON.stringify(envelope),
+      executor: undefined,
+      executor_model: undefined,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'thread_reply',
+        status: 'failure',
+        exit_code: null,
+        stdout: formatThreadReplyHelpMessage(),
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_reply_non_normalizable' },
+      }),
+    });
+  });
+
+  it('acks duplicate inbound deliveries without double-persisting or creating work', async () => {
+    const envelope = createInboundEnvelope({ message_id: 'om_duplicate', root_message_id: 'om_duplicate' });
+    const task = createTask({
+      task_type: 'lark_inbound',
+      payload: JSON.stringify(envelope),
+      executor: undefined,
+      executor_model: undefined,
+    });
+    mockHistoryRepository.recordInboundAuditMessage.mockResolvedValue(false);
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
+    expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
+    expect(mockHistoryRepository.upsertLarkThreadState).not.toHaveBeenCalled();
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
     });
   });
 });

@@ -4,11 +4,15 @@ import {
   TaskPhase,
   createLogger,
   generateSessionId,
+  formatThreadReplyHelpMessage,
   isControlTaskType,
+  isValidLarkInboundEnvelope,
+  type LarkInboundEnvelope,
   TASK_COMMAND_USAGE,
   formatThreadOnlyCommandMessage,
   formatThreadTaskCommandRejectedMessage,
   type TaskExecutorType,
+  type LarkHistoryRepository,
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
@@ -34,8 +38,33 @@ const THREAD_REPLY_INCOMPLETE_METADATA_REASON =
 const STATUS_INCOMPLETE_METADATA_REASON =
   'Cannot check /status because the inherited thread metadata is incomplete.';
 const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end (in a thread)`;
+const LARK_INBOUND_TASK_TYPE = 'lark_inbound';
+const LARK_INBOUND_DECODE_FAILURE_REASON = 'Failed to decode inbound Lark message envelope.';
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
+
+type LarkHistoryWriter = Pick<
+  LarkHistoryRepository,
+  'recordInboundAuditMessage' | 'upsertLarkThreadState' | 'getLarkThreadByRootMessageId'
+>;
+
+type InboundClassificationResult =
+  | {
+      kind: 'accepted';
+      task: Task;
+      envelope: LarkInboundEnvelope;
+      shouldMaterializeRootState: boolean;
+    }
+  | {
+      kind: 'duplicate';
+      task: Task;
+      envelope: LarkInboundEnvelope;
+    }
+  | {
+      kind: 'rejected';
+      task: Task;
+      reason: string;
+    };
 
 type LegacyThreadContextResult = {
   threadContext: string | null;
@@ -68,18 +97,34 @@ function normalizeThreadResult(
   result: ThreadContextResult | LegacyThreadContextResult | null | undefined,
 ): ThreadContextResult {
   if (result === undefined || result === null) {
-    return {
-      kind: 'not_thread',
-      threadContext: null,
-      inheritedTaskType: null,
-      inheritedSessionId: null,
-      inheritedExecutor: null,
-      inheritedExecutorModel: null,
-    };
+    return notThreadResult();
   }
 
   if ('kind' in result) {
-    return result;
+    if (result.kind === 'not_thread') {
+      return notThreadResult();
+    }
+
+    if (result.kind === 'error') {
+      return {
+        kind: 'error',
+        reason: result.reason,
+        threadContext: null,
+        inheritedTaskType: null,
+        inheritedSessionId: null,
+        inheritedExecutor: null,
+        inheritedExecutorModel: null,
+      };
+    }
+
+    return {
+      kind: 'thread',
+      threadContext: result.threadContext,
+      inheritedTaskType: result.inheritedTaskType,
+      inheritedSessionId: result.inheritedSessionId,
+      inheritedExecutor: result.inheritedExecutor,
+      inheritedExecutorModel: result.inheritedExecutorModel,
+    };
   }
 
   return {
@@ -102,6 +147,7 @@ export class EnrichmentPoller {
     private readonly enrichmentService: EnrichmentService,
     private readonly threadContextFetcher?: ThreadContextFetcher,
     private readonly phasePublisher: TaskPhasePublisher = new TaskPhasePublisher(apiUrl),
+    private readonly larkHistoryRepository?: LarkHistoryWriter,
   ) {}
 
   async pollOnce(): Promise<void> {
@@ -118,8 +164,35 @@ export class EnrichmentPoller {
         return;
       }
 
-      const task = (await res.json()) as Task;
-      logger.info({ task_id: task.task_id, task_type: task.task_type }, 'Received task for enrichment');
+      const rawTask = (await res.json()) as Task;
+      logger.info({ task_id: rawTask.task_id, task_type: rawTask.task_type }, 'Received task for enrichment');
+
+      let task = rawTask;
+      let inboundClassification: Extract<InboundClassificationResult, { kind: 'accepted' }> | null = null;
+
+      if (rawTask.task_type === LARK_INBOUND_TASK_TYPE) {
+        const prepared = await this.prepareInboundTask(rawTask);
+        if (prepared.kind === 'duplicate') {
+          logger.info(
+            { task_id: rawTask.task_id, message_id: prepared.envelope.message_id },
+            'Skipping duplicate lark_inbound delivery',
+          );
+          await this.ackTask(rawTask.task_id);
+          return;
+        }
+
+        if (prepared.kind === 'rejected') {
+          const published = await this.publishRejection(prepared.task, prepared.reason);
+          if (published) {
+            await this.ackTask(rawTask.task_id);
+          }
+          return;
+        }
+
+        inboundClassification = prepared;
+        task = prepared.task;
+      }
+
       await this.publishPhase(task, 'enriching');
 
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
@@ -131,8 +204,10 @@ export class EnrichmentPoller {
 
       if (isCleanupTask && task.task_source?.source !== 'lark') {
         logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected cleanup task without lark task_source');
-        await this.publishRejection(task, CLEANUP_MISSING_SOURCE_REASON);
-        await this.ackTask(task.task_id);
+        const published = await this.publishRejection(task, CLEANUP_MISSING_SOURCE_REASON);
+        if (published) {
+          await this.ackTask(task.task_id);
+        }
         return;
       }
 
@@ -147,36 +222,46 @@ export class EnrichmentPoller {
 
         if (threadResult.kind === 'error') {
           logger.warn({ task_id: task.task_id, reason: threadResult.reason }, 'Rejected lark task after thread lookup failure');
-          await this.publishRejection(task, threadResult.reason ?? THREAD_LOOKUP_ERROR_REASON);
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, threadResult.reason ?? THREAD_LOOKUP_ERROR_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
         if (isThreadReplyTask && threadResult.kind === 'not_thread') {
           logger.warn({ task_id: task.task_id }, 'Rejected root thread_reply continuation candidate');
-          await this.publishRejection(task, ROOT_TASK_USAGE_HINT);
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, ROOT_TASK_USAGE_HINT);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
         if (isCleanupTask && threadResult.kind === 'not_thread') {
           logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without thread context');
-          await this.publishRejection(task, formatThreadOnlyCommandMessage('/end'));
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, formatThreadOnlyCommandMessage('/end'));
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
         if (isNewInstanceTask && threadResult.kind === 'not_thread') {
           logger.warn({ task_id: task.task_id }, 'Rejected new_instance task outside thread');
-          await this.publishRejection(task, formatThreadOnlyCommandMessage('/new'));
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, formatThreadOnlyCommandMessage('/new'));
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
         if (isStatusTask && threadResult.kind === 'not_thread') {
           logger.warn({ task_id: task.task_id }, 'Rejected status task outside thread');
-          await this.publishRejection(task, formatThreadOnlyCommandMessage('/status'));
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, formatThreadOnlyCommandMessage('/status'));
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
@@ -185,27 +270,47 @@ export class EnrichmentPoller {
             { task_id: task.task_id, task_type: task.task_type },
             'Rejected non-control Lark task in a thread',
           );
-          await this.publishRejection(task, formatThreadTaskCommandRejectedMessage());
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, formatThreadTaskCommandRejectedMessage());
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
       }
 
       if (isGcTask && threadResult?.kind === 'thread') {
         logger.warn({ task_id: task.task_id }, 'Rejected gc task inside thread');
-        await this.publishRejection(task, GC_THREAD_REJECTION_REASON);
-        await this.ackTask(task.task_id);
+        const published = await this.publishRejection(task, GC_THREAD_REJECTION_REASON);
+        if (published) {
+          await this.ackTask(task.task_id);
+        }
         return;
       }
 
+      const rootSessionId = inboundClassification?.shouldMaterializeRootState
+        ? await this.getAuthoritativeSessionIdForRoot(inboundClassification.envelope.root_message_id)
+        : null;
+
       if (isGcTask) {
+        const sessionId = rootSessionId ?? generateSessionId();
+
+        if (inboundClassification?.shouldMaterializeRootState) {
+          await this.materializeRootThreadState(inboundClassification.envelope, {
+            sessionId,
+            taskType: GC_TASK_TYPE,
+            executor: GC_EXECUTOR.executor,
+            executorModel: GC_EXECUTOR.executor_model,
+            status: 'active',
+          });
+        }
+
         const jobSubmission: JobSubmission = {
           task_id: task.task_id,
           task_type: GC_TASK_TYPE,
           payload: '',
           executors: [GC_EXECUTOR],
           submitted_at: task.submitted_at,
-          session_id: generateSessionId(),
+          session_id: sessionId,
           ...(task.task_source ? { task_source: task.task_source } : {}),
         };
 
@@ -216,12 +321,12 @@ export class EnrichmentPoller {
             body: JSON.stringify(jobSubmission),
           });
           if (jobRes.status !== 201) {
-            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for gc task — not acking task');
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for gc task - not acking task');
             return;
           }
           await this.publishPhase(task, 'queued');
         } catch (jobErr) {
-          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for gc task — not acking task');
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for gc task - not acking task');
           return;
         }
 
@@ -231,30 +336,38 @@ export class EnrichmentPoller {
 
       if (isNewInstanceTask && task.task_source?.source !== 'lark') {
         logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected new_instance task without lark task_source');
-        await this.publishRejection(task, NEW_INSTANCE_MISSING_SOURCE_REASON);
-        await this.ackTask(task.task_id);
+        const published = await this.publishRejection(task, NEW_INSTANCE_MISSING_SOURCE_REASON);
+        if (published) {
+          await this.ackTask(task.task_id);
+        }
         return;
       }
 
       if (isNewInstanceTask && threadResult?.kind === 'thread' && !threadResult.inheritedSessionId) {
         logger.warn({ task_id: task.task_id }, 'Rejected new_instance task without inherited session_id');
-        await this.publishRejection(task, NEW_INSTANCE_MISSING_SESSION_REASON);
-        await this.ackTask(task.task_id);
+        const published = await this.publishRejection(task, NEW_INSTANCE_MISSING_SESSION_REASON);
+        if (published) {
+          await this.ackTask(task.task_id);
+        }
         return;
       }
 
       if (isStatusTask) {
         if (threadResult?.kind !== 'thread' || !threadResult.inheritedSessionId) {
           logger.warn({ task_id: task.task_id, threadResult }, 'Rejected status task without inherited session_id');
-          await this.publishRejection(task, STATUS_MISSING_SESSION_REASON);
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, STATUS_MISSING_SESSION_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
         if (!threadResult.inheritedTaskType || !threadResult.inheritedExecutor || !threadResult.inheritedExecutorModel) {
           logger.warn({ task_id: task.task_id, threadResult }, 'Rejected status task with incomplete inherited metadata');
-          await this.publishRejection(task, STATUS_INCOMPLETE_METADATA_REASON);
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, STATUS_INCOMPLETE_METADATA_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
@@ -267,25 +380,33 @@ export class EnrichmentPoller {
 
           if (statusRes.status !== 200) {
             logger.error({ task_id: task.task_id, status: statusRes.status }, 'GET /status failed for status task');
-            await this.publishRejection(task, STATUS_LOOKUP_FAILURE_REASON);
-            await this.ackTask(task.task_id);
+            const published = await this.publishRejection(task, STATUS_LOOKUP_FAILURE_REASON);
+            if (published) {
+              await this.ackTask(task.task_id);
+            }
             return;
           }
 
           const statusBody = (await statusRes.json()) as { running?: boolean };
-          await this.publishStatusResult(task, threadResult, statusBody.running === true);
-          await this.ackTask(task.task_id);
+          const published = await this.publishStatusResult(task, threadResult, statusBody.running === true);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         } catch (statusErr) {
           logger.error({ task_id: task.task_id, err: statusErr }, 'Status lookup request failed');
-          await this.publishRejection(task, STATUS_LOOKUP_FAILURE_REASON);
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, STATUS_LOOKUP_FAILURE_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
       }
 
       if (isNewInstanceTask) {
-        const inheritedType = threadResult?.kind === 'thread' ? (threadResult.inheritedTaskType ?? task.task_type) : task.task_type;
+        const inheritedType = threadResult?.kind === 'thread'
+          ? (threadResult.inheritedTaskType ?? task.task_type)
+          : task.task_type;
 
         const enrichmentResult = this.enrichmentService.enrich(
           { ...task, task_type: NEW_INSTANCE_TASK_TYPE, payload: NEW_INSTANCE_PROMPT },
@@ -295,8 +416,10 @@ export class EnrichmentPoller {
 
         if (enrichmentResult.type === 'rejected') {
           logger.warn({ task_id: task.task_id, reason: enrichmentResult.reason }, 'Enrichment rejected new_instance task');
-          await this.publishRejection(task, enrichmentResult.reason);
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, enrichmentResult.reason);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
@@ -311,12 +434,12 @@ export class EnrichmentPoller {
             body: JSON.stringify(enrichmentResult.job),
           });
           if (jobRes.status !== 201) {
-            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for new_instance — not acking');
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for new_instance - not acking');
             return;
           }
           await this.publishPhase(task, 'queued');
         } catch (jobErr) {
-          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for new_instance — not acking');
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for new_instance - not acking');
           return;
         }
 
@@ -332,8 +455,10 @@ export class EnrichmentPoller {
           !threadResult.inheritedExecutorModel
         ) {
           logger.warn({ task_id: task.task_id, threadResult }, 'Rejected thread_reply with incomplete inherited metadata');
-          await this.publishRejection(task, THREAD_REPLY_INCOMPLETE_METADATA_REASON);
-          await this.ackTask(task.task_id);
+          const published = await this.publishRejection(task, THREAD_REPLY_INCOMPLETE_METADATA_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
@@ -350,9 +475,14 @@ export class EnrichmentPoller {
         );
 
         if (enrichmentResult.type === 'rejected') {
-          logger.warn({ task_id: task.task_id, task_type: rewrittenTask.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected rewritten thread_reply task');
-          await this.publishRejection(task, enrichmentResult.reason);
-          await this.ackTask(task.task_id);
+          logger.warn(
+            { task_id: task.task_id, task_type: rewrittenTask.task_type, reason: enrichmentResult.reason },
+            'Enrichment rejected rewritten thread_reply task',
+          );
+          const published = await this.publishRejection(task, enrichmentResult.reason);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
           return;
         }
 
@@ -363,12 +493,12 @@ export class EnrichmentPoller {
             body: JSON.stringify(enrichmentResult.job),
           });
           if (jobRes.status !== 201) {
-            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for thread_reply rewrite — not acking task');
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for thread_reply rewrite - not acking task');
             return;
           }
           await this.publishPhase(task, 'queued');
         } catch (jobErr) {
-          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for thread_reply rewrite — not acking task');
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for thread_reply rewrite - not acking task');
           return;
         }
 
@@ -378,18 +508,31 @@ export class EnrichmentPoller {
 
       if (isCleanupTask && threadResult?.kind === 'thread' && !threadResult.inheritedSessionId) {
         logger.warn({ task_id: task.task_id }, 'Rejected cleanup task without inherited session_id');
-        await this.publishRejection(task, CLEANUP_REJECTION_REASON);
-        await this.ackTask(task.task_id);
+        const published = await this.publishRejection(task, CLEANUP_REJECTION_REASON);
+        if (published) {
+          await this.ackTask(task.task_id);
+        }
         return;
       }
 
       const sessionId = threadResult?.kind === 'thread' && threadResult.inheritedSessionId
         ? threadResult.inheritedSessionId
-        : generateSessionId();
+        : (rootSessionId ?? generateSessionId());
+
+      if (inboundClassification?.shouldMaterializeRootState) {
+        await this.materializeRootThreadState(inboundClassification.envelope, {
+          sessionId,
+          taskType: task.task_type,
+          executor: task.executor ?? GC_EXECUTOR.executor,
+          executorModel: task.executor_model ?? GC_EXECUTOR.executor_model,
+          status: 'active',
+        });
+      }
+
       if (threadResult?.kind === 'thread' && threadResult.inheritedSessionId) {
         logger.info({ task_id: task.task_id, inherited_session_id: sessionId }, 'Inherited session_id from thread root');
       } else {
-        logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated new session_id for enrichment');
+        logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated or recovered session_id for enrichment');
       }
 
       const threadHistory = isCleanupTask || threadResult?.kind !== 'thread'
@@ -399,8 +542,10 @@ export class EnrichmentPoller {
 
       if (enrichmentResult.type === 'rejected') {
         logger.warn({ task_id: task.task_id, task_type: task.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected task');
-        await this.publishRejection(task, enrichmentResult.reason);
-        await this.ackTask(task.task_id);
+        const published = await this.publishRejection(task, enrichmentResult.reason);
+        if (published) {
+          await this.ackTask(task.task_id);
+        }
         return;
       }
 
@@ -411,12 +556,12 @@ export class EnrichmentPoller {
           body: JSON.stringify(enrichmentResult.job),
         });
         if (jobRes.status !== 201) {
-          logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed — not acking task');
+          logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed - not acking task');
           return;
         }
         await this.publishPhase(task, 'queued');
       } catch (jobErr) {
-        logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed — not acking task');
+        logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed - not acking task');
         return;
       }
 
@@ -426,7 +571,102 @@ export class EnrichmentPoller {
     }
   }
 
-  private async publishRejection(task: Task, reason: string): Promise<void> {
+  private async prepareInboundTask(task: Task): Promise<InboundClassificationResult> {
+    if (!this.larkHistoryRepository) {
+      return {
+        kind: 'rejected',
+        task,
+        reason: 'Lark inbound handling requires a history repository.',
+      };
+    }
+
+    let parsedPayload: unknown;
+    try {
+      parsedPayload = JSON.parse(task.payload);
+    } catch {
+      return {
+        kind: 'rejected',
+        task,
+        reason: LARK_INBOUND_DECODE_FAILURE_REASON,
+      };
+    }
+
+    if (!isValidLarkInboundEnvelope(parsedPayload)) {
+      return {
+        kind: 'rejected',
+        task,
+        reason: LARK_INBOUND_DECODE_FAILURE_REASON,
+      };
+    }
+
+    const envelope = parsedPayload;
+    const inserted = await this.larkHistoryRepository.recordInboundAuditMessage({ envelope });
+
+    if (!inserted) {
+      return {
+        kind: 'duplicate',
+        task: {
+          ...task,
+          task_source: { source: 'lark', message_id: envelope.message_id },
+        },
+        envelope,
+      };
+    }
+
+    return classifyInboundEnvelope(task, envelope);
+  }
+
+  private async materializeRootThreadState(
+    envelope: LarkInboundEnvelope,
+    params: {
+      sessionId: string;
+      taskType: string;
+      executor: string;
+      executorModel: string;
+      status: string;
+    },
+  ): Promise<void> {
+    if (!this.larkHistoryRepository) {
+      return;
+    }
+
+    const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(
+      envelope.root_message_id,
+    );
+
+    if (existingThread && existingThread.status !== 'audit_only') {
+      return;
+    }
+
+    await this.larkHistoryRepository.upsertLarkThreadState({
+      rootMessageId: envelope.root_message_id,
+      threadId: envelope.thread_id ?? null,
+      sessionId: params.sessionId,
+      source: 'lark',
+      chatType: envelope.chat_type,
+      taskType: params.taskType,
+      executor: params.executor,
+      executorModel: params.executorModel,
+      status: params.status,
+      createdAtMs: existingThread?.createdAtMs ?? envelope.occurred_at_ms,
+      updatedAtMs: envelope.occurred_at_ms,
+      endedAtMs: null,
+    });
+  }
+
+  private async getAuthoritativeSessionIdForRoot(rootMessageId: string): Promise<string | null> {
+    if (!this.larkHistoryRepository) {
+      return null;
+    }
+
+    const thread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(rootMessageId);
+    if (!thread || thread.status === 'audit_only') {
+      return null;
+    }
+    return thread.sessionId;
+  }
+
+  private async publishRejection(task: Task, reason: string): Promise<boolean> {
     await this.publishPhase(task, 'completed');
 
     try {
@@ -449,11 +689,14 @@ export class EnrichmentPoller {
 
       if (res.status !== 201) {
         logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for rejection');
-      } else {
-        logger.info({ task_id: task.task_id }, 'Published rejection result');
+        return false;
       }
+
+      logger.info({ task_id: task.task_id }, 'Published rejection result');
+      return true;
     } catch (err) {
       logger.error({ task_id: task.task_id, err }, 'Failed to publish rejection result');
+      return false;
     }
   }
 
@@ -469,7 +712,7 @@ export class EnrichmentPoller {
     task: Task,
     threadResult: ThreadContextResult,
     running: boolean,
-  ): Promise<void> {
+  ): Promise<boolean> {
     await this.publishPhase(task, 'completed');
 
     try {
@@ -495,9 +738,13 @@ export class EnrichmentPoller {
 
       if (res.status !== 201) {
         logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for status result');
+        return false;
       }
+
+      return true;
     } catch (err) {
       logger.error({ task_id: task.task_id, err }, 'Failed to publish status result');
+      return false;
     }
   }
 
@@ -534,4 +781,212 @@ export class EnrichmentPoller {
       logger.info('Enrichment poller stopped');
     }
   }
+}
+
+function classifyInboundEnvelope(task: Task, envelope: LarkInboundEnvelope): InboundClassificationResult {
+  const isThreadReply = envelope.message_id !== envelope.root_message_id;
+  const taskSource = { source: 'lark' as const, message_id: envelope.message_id };
+  const baseTask = {
+    ...task,
+    task_source: taskSource,
+  };
+
+  if (!envelope.is_normalizable) {
+    return {
+      kind: 'rejected',
+      task: { ...baseTask, task_type: isThreadReply ? THREAD_REPLY_TASK_TYPE : LARK_INBOUND_TASK_TYPE },
+      reason: isThreadReply ? formatThreadReplyHelpMessage() : ROOT_TASK_USAGE_HINT,
+    };
+  }
+
+  const normalizedText = envelope.normalized_text;
+  const trimmedText = normalizedText.trim();
+
+  if (!trimmedText.startsWith('/')) {
+    if (isThreadReply) {
+      return {
+        kind: 'accepted',
+        task: {
+          ...baseTask,
+          task_type: THREAD_REPLY_TASK_TYPE,
+          payload: normalizedText,
+          executor: undefined,
+          executor_model: undefined,
+        },
+        envelope,
+        shouldMaterializeRootState: false,
+      };
+    }
+
+    return {
+      kind: 'rejected',
+      task: { ...baseTask, task_type: LARK_INBOUND_TASK_TYPE },
+      reason: ROOT_TASK_USAGE_HINT,
+    };
+  }
+
+  if (trimmedText.startsWith('/task')) {
+    if (isThreadReply) {
+      const parsedType = parseTaskTypeHint(normalizedText);
+      return {
+        kind: 'rejected',
+        task: { ...baseTask, task_type: parsedType ?? LARK_INBOUND_TASK_TYPE },
+        reason: formatThreadTaskCommandRejectedMessage(),
+      };
+    }
+
+    const parsedTaskCommand = parseRootTaskCommand(normalizedText);
+    if (!parsedTaskCommand) {
+      return {
+        kind: 'rejected',
+        task: { ...baseTask, task_type: parseTaskTypeHint(normalizedText) ?? LARK_INBOUND_TASK_TYPE },
+        reason: ROOT_TASK_USAGE_HINT,
+      };
+    }
+
+    return {
+      kind: 'accepted',
+      task: {
+        ...baseTask,
+        task_type: parsedTaskCommand.taskType,
+        payload: parsedTaskCommand.payload,
+        executor: parsedTaskCommand.executor,
+        executor_model: parsedTaskCommand.executorModel,
+      },
+      envelope,
+      shouldMaterializeRootState: true,
+    };
+  }
+
+  if (trimmedText === '/status') {
+    return isThreadReply
+      ? {
+          kind: 'accepted',
+          task: { ...baseTask, task_type: STATUS_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
+          envelope,
+          shouldMaterializeRootState: false,
+        }
+      : {
+          kind: 'rejected',
+          task: { ...baseTask, task_type: STATUS_TASK_TYPE },
+          reason: formatThreadOnlyCommandMessage('/status'),
+        };
+  }
+
+  if (trimmedText === '/end') {
+    return isThreadReply
+      ? {
+          kind: 'accepted',
+          task: { ...baseTask, task_type: CLEANUP_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
+          envelope,
+          shouldMaterializeRootState: false,
+        }
+      : {
+          kind: 'rejected',
+          task: { ...baseTask, task_type: CLEANUP_TASK_TYPE },
+          reason: formatThreadOnlyCommandMessage('/end'),
+        };
+  }
+
+  const parsedNewInstance = parseNewInstanceCommand(trimmedText);
+  if (parsedNewInstance) {
+    return isThreadReply
+      ? {
+          kind: 'accepted',
+          task: {
+            ...baseTask,
+            task_type: NEW_INSTANCE_TASK_TYPE,
+            payload: '',
+            executor: parsedNewInstance.executor,
+            executor_model: parsedNewInstance.executorModel,
+          },
+          envelope,
+          shouldMaterializeRootState: false,
+        }
+      : {
+          kind: 'rejected',
+          task: { ...baseTask, task_type: NEW_INSTANCE_TASK_TYPE },
+          reason: formatThreadOnlyCommandMessage('/new'),
+        };
+  }
+
+  if (trimmedText.startsWith('/new')) {
+    return {
+      kind: 'rejected',
+      task: { ...baseTask, task_type: NEW_INSTANCE_TASK_TYPE },
+      reason: isThreadReply ? formatThreadReplyHelpMessage() : formatThreadOnlyCommandMessage('/new'),
+    };
+  }
+
+  if (trimmedText === '/gc') {
+    return isThreadReply
+      ? {
+          kind: 'rejected',
+          task: { ...baseTask, task_type: GC_TASK_TYPE },
+          reason: GC_THREAD_REJECTION_REASON,
+        }
+      : {
+          kind: 'accepted',
+          task: { ...baseTask, task_type: GC_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
+          envelope,
+          shouldMaterializeRootState: true,
+        };
+  }
+
+  return {
+    kind: 'rejected',
+    task: { ...baseTask, task_type: isThreadReply ? THREAD_REPLY_TASK_TYPE : LARK_INBOUND_TASK_TYPE },
+    reason: isThreadReply ? formatThreadReplyHelpMessage() : ROOT_TASK_USAGE_HINT,
+  };
+}
+
+function parseTaskTypeHint(normalizedText: string): string | null {
+  const firstLine = normalizedText.split('\n', 1)[0] ?? '';
+  const match = /^\/task\s+(\S+)/.exec(firstLine);
+  return match?.[1] ?? null;
+}
+
+function parseRootTaskCommand(normalizedText: string): {
+  taskType: string;
+  executor: string;
+  executorModel: string;
+  payload: string;
+} | null {
+  const [firstLine, ...restLines] = normalizedText.split('\n');
+  const match = /^\/task\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(firstLine ?? '');
+  if (!match) {
+    return null;
+  }
+
+  const [, taskType, executor, executorModel, firstPayloadLine] = match;
+  const payload = [firstPayloadLine, ...restLines].join('\n');
+  return { taskType, executor, executorModel, payload };
+}
+
+function parseNewInstanceCommand(trimmedText: string): {
+  executor?: string;
+  executorModel?: string;
+} | null {
+  const parts = trimmedText.split(/\s+/);
+  if (parts[0] !== '/new') {
+    return null;
+  }
+  if (parts.length === 1) {
+    return {};
+  }
+  if (parts.length === 3) {
+    return { executor: parts[1], executorModel: parts[2] };
+  }
+  return null;
+}
+
+function notThreadResult(): ThreadContextResult {
+  return {
+    kind: 'not_thread',
+    threadContext: null,
+    inheritedTaskType: null,
+    inheritedSessionId: null,
+    inheritedExecutor: null,
+    inheritedExecutorModel: null,
+  };
 }

@@ -1,6 +1,16 @@
 import { asc, eq, sql } from 'drizzle-orm';
 import type { LibSQLDatabase } from 'drizzle-orm/libsql';
+import type { LarkInboundEnvelope } from '../types';
 import { larkMessagesTable, larkThreadsTable, type SqliteSchema } from './schema';
+
+const DEFAULT_AUDIT_ONLY_TASK_TYPE = 'unknown';
+const DEFAULT_AUDIT_ONLY_STATUS = 'audit_only';
+const DEFAULT_EXECUTOR = 'claude';
+const DEFAULT_EXECUTOR_MODEL = 'sonnet';
+
+export interface RecordInboundAuditMessageParams {
+  envelope: LarkInboundEnvelope;
+}
 
 export interface UpsertInboundLarkMessageParams {
   rootMessageId: string;
@@ -104,55 +114,132 @@ export class LarkHistoryRepository {
   constructor(private readonly db: LibSQLDatabase<SqliteSchema>) {}
 
   async upsertInboundLarkMessage(params: UpsertInboundLarkMessageParams): Promise<void> {
-    await this.db
-      .insert(larkThreadsTable)
-      .values({
-        rootMessageId: params.rootMessageId,
-        threadId: params.threadId,
-        sessionId: params.sessionId,
-        source: params.source,
-        chatType: params.chatType,
-        taskType: params.taskType,
-        executor: params.executor,
-        executorModel: params.executorModel,
-        status: params.status,
-        createdAtMs: params.threadCreatedAtMs,
-        updatedAtMs: params.threadUpdatedAtMs,
-        endedAtMs: null,
-      })
-      .onConflictDoUpdate({
-        target: larkThreadsTable.rootMessageId,
-        set: {
-          threadId: sql`COALESCE(excluded.thread_id, ${larkThreadsTable.threadId})`,
-          sessionId: params.sessionId,
-          source: params.source,
-          chatType: sql`COALESCE(excluded.chat_type, ${larkThreadsTable.chatType})`,
-          taskType: params.taskType,
-          executor: params.executor,
-          executorModel: params.executorModel,
-          status: params.status,
-          updatedAtMs: params.threadUpdatedAtMs,
+    const metadata = this.parseMetadata(params.message.metadataJson);
+    const envelope = {
+      platform: 'lark' as const,
+      schema_version: 1 as const,
+      message_id: params.message.messageId,
+      root_message_id: params.rootMessageId,
+      thread_id: params.threadId,
+      chat_type: params.chatType ?? 'unknown',
+      sender_open_id:
+        typeof metadata.sender_open_id === 'string' && metadata.sender_open_id.length > 0
+          ? metadata.sender_open_id
+          : 'unknown',
+      sender_type: 'user',
+      message_type: params.message.messageType,
+      raw_content: params.message.rawContent,
+      mentions: Array.isArray(metadata.mentions)
+        ? metadata.mentions.filter((entry): entry is { key: string; name: string; open_id: string } => {
+            if (!this.isObject(entry)) {
+              return false;
+            }
+            return (
+              typeof entry.key === 'string' &&
+              typeof entry.name === 'string' &&
+              typeof entry.open_id === 'string'
+            );
+          })
+        : [],
+      occurred_at_ms: params.message.createdAtMs,
+      ...(params.message.normalizedText !== null
+        ? {
+            is_normalizable: true as const,
+            normalized_text: params.message.normalizedText,
+          }
+        : { is_normalizable: false as const }),
+    };
+
+    await this.recordInboundAuditMessage({ envelope });
+    await this.upsertLarkThreadState({
+      rootMessageId: params.rootMessageId,
+      threadId: params.threadId,
+      sessionId: params.sessionId,
+      source: params.source,
+      chatType: params.chatType,
+      taskType: params.taskType,
+      executor: params.executor,
+      executorModel: params.executorModel,
+      status: params.status,
+      createdAtMs: params.threadCreatedAtMs,
+      updatedAtMs: params.threadUpdatedAtMs,
+      endedAtMs: null,
+    });
+
+    if (params.message.metadataJson !== null) {
+      await this.db
+        .update(larkMessagesTable)
+        .set({ metadataJson: params.message.metadataJson })
+        .where(eq(larkMessagesTable.messageId, params.message.messageId));
+    }
+  }
+
+  async recordInboundAuditMessage(params: RecordInboundAuditMessageParams): Promise<boolean> {
+    const { envelope } = params;
+    const metadataJson = JSON.stringify({
+      platform: envelope.platform,
+      schema_version: envelope.schema_version,
+      sender_open_id: envelope.sender_open_id,
+      mentions: envelope.mentions,
+    });
+
+    return this.db.transaction(async (tx) => {
+      const existingMessage = await tx
+        .select({ messageId: larkMessagesTable.messageId })
+        .from(larkMessagesTable)
+        .where(eq(larkMessagesTable.messageId, envelope.message_id))
+        .get();
+
+      if (existingMessage) {
+        return false;
+      }
+
+      await tx
+        .insert(larkThreadsTable)
+        .values({
+          rootMessageId: envelope.root_message_id,
+          threadId: envelope.thread_id ?? null,
+          sessionId: envelope.root_message_id,
+          source: 'lark',
+          chatType: envelope.chat_type,
+          taskType: DEFAULT_AUDIT_ONLY_TASK_TYPE,
+          executor: DEFAULT_EXECUTOR,
+          executorModel: DEFAULT_EXECUTOR_MODEL,
+          status: DEFAULT_AUDIT_ONLY_STATUS,
+          createdAtMs: envelope.occurred_at_ms,
+          updatedAtMs: envelope.occurred_at_ms,
           endedAtMs: null,
-        },
+        })
+        .onConflictDoUpdate({
+          target: larkThreadsTable.rootMessageId,
+          set: {
+            threadId: sql`COALESCE(excluded.thread_id, ${larkThreadsTable.threadId})`,
+            chatType: sql`COALESCE(excluded.chat_type, ${larkThreadsTable.chatType})`,
+            updatedAtMs: sql`CASE
+              WHEN ${larkThreadsTable.status} = ${DEFAULT_AUDIT_ONLY_STATUS}
+                THEN MAX(${larkThreadsTable.updatedAtMs}, excluded.updated_at_ms)
+              ELSE ${larkThreadsTable.updatedAtMs}
+            END`,
+          },
+        });
+
+      await tx.insert(larkMessagesTable).values({
+        messageId: envelope.message_id,
+        source: 'lark',
+        rootMessageId: envelope.root_message_id,
+        sessionId: envelope.root_message_id,
+        threadId: envelope.thread_id ?? null,
+        direction: 'inbound',
+        senderType: envelope.sender_type,
+        messageType: envelope.message_type,
+        rawContent: envelope.raw_content,
+        normalizedText: envelope.is_normalizable ? envelope.normalized_text : null,
+        metadataJson,
+        createdAtMs: envelope.occurred_at_ms,
       });
 
-    await this.db
-      .insert(larkMessagesTable)
-      .values({
-        messageId: params.message.messageId,
-        source: params.source,
-        rootMessageId: params.rootMessageId,
-        sessionId: params.sessionId,
-        threadId: params.threadId,
-        direction: 'inbound',
-        senderType: 'user',
-        messageType: params.message.messageType,
-        rawContent: params.message.rawContent,
-        normalizedText: params.message.normalizedText,
-        metadataJson: params.message.metadataJson,
-        createdAtMs: params.message.createdAtMs,
-      })
-      .onConflictDoNothing({ target: larkMessagesTable.messageId });
+      return true;
+    });
   }
 
   async recordOutboundLarkMessage(params: RecordOutboundLarkMessageParams): Promise<void> {
