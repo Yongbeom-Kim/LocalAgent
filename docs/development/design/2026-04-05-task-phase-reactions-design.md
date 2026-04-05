@@ -216,30 +216,25 @@ Design note:
 - `completed` is emitted for both success and failure terminal results. The outcome itself remains in the existing result payload.
 - Lark reaction cleanup must not depend on the `completed` event arriving “before” the reply (see terminal flow), because phase consumption is asynchronous and may lag.
 
-### 3. A new task-phase exchange and API routes
+### 3. Generalize the existing results exchange and routes into a task-event transport
 
-Add a dedicated fanout exchange for task-phase events, similar to the existing results flow.
+Refactor the existing results fanout exchange/queue flow into a generalized task-event transport instead of introducing a parallel phase-specific stream.
 
 Recommended topology:
 
-- exchange: `task-phases` (fanout, durable)
-- queue: `lark-task-phases`
-- future queues can be added later for Telegram or UI consumers
+- reuse the existing `results` fanout exchange as the transport for both terminal result events and intermediate phase events;
+- reuse the existing Lark-bound consumer queue rather than creating a separate `lark-task-phases` queue;
+- future consumers can subscribe to the same transport and branch on event kind.
 
-API additions:
+API changes:
 
-- `POST /task-phases`
-  - validates a `TaskPhaseEventSubmission`
-  - adds `event_id` and `emitted_at`
-  - publishes to the `task-phases` exchange
-- `GET /task-phases/next/:queueName`
-  - returns the next `TaskPhaseEvent` from a bound queue
-- `POST /task-phases/:queueName/:id/ack`
-  - acknowledges the phase event delivery
+- refactor the existing `/results` publish/poll/ack contract so it carries a discriminated `TaskEvent` union rather than only terminal `TaskResult` payloads;
+- phase emitters publish `TaskPhaseEventSubmission` through that existing transport;
+- consumers poll the same queue and branch on `event_kind` (`phase` vs `result`).
 
-This deliberately mirrors the existing `/results` API so the new feature feels like an extension of an established pattern rather than a special case.
+This deliberately reuses the existing results transport so phase updates become part of the same task-lifecycle event backbone instead of creating a second parallel pipeline.
 
-`TaskPhaseEventSubmission` (V1) is the event payload without server-assigned fields:
+`TaskPhaseEventSubmission` (V1) is the phase-event payload without server-assigned fields. It is carried inside the generalized results transport as `event_kind: "phase"`:
 
 ```ts
 export interface TaskPhaseEventSubmission {
@@ -260,7 +255,9 @@ export interface TaskPhaseEventSubmission {
 
 ### 4. Lark-specific phase consumer
 
-Add a new consumer inside the Lark side of the system that polls the `lark-task-phases` queue and applies reactions.
+Add a new consumer path inside the Lark side of the system that reads phase events from the existing Lark-bound results queue and applies reactions.
+
+Refactor the existing Lark result consumer so it reads the generalized task-event stream from the existing Lark queue and applies either phase reactions or final replies based on `event_kind`.
 
 Two viable placements were considered:
 
@@ -277,8 +274,9 @@ Why:
 
 Suggested internal split:
 
-- `task-phase-poller.ts`
-  - polls `/task-phases/next/lark-task-phases`
+- `lark-poller.ts`
+  - continues polling the existing Lark queue from `/results/next/:queueName`
+  - dispatches `phase` events to a phase notifier and `result` events to the existing final notifier
   - ACKs deliveries after processing
 - `adapters/lark-phase-notifier.ts`
   - maps `TaskPhaseEvent` to reaction behavior
@@ -370,7 +368,7 @@ Updated terminal flow for Lark-sourced tasks:
 
 Separately (best-effort):
 
-- `task-daemon` emits `completed` when publishing the final result so other (future) consumers can react, and so the Lark phase poller can converge if it was behind.
+- `task-daemon` emits `completed` into the same generalized results transport when publishing the final result so other (future) consumers can react, and so the Lark consumer can converge if it was behind.
 
 Implementation note:
 
@@ -400,7 +398,7 @@ Expected guarantees:
 
 Recommended simple guard:
 
-V1 scope: rely on idempotent “remove bot phase reaction then add current” semantics, plus a small in-memory guard (per `task_source.message_id`) inside the phase poller to ignore obvious regressions within a short TTL window.
+V1 scope: rely on idempotent “remove bot phase reaction then add current” semantics, plus a small in-memory guard (per `task_source.message_id`) inside the refactored Lark poller to ignore obvious regressions within a short TTL window.
 
 If flicker becomes a real problem, upgrade to a persisted monotonic guard using the `metadataJson` structure above (or a dedicated DB field) in a follow-up iteration.
 
@@ -413,14 +411,14 @@ This is lightweight insurance against duplicate or delayed deliveries without ne
 | `packages/shared/src/types.ts` | Add shared phase constants/types and phase event interfaces |
 | `packages/shared/src/constants.ts` | Add queue/exchange constants for task phases |
 | `packages/shared/src/index.ts` | Export new shared phase types/constants |
-| `packages/api/src/services/rabbitmq.ts` | Assert task-phase exchange/queue topology and support queue polling/ACK |
-| `packages/api/src/routes/task-phases.ts` | New API routes for phase event publish/poll/ack |
-| `packages/api/src/app.ts` | Register the new task-phase routes |
-| `packages/api/src/__tests__/routes/*.test.ts` | Route coverage for task-phase endpoints |
+| `packages/api/src/services/rabbitmq.ts` | Refactor the existing results exchange/queue contract so it carries discriminated task events while preserving current queue ownership and polling/ACK behavior |
+| `packages/api/src/routes/results.ts` | Generalize the existing results route contract from terminal results to discriminated task events |
+| `packages/api/src/app.ts` | Keep the existing results route wired while its contract is generalized |
+| `packages/api/src/__tests__/routes/results.test.ts` | Route coverage for generalized task-event publish/poll/ack behavior |
 | `packages/daemon/lark-listener/src/message-handler.ts` | Emit `received` phase after successful submission and remove the direct `OnIt` reaction side-effect |
 | `packages/daemon/task-enrichment/src/enrichment-poller.ts` | Emit `enriching`, `queued`, and `completed` on rejection |
 | `packages/daemon/task/src/task-poller.ts` | Emit `executing` before orchestration |
-| `packages/daemon/lark-result/src/*` | Add phase poller + notifier and update final reply cleanup to clear only bot-owned phase reactions |
+| `packages/daemon/lark-result/src/*` | Refactor the existing Lark result poller to handle both phase and terminal events, plus update final reply cleanup to clear only bot-owned phase reactions |
 | `packages/shared/src/db/lark-history-repository.ts` | Record phase reaction metadata (`phase_reactions.last` and bounded `phase_reactions.attempts`) in `metadataJson` |
 | `packages/shared/src/db/schema.ts` and migrator files | No DB schema changes required for V1 (avoid persisted monotonic guard) |
 
@@ -447,7 +445,7 @@ This is lightweight insurance against duplicate or delayed deliveries without ne
 ### Unit tests
 
 - shared type validation and helper tests for phase names/order
-- API route tests for `POST /task-phases`, `GET /task-phases/next/:queue`, and ACK behavior
+- API route tests for generalized `/results` task-event publish/poll/ack behavior
 - emitter tests in listener/enrichment/task pollers asserting the right phase is published at the right point
 - Lark phase notifier tests for:
   - adding the correct reaction per phase
@@ -460,6 +458,10 @@ This is lightweight insurance against duplicate or delayed deliveries without ne
 
 - a Lark task that is accepted, enriched, queued, executed, and completed produces the expected sequence of phase publish calls
 - an enrichment rejection emits `completed` cleanup and still posts the normal rejection reply
+
+## Transport Refactor Note
+
+The review feedback requested reuse of the existing result exchange/queue rather than introducing a second task-phase stream. This design therefore treats phase updates as another task-lifecycle event carried by the refactored results transport. A later cleanup can rename the route/exchange from `results` to something more neutral, such as `task-events`, if the team wants semantics to match the broader payload contract.
 
 ## Open Implementation Choices Intentionally Deferred
 

@@ -2,7 +2,7 @@
 
 **Goal:** Add an extensible task-phase event model and implement Lark intermediate reactions for `received`, `enriching`, `queued`, and `executing`, with reaction cleanup on `completed` and no final-state reaction.
 
-**Architecture:** Introduce a shared task-phase contract and a new API-managed `task-phases` fanout exchange. Existing daemons emit channel-agnostic phase events at the lifecycle boundaries they already own, and a Lark-specific consumer inside the Lark result package maps those events to a single current reaction per thread message while persisting best-effort observability metadata.
+**Architecture:** Introduce a shared task-phase contract and carry phase updates through a generalized version of the existing results transport rather than a second exchange/queue flow. Existing daemons emit channel-agnostic phase events at the lifecycle boundaries they already own, and the refactored Lark result consumer maps phase events to a single current reaction per thread message while still handling terminal result replies and persisting best-effort observability metadata.
 
 **Tech Stack:** TypeScript, Express, amqplib, Vitest, Drizzle/SQLite, existing LocalAgent daemon packages.
 
@@ -13,19 +13,19 @@
 | File | Responsibility |
 |------|----------------|
 | `packages/shared/src/types.ts` | Shared phase constants, ordering helpers, and task-phase event interfaces |
-| `packages/shared/src/constants.ts` | Queue and exchange names for task-phase fanout |
+| `packages/shared/src/constants.ts` | Shared event-kind/constants updates for the generalized task-event transport |
 | `packages/shared/src/index.ts` | Export the new phase symbols |
-| `packages/api/src/services/rabbitmq.ts` | Declare task-phase exchange/queue topology and support delivery tracking for task-phase queues |
-| `packages/api/src/routes/task-phases.ts` | Publish, poll, and ACK task-phase events |
-| `packages/api/src/app.ts` | Register task-phase routes |
-| `packages/api/src/__tests__/routes/task-phases.test.ts` | Route coverage for task-phase APIs |
+| `packages/api/src/services/rabbitmq.ts` | Generalize the existing results exchange/queue contract so it carries discriminated task events while preserving delivery tracking |
+| `packages/api/src/routes/results.ts` | Publish, poll, and ACK generalized task events on the existing results route |
+| `packages/api/src/app.ts` | Keep the existing results route wired while its payload contract is generalized |
+| `packages/api/src/__tests__/routes/results.test.ts` | Route coverage for generalized task-event APIs |
 | `packages/daemon/lark-listener/src/message-handler.ts` | Emit `received` phase after accepted task submission |
 | `packages/daemon/lark-listener/src/__tests__/message-handler.test.ts` | Assert `received` phase publication |
 | `packages/daemon/task-enrichment/src/enrichment-poller.ts` | Emit `enriching`, `queued`, and terminal cleanup phase for rejections |
 | `packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts` | Assert phase emission sequencing |
 | `packages/daemon/task/src/task-poller.ts` | Emit `executing` after immediate ACK and before orchestration |
 | `packages/daemon/task/src/__tests__/task-poller.test.ts` | Assert `executing` emission ordering |
-| `packages/daemon/lark-result/src/task-phase-poller.ts` | Poll task-phase events for Lark |
+| `packages/daemon/lark-result/src/lark-poller.ts` | Poll generalized task events for Lark and dispatch by event kind |
 | `packages/daemon/lark-result/src/adapters/lark-phase-notifier.ts` | Translate phases to reactions and cleanup |
 | `packages/daemon/lark-result/src/adapters/lark-notifier.ts` | Reuse shared cleanup helper and keep final reply text behavior |
 | `packages/daemon/lark-result/src/__tests__/lark-phase-notifier.test.ts` | Verify reaction mapping and cleanup behavior |
@@ -80,11 +80,10 @@ Spec alignment requirement (must-do):
 - `TaskPhaseEvent` must include server-assigned `event_id` and `emitted_at`.
 - `metadata.emitted_by` must be constrained to `'lark-listener' | 'task-enrichment' | 'task-daemon'`.
 
-In `packages/shared/src/constants.ts`, add:
+In `packages/shared/src/constants.ts`, add only the shared symbols needed for generalized task-event handling:
 
 ```ts
-export const DEFAULT_TASK_PHASES_EXCHANGE_NAME = 'task-phases';
-export const DEFAULT_LARK_TASK_PHASES_QUEUE_NAME = 'lark-task-phases';
+export const TASK_EVENT_KINDS = ['result', 'phase'] as const;
 ```
 
 Export the new symbols from `packages/shared/src/index.ts`.
@@ -98,82 +97,82 @@ Expected: shared task-phase tests pass.
 
 ```bash
 git add packages/shared/src/types.ts packages/shared/src/constants.ts packages/shared/src/index.ts packages/shared/src/__tests__/types.test.ts
-git commit -m "feat(shared): add task phase event contract"
+git commit -m "feat(shared): add task event contract"
 ```
 
-### Task 2: Expose API support for task-phase publish, poll, and ACK
+### Task 2: Generalize the existing results API to carry task events
 
 **Files:**
 - Modify: `packages/api/src/services/rabbitmq.ts`
-- Add: `packages/api/src/routes/task-phases.ts`
+- Modify: `packages/api/src/routes/results.ts`
 - Modify: `packages/api/src/app.ts`
-- Add: `packages/api/src/__tests__/routes/task-phases.test.ts`
+- Modify: `packages/api/src/__tests__/routes/results.test.ts`
 
-- [ ] **Step 1: Write failing API route tests for task-phase endpoints**
+- [ ] **Step 1: Write failing API route tests for generalized task-event payloads**
 
-Create `packages/api/src/__tests__/routes/task-phases.test.ts` with tests like:
+Update `packages/api/src/__tests__/routes/results.test.ts` with tests like:
 
 ```ts
-it('returns 201 when a valid task phase event is published', async () => {
-  // POST /task-phases
+it('returns 201 when a valid phase task event is published', async () => {
+  // POST /results with event_kind: phase
   // Assert response includes server-assigned `event_id` + `emitted_at`.
 });
 
 it('returns 400 for an invalid phase value', async () => {
-  // POST /task-phases with phase: invalid
+  // POST /results with event_kind: phase and invalid phase
 });
 
-it('returns 200 with the next task phase event from a queue', async () => {
-  // GET /task-phases/next/lark-task-phases
+it('returns 200 with the next task event from the lark queue', async () => {
+  // GET /results/next/lark-messages
 });
 
-it('returns 404 when acking an unknown task phase delivery', async () => {
-  // POST /task-phases/:queue/:id/ack
+it('returns 404 when acking an unknown task event delivery', async () => {
+  // POST /results/:queue/:id/ack
 });
 ```
 
 - [ ] **Step 2: Run the API route tests to verify failure**
 
-Run: `npm test --prefix packages/api -- src/__tests__/routes/task-phases.test.ts`
-Expected: tests fail because the route does not exist.
+Run: `npm test --prefix packages/api -- src/__tests__/routes/results.test.ts`
+Expected: the new phase-event cases fail because the current results route only accepts terminal result payloads.
 
-- [ ] **Step 3: Add task-phase topology and queue helpers in `RabbitMQService`**
+- [ ] **Step 3: Generalize result transport types and queue helpers in `RabbitMQService`**
 
 Update `packages/api/src/services/rabbitmq.ts` to:
 
-- assert `DEFAULT_TASK_PHASES_EXCHANGE_NAME`
-- assert and bind `DEFAULT_LARK_TASK_PHASES_QUEUE_NAME`
-- reuse the existing queue delivery map pattern for task-phase events
+- reuse the existing `results` exchange and bound queues instead of asserting a second phase-specific topology
+- generalize the publish/get helpers from terminal `TaskResult` payloads to a discriminated `TaskEvent` union
+- reuse the existing queue delivery map pattern for both `phase` and `result` events
 
-No new RabbitMQ access pattern is needed; follow the existing `/results` design closely.
+No new RabbitMQ access pattern is needed; extend the current `/results` transport in place.
 
-- [ ] **Step 4: Implement `task-phases` routes**
+- [ ] **Step 4: Generalize `results` routes**
 
-Create `packages/api/src/routes/task-phases.ts` with:
+Update `packages/api/src/routes/results.ts` so:
 
-- `POST /task-phases`
-- `GET /task-phases/next/:queueName`
-- `POST /task-phases/:queueName/:id/ack`
+- `POST /results` accepts both `event_kind: 'result'` and `event_kind: 'phase'`
+- `GET /results/next/:queueName` returns either kind of task event from the queue
+- `POST /results/:queueName/:id/ack` continues to ACK the queue delivery
 
-Use the existing results route behavior as the template, including `RabbitMQUnavailableError` handling.
+Keep the existing terminal result behavior intact while widening validation and serialization for phase events. Preserve `RabbitMQUnavailableError` handling.
 
 Contract requirement (from design spec):
 
-- `POST /task-phases` must accept a `TaskPhaseEventSubmission` and respond with a full `TaskPhaseEvent`.
-- The API must assign `event_id` and `emitted_at` (do not require emitters to generate them).
+- `POST /results` must accept `TaskPhaseEventSubmission` when `event_kind: 'phase'` and respond with a full `TaskPhaseEvent`.
+- The API must assign `event_id` and `emitted_at` for phase events (do not require emitters to generate them).
 
-- [ ] **Step 5: Register the route and run the API tests**
+- [ ] **Step 5: Run the API tests**
 
-Register the new router in `packages/api/src/app.ts`.
+Keep `packages/api/src/app.ts` pointing at the same results router.
 
-Run: `npm test --prefix packages/api -- src/__tests__/routes/task-phases.test.ts`
-Expected: task-phase route tests pass.
+Run: `npm test --prefix packages/api -- src/__tests__/routes/results.test.ts`
+Expected: results route tests pass for both terminal and phase event payloads.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/api/src/services/rabbitmq.ts packages/api/src/routes/task-phases.ts packages/api/src/app.ts packages/api/src/__tests__/routes/task-phases.test.ts
-git commit -m "feat(api): add task phase event routes"
+git add packages/api/src/services/rabbitmq.ts packages/api/src/routes/results.ts packages/api/src/app.ts packages/api/src/__tests__/routes/results.test.ts
+git commit -m "feat(api): generalize results transport for task events"
 ```
 
 ### Task 3: Emit `received` from the Lark listener
@@ -202,7 +201,7 @@ Expected: new test fails because no phase publisher exists.
 
 - [ ] **Step 3: Add a small task-phase publisher adapter and wire `received` emission**
 
-Introduce a simple HTTP adapter alongside the existing submitter that posts to `/task-phases`.
+Introduce a simple HTTP adapter alongside the existing submitter that posts phase events to `/results` with `event_kind: 'phase'`.
 
 In `message-handler.ts`:
 
@@ -331,7 +330,7 @@ git commit -m "feat(task-daemon): emit executing task phase"
 ### Task 6: Build the Lark phase consumer and reaction mapper
 
 **Files:**
-- Add: `packages/daemon/lark-result/src/task-phase-poller.ts`
+- Modify: `packages/daemon/lark-result/src/lark-poller.ts`
 - Add: `packages/daemon/lark-result/src/adapters/lark-phase-notifier.ts`
 - Add: `packages/daemon/lark-result/src/phase-reaction-mapper.ts`
 - Modify: `packages/daemon/lark-result/src/index.ts`
@@ -395,11 +394,12 @@ If the current Lark API wrapper does not expose enough information to identify t
 
 - [ ] **Step 4: Add the poller and wire it into the daemon entrypoint**
 
-Create `task-phase-poller.ts` mirroring the existing result poller:
+Refactor `lark-poller.ts` so it continues consuming the existing Lark queue but branches by event kind:
 
-- `GET /task-phases/next/lark-task-phases`
-- call notifier
-- `POST /task-phases/lark-task-phases/:id/ack`
+- `GET /results/next/lark-messages`
+- dispatch `event_kind: 'phase'` to `lark-phase-notifier`
+- dispatch `event_kind: 'result'` to the existing final notifier
+- `POST /results/lark-messages/:id/ack`
 
 Ordering/idempotency guard (recommended in design spec):
 
@@ -421,8 +421,8 @@ Expected: phase notifier tests pass and existing notifier tests still pass.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add packages/daemon/lark-result/src/task-phase-poller.ts packages/daemon/lark-result/src/adapters/lark-phase-notifier.ts packages/daemon/lark-result/src/phase-reaction-mapper.ts packages/daemon/lark-result/src/index.ts packages/daemon/lark-result/src/__tests__/lark-phase-notifier.test.ts packages/daemon/lark-result/src/adapters/lark-notifier.ts
-git commit -m "feat(lark-result): apply reactions from task phase events"
+git add packages/daemon/lark-result/src/lark-poller.ts packages/daemon/lark-result/src/adapters/lark-phase-notifier.ts packages/daemon/lark-result/src/phase-reaction-mapper.ts packages/daemon/lark-result/src/index.ts packages/daemon/lark-result/src/__tests__/lark-phase-notifier.test.ts packages/daemon/lark-result/src/adapters/lark-notifier.ts
+git commit -m "feat(lark-result): handle phase events on the existing lark queue"
 ```
 
 ### Task 7: Persist phase-reaction observability metadata
@@ -527,7 +527,7 @@ Expected: terminal phase cleanup behavior passes and no final reaction remains.
 
 ```bash
 git add packages/daemon/task/src/task-poller.ts packages/daemon/lark-result/src/adapters/lark-notifier.ts packages/daemon/task/src/__tests__/task-poller.test.ts packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts
-git commit -m "feat(task-phases): clear intermediate reactions on completion"
+git commit -m "feat(lark): clear intermediate phase reactions on completion"
 ```
 
 ### Task 9: Run the package test suites that cover the full feature surface
@@ -561,5 +561,5 @@ Stay within the agreed design:
 
 ```bash
 git add .
-git commit -m "test(task-phases): verify lark reaction phase flow"
+git commit -m "test(lark): verify task phase reaction flow"
 ```
