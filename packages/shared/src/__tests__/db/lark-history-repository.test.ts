@@ -487,6 +487,120 @@ describe('LarkHistoryRepository', () => {
       client.close();
     }
   });
+
+  it('returns stale session ids older than the cutoff regardless of status', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({
+      dbPath: join(tempDir, 'history.sqlite'),
+    });
+
+    try {
+      await bootstrapLarkTables(client.connection);
+      const repository = new LarkHistoryRepository(client.db);
+
+      await repository.upsertLarkThreadState({
+        rootMessageId: 'om_root_stale_active',
+        threadId: 'omt_stale_active',
+        sessionId: 'session_stale_active',
+        source: 'lark',
+        chatType: 'group',
+        taskType: 'generic',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        createdAtMs: 100,
+        updatedAtMs: 100,
+        endedAtMs: null,
+      });
+
+      await repository.upsertLarkThreadState({
+        rootMessageId: 'om_root_stale_ended',
+        threadId: 'omt_stale_ended',
+        sessionId: 'session_stale_ended',
+        source: 'lark',
+        chatType: 'group',
+        taskType: 'cleanup',
+        executor: 'builtin',
+        executorModel: 'none',
+        status: 'ended',
+        createdAtMs: 150,
+        updatedAtMs: 150,
+        endedAtMs: 150,
+      });
+
+      await repository.upsertLarkThreadState({
+        rootMessageId: 'om_root_fresh_active',
+        threadId: 'omt_fresh_active',
+        sessionId: 'session_fresh_active',
+        source: 'lark',
+        chatType: 'group',
+        taskType: 'generic',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        createdAtMs: 300,
+        updatedAtMs: 300,
+        endedAtMs: null,
+      });
+
+      await expect(repository.getStaleLarkSessionIdsBeforeUpdatedAt(200)).resolves.toEqual([
+        'session_stale_active',
+        'session_stale_ended',
+      ]);
+    } finally {
+      client.close();
+    }
+  });
+
+  it('returns an empty list when no thread rows are older than the cutoff', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-lark-history-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({
+      dbPath: join(tempDir, 'history.sqlite'),
+    });
+
+    try {
+      await bootstrapLarkTables(client.connection);
+      const repository = new LarkHistoryRepository(client.db);
+
+      await repository.upsertLarkThreadState({
+        rootMessageId: 'om_root_fresh_1',
+        threadId: 'omt_fresh_1',
+        sessionId: 'session_fresh_1',
+        source: 'lark',
+        chatType: 'group',
+        taskType: 'generic',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        createdAtMs: 500,
+        updatedAtMs: 500,
+        endedAtMs: null,
+      });
+
+      await repository.upsertLarkThreadState({
+        rootMessageId: 'om_root_fresh_2',
+        threadId: 'omt_fresh_2',
+        sessionId: 'session_fresh_2',
+        source: 'lark',
+        chatType: 'group',
+        taskType: 'cleanup',
+        executor: 'builtin',
+        executorModel: 'none',
+        status: 'ended',
+        createdAtMs: 600,
+        updatedAtMs: 600,
+        endedAtMs: 600,
+      });
+
+      await expect(repository.getStaleLarkSessionIdsBeforeUpdatedAt(400)).resolves.toEqual([]);
+    } finally {
+      client.close();
+    }
+  });
 });
 
 async function bootstrapLarkTables(connection: Awaited<ReturnType<typeof createSqliteClient>>['connection']): Promise<void> {

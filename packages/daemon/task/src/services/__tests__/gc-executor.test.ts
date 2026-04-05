@@ -47,7 +47,7 @@ describe('GcExecutor', () => {
   let executor: GcExecutor;
 
   beforeEach(() => {
-    executor = new GcExecutor();
+    executor = new GcExecutor(vi.fn().mockResolvedValue([]), vi.fn().mockResolvedValue(undefined));
     rmSync(TEST_SESSION_BASE_DIR, { recursive: true, force: true });
   });
 
@@ -65,7 +65,7 @@ describe('GcExecutor', () => {
       task_type: 'gc',
       status: 'success',
       exit_code: 0,
-      stdout: 'GC complete: no session directories found.',
+      stdout: 'GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).',
       stderr: '',
     });
   });
@@ -75,7 +75,7 @@ describe('GcExecutor', () => {
 
     const result = await executor.execute(createJob());
 
-    expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 0.');
+    expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).');
   });
 
   it('removes stale directories', async () => {
@@ -84,7 +84,7 @@ describe('GcExecutor', () => {
 
     const result = await executor.execute(createJob());
 
-    expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
+    expect(result.stdout).toBe('GC complete: removed 1 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).');
     expect(() => rmSync(staleDir, { recursive: true, force: true })).not.toThrow();
   });
 
@@ -94,7 +94,7 @@ describe('GcExecutor', () => {
 
     const result = await executor.execute(createJob());
 
-    expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 1.');
+    expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 1 session dir(s), deleted 0 DB session(s).');
   });
 
   it('handles mixed stale and fresh directories', async () => {
@@ -105,7 +105,7 @@ describe('GcExecutor', () => {
 
     const result = await executor.execute(createJob());
 
-    expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 1.');
+    expect(result.stdout).toBe('GC complete: removed 1 session dir(s), retained 1 session dir(s), deleted 0 DB session(s).');
   });
 
   it('propagates task_source when present', async () => {
@@ -122,7 +122,7 @@ describe('GcExecutor', () => {
 
     const result = await executor.execute(createJob());
 
-    expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 0.');
+    expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).');
   });
 
   describe('lock-aware GC', () => {
@@ -143,7 +143,7 @@ describe('GcExecutor', () => {
       const result = await executor.execute(createJob());
 
       // Locked session should be retained, not removed
-      expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 1.');
+      expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 1 session dir(s), deleted 0 DB session(s).');
     });
 
     it('removes a stale session directory with a dead PID lock file', async () => {
@@ -164,7 +164,7 @@ describe('GcExecutor', () => {
       const result = await executor.execute(createJob());
 
       // Stale lock (dead PID) should not protect the directory
-      expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
+      expect(result.stdout).toBe('GC complete: removed 1 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).');
     });
 
     it('removes a stale session directory with no lock file (normal age-based behavior unchanged)', async () => {
@@ -173,21 +173,49 @@ describe('GcExecutor', () => {
 
       const result = await executor.execute(createJob());
 
-      expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
+      expect(result.stdout).toBe('GC complete: removed 1 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).');
     });
   });
 
-  it('removes ended lark sqlite rows during gc safety-net cleanup', async () => {
-    const listEndedSessionIds = vi.fn().mockResolvedValue(['session-ended-1', 'session-ended-2']);
+  it('removes stale lark sqlite rows during gc cleanup even when no session directories exist', async () => {
+    const listStaleSessionIds = vi.fn().mockResolvedValue(['session-ended-1', 'session-active-1']);
     const deleteRowsBySessionId = vi.fn().mockResolvedValue(undefined);
-    const gcWithDbCleanup = new GcExecutor(listEndedSessionIds, deleteRowsBySessionId);
+    const gcWithDbCleanup = new GcExecutor(listStaleSessionIds, deleteRowsBySessionId);
 
     const result = await gcWithDbCleanup.execute(createJob());
 
-    expect(listEndedSessionIds).toHaveBeenCalledTimes(1);
+    expect(listStaleSessionIds).toHaveBeenCalledTimes(1);
+    expect(listStaleSessionIds).toHaveBeenCalledWith(expect.any(Number));
     expect(deleteRowsBySessionId).toHaveBeenCalledWith('session-ended-1');
-    expect(deleteRowsBySessionId).toHaveBeenCalledWith('session-ended-2');
-    expect(result.stdout).toBe('GC complete: no session directories found.');
+    expect(deleteRowsBySessionId).toHaveBeenCalledWith('session-active-1');
+    expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 2 DB session(s).');
+  });
+
+  it('passes the computed cutoff to stale db session lookup', async () => {
+    mkdirSync(TEST_SESSION_BASE_DIR, { recursive: true });
+    const dateNowSpy = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const listStaleSessionIds = vi.fn().mockResolvedValue([]);
+    const deleteRowsBySessionId = vi.fn().mockResolvedValue(undefined);
+    const gcWithDbCleanup = new GcExecutor(listStaleSessionIds, deleteRowsBySessionId);
+
+    await gcWithDbCleanup.execute(createJob());
+
+    expect(dateNowSpy).toHaveBeenCalled();
+    expect(listStaleSessionIds).toHaveBeenCalledWith(
+      1_000_000 - TEST_SESSION_DIR_TTL_DAYS * 24 * 60 * 60 * 1000,
+    );
+  });
+
+  it('increments the error count when stale db row deletion fails', async () => {
+    const listStaleSessionIds = vi.fn().mockResolvedValue(['session-ok', 'session-fail']);
+    const deleteRowsBySessionId = vi.fn()
+      .mockResolvedValueOnce(undefined)
+      .mockRejectedValueOnce(new Error('db delete failed'));
+    const gcWithDbCleanup = new GcExecutor(listStaleSessionIds, deleteRowsBySessionId);
+
+    const result = await gcWithDbCleanup.execute(createJob());
+
+    expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 1 DB session(s). Errors: 1.');
   });
 
 });

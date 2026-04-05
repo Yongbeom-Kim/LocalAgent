@@ -1,4 +1,4 @@
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, lt, sql } from 'drizzle-orm';
 import type { LibSQLDatabase } from 'drizzle-orm/libsql';
 import type { LarkInboundEnvelope } from '../types';
 import { larkMessagesTable, larkThreadsTable, type SqliteSchema } from './schema';
@@ -292,6 +292,17 @@ export class LarkHistoryRepository {
       .get();
 
     return row ?? null;
+  }
+
+  async getStaleLarkSessionIdsBeforeUpdatedAt(cutoffMs: number): Promise<string[]> {
+    const rows = await this.db
+      .select({ sessionId: larkThreadsTable.sessionId })
+      .from(larkThreadsTable)
+      .where(lt(larkThreadsTable.updatedAtMs, cutoffMs))
+      // Deterministic ordering for callers/tests; GC semantics don't depend on order.
+      .orderBy(asc(larkThreadsTable.updatedAtMs), asc(larkThreadsTable.sessionId));
+
+    return rows.map((row) => row.sessionId);
   }
 
   async getLarkThreadByRootMessageId(rootMessageId: string): Promise<LarkThreadRow | null> {
