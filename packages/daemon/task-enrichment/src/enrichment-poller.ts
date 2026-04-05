@@ -2,17 +2,19 @@ import {
   Task,
   JobSubmission,
   TaskPhase,
+  classifyLarkInboundEnvelope,
   createLogger,
+  GC_THREAD_REJECTION_REASON,
   generateSessionId,
-  formatThreadReplyHelpMessage,
   isControlTaskType,
   isValidLarkInboundEnvelope,
+  type LarkInboundClassificationResult,
   type LarkInboundEnvelope,
-  TASK_COMMAND_USAGE,
   formatThreadOnlyCommandMessage,
   formatThreadTaskCommandRejectedMessage,
   type TaskExecutorType,
   type LarkHistoryRepository,
+  ROOT_TASK_USAGE_HINT,
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
@@ -23,7 +25,6 @@ const CLEANUP_TASK_TYPE = 'cleanup';
 const GC_TASK_TYPE = 'gc';
 const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an inherited session_id from the thread root.';
 const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
-const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
 const STATUS_TASK_TYPE = 'status';
 const THREAD_REPLY_TASK_TYPE = 'thread_reply';
@@ -37,7 +38,6 @@ const THREAD_REPLY_INCOMPLETE_METADATA_REASON =
   'Cannot continue this thread because the inherited thread metadata is incomplete.';
 const STATUS_INCOMPLETE_METADATA_REASON =
   'Cannot check /status because the inherited thread metadata is incomplete.';
-const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end (in a thread)`;
 const LARK_INBOUND_TASK_TYPE = 'lark_inbound';
 const LARK_INBOUND_DECODE_FAILURE_REASON = 'Failed to decode inbound Lark message envelope.';
 
@@ -49,21 +49,11 @@ type LarkHistoryWriter = Pick<
 >;
 
 type InboundClassificationResult =
-  | {
-      kind: 'accepted';
-      task: Task;
-      envelope: LarkInboundEnvelope;
-      shouldMaterializeRootState: boolean;
-    }
+  | LarkInboundClassificationResult
   | {
       kind: 'duplicate';
       task: Task;
       envelope: LarkInboundEnvelope;
-    }
-  | {
-      kind: 'rejected';
-      task: Task;
-      reason: string;
     };
 
 type LegacyThreadContextResult = {
@@ -613,7 +603,7 @@ export class EnrichmentPoller {
       };
     }
 
-    return classifyInboundEnvelope(task, envelope);
+    return classifyLarkInboundEnvelope(task, envelope);
   }
 
   private async materializeRootThreadState(
@@ -781,203 +771,6 @@ export class EnrichmentPoller {
       logger.info('Enrichment poller stopped');
     }
   }
-}
-
-function classifyInboundEnvelope(task: Task, envelope: LarkInboundEnvelope): InboundClassificationResult {
-  const isThreadReply = envelope.message_id !== envelope.root_message_id;
-  const taskSource = { source: 'lark' as const, message_id: envelope.message_id };
-  const baseTask = {
-    ...task,
-    task_source: taskSource,
-  };
-
-  if (!envelope.is_normalizable) {
-    return {
-      kind: 'rejected',
-      task: { ...baseTask, task_type: isThreadReply ? THREAD_REPLY_TASK_TYPE : LARK_INBOUND_TASK_TYPE },
-      reason: isThreadReply ? formatThreadReplyHelpMessage() : ROOT_TASK_USAGE_HINT,
-    };
-  }
-
-  const normalizedText = envelope.normalized_text;
-  const trimmedText = normalizedText.trim();
-
-  if (!trimmedText.startsWith('/')) {
-    if (isThreadReply) {
-      return {
-        kind: 'accepted',
-        task: {
-          ...baseTask,
-          task_type: THREAD_REPLY_TASK_TYPE,
-          payload: normalizedText,
-          executor: undefined,
-          executor_model: undefined,
-        },
-        envelope,
-        shouldMaterializeRootState: false,
-      };
-    }
-
-    return {
-      kind: 'rejected',
-      task: { ...baseTask, task_type: LARK_INBOUND_TASK_TYPE },
-      reason: ROOT_TASK_USAGE_HINT,
-    };
-  }
-
-  if (trimmedText.startsWith('/task')) {
-    if (isThreadReply) {
-      const parsedType = parseTaskTypeHint(normalizedText);
-      return {
-        kind: 'rejected',
-        task: { ...baseTask, task_type: parsedType ?? LARK_INBOUND_TASK_TYPE },
-        reason: formatThreadTaskCommandRejectedMessage(),
-      };
-    }
-
-    const parsedTaskCommand = parseRootTaskCommand(normalizedText);
-    if (!parsedTaskCommand) {
-      return {
-        kind: 'rejected',
-        task: { ...baseTask, task_type: parseTaskTypeHint(normalizedText) ?? LARK_INBOUND_TASK_TYPE },
-        reason: ROOT_TASK_USAGE_HINT,
-      };
-    }
-
-    return {
-      kind: 'accepted',
-      task: {
-        ...baseTask,
-        task_type: parsedTaskCommand.taskType,
-        payload: parsedTaskCommand.payload,
-        executor: parsedTaskCommand.executor,
-        executor_model: parsedTaskCommand.executorModel,
-      },
-      envelope,
-      shouldMaterializeRootState: true,
-    };
-  }
-
-  if (trimmedText === '/status') {
-    return isThreadReply
-      ? {
-          kind: 'accepted',
-          task: { ...baseTask, task_type: STATUS_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
-          envelope,
-          shouldMaterializeRootState: false,
-        }
-      : {
-          kind: 'rejected',
-          task: { ...baseTask, task_type: STATUS_TASK_TYPE },
-          reason: formatThreadOnlyCommandMessage('/status'),
-        };
-  }
-
-  if (trimmedText === '/end') {
-    return isThreadReply
-      ? {
-          kind: 'accepted',
-          task: { ...baseTask, task_type: CLEANUP_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
-          envelope,
-          shouldMaterializeRootState: false,
-        }
-      : {
-          kind: 'rejected',
-          task: { ...baseTask, task_type: CLEANUP_TASK_TYPE },
-          reason: formatThreadOnlyCommandMessage('/end'),
-        };
-  }
-
-  const parsedNewInstance = parseNewInstanceCommand(trimmedText);
-  if (parsedNewInstance) {
-    return isThreadReply
-      ? {
-          kind: 'accepted',
-          task: {
-            ...baseTask,
-            task_type: NEW_INSTANCE_TASK_TYPE,
-            payload: '',
-            executor: parsedNewInstance.executor,
-            executor_model: parsedNewInstance.executorModel,
-          },
-          envelope,
-          shouldMaterializeRootState: false,
-        }
-      : {
-          kind: 'rejected',
-          task: { ...baseTask, task_type: NEW_INSTANCE_TASK_TYPE },
-          reason: formatThreadOnlyCommandMessage('/new'),
-        };
-  }
-
-  if (trimmedText.startsWith('/new')) {
-    return {
-      kind: 'rejected',
-      task: { ...baseTask, task_type: NEW_INSTANCE_TASK_TYPE },
-      reason: isThreadReply ? formatThreadReplyHelpMessage() : formatThreadOnlyCommandMessage('/new'),
-    };
-  }
-
-  if (trimmedText === '/gc') {
-    return isThreadReply
-      ? {
-          kind: 'rejected',
-          task: { ...baseTask, task_type: GC_TASK_TYPE },
-          reason: GC_THREAD_REJECTION_REASON,
-        }
-      : {
-          kind: 'accepted',
-          task: { ...baseTask, task_type: GC_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
-          envelope,
-          shouldMaterializeRootState: true,
-        };
-  }
-
-  return {
-    kind: 'rejected',
-    task: { ...baseTask, task_type: isThreadReply ? THREAD_REPLY_TASK_TYPE : LARK_INBOUND_TASK_TYPE },
-    reason: isThreadReply ? formatThreadReplyHelpMessage() : ROOT_TASK_USAGE_HINT,
-  };
-}
-
-function parseTaskTypeHint(normalizedText: string): string | null {
-  const firstLine = normalizedText.split('\n', 1)[0] ?? '';
-  const match = /^\/task\s+(\S+)/.exec(firstLine);
-  return match?.[1] ?? null;
-}
-
-function parseRootTaskCommand(normalizedText: string): {
-  taskType: string;
-  executor: string;
-  executorModel: string;
-  payload: string;
-} | null {
-  const [firstLine, ...restLines] = normalizedText.split('\n');
-  const match = /^\/task\s+(\S+)\s+(\S+)\s+(\S+)\s+(.+)$/.exec(firstLine ?? '');
-  if (!match) {
-    return null;
-  }
-
-  const [, taskType, executor, executorModel, firstPayloadLine] = match;
-  const payload = [firstPayloadLine, ...restLines].join('\n');
-  return { taskType, executor, executorModel, payload };
-}
-
-function parseNewInstanceCommand(trimmedText: string): {
-  executor?: string;
-  executorModel?: string;
-} | null {
-  const parts = trimmedText.split(/\s+/);
-  if (parts[0] !== '/new') {
-    return null;
-  }
-  if (parts.length === 1) {
-    return {};
-  }
-  if (parts.length === 3) {
-    return { executor: parts[1], executorModel: parts[2] };
-  }
-  return null;
 }
 
 function notThreadResult(): ThreadContextResult {

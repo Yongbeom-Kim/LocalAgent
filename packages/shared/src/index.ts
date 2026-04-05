@@ -100,6 +100,12 @@ export {
   type LarkInboundContentNormalization,
   type NormalizableLarkMessageType,
 } from './lark-content';
+export {
+  GC_THREAD_REJECTION_REASON,
+  ROOT_TASK_USAGE_HINT,
+  classifyLarkInboundEnvelope,
+  type LarkInboundClassificationResult,
+} from './lark-inbound-routing';
 export { generateSessionId } from './session';
 export { loadSqliteConfig } from './db/config';
 export { createSqliteClient, assertExpectedSchemaVersion } from './db/client';
