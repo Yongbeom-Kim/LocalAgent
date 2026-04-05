@@ -1,8 +1,10 @@
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http';
+import { readdirSync } from 'node:fs';
 import {
   loadDaemonConfig,
   createLogger,
   DEFAULT_MAX_CONCURRENT_SESSIONS,
+  SESSION_BASE_DIR,
   TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV,
 } from '@local-agent/shared';
 import { TaskPoller } from './task-poller';
@@ -16,7 +18,7 @@ import {
   type MachineLockLike,
 } from './services/machine-lock';
 
-type PollerLike = Pick<TaskPoller, 'start' | 'drain' | 'isSessionActive'>;
+type PollerLike = Pick<TaskPoller, 'start' | 'drain' | 'isSessionActive' | 'getActiveSessionCount'>;
 type StatusServerLike = Pick<Server, 'listen' | 'close' | 'once' | 'removeListener'>;
 type LoggerLike = ReturnType<typeof createLogger>;
 
@@ -33,7 +35,7 @@ type StartTaskDaemonDeps = {
     sessionLock: SessionLockManager;
     maxConcurrency: number;
   }) => PollerLike;
-  createStatusServer: (poller: Pick<TaskPoller, 'isSessionActive'>) => StatusServerLike;
+  createStatusServer: (poller: Pick<TaskPoller, 'isSessionActive' | 'getActiveSessionCount'>) => StatusServerLike;
   exit: (code: number) => never;
   processObject: Pick<NodeJS.Process, 'env' | 'on'>;
 };
@@ -57,7 +59,20 @@ function extractSessionId(req: IncomingMessage): string | null {
   return decodeURIComponent(match[1]);
 }
 
-export function createStatusServer(poller: Pick<TaskPoller, 'isSessionActive'>): Server {
+function countSessionDirectories(baseDir: string): number {
+  try {
+    return readdirSync(baseDir, { withFileTypes: true }).filter((entry) => entry.isDirectory()).length;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT') {
+      return 0;
+    }
+    // This is a best-effort status hint; avoid crashing the daemon on unexpected FS errors.
+    return 0;
+  }
+}
+
+export function createStatusServer(poller: Pick<TaskPoller, 'isSessionActive' | 'getActiveSessionCount'>): Server {
   return createServer((req, res) => {
     if (req.method !== 'GET') {
       writeJson(res, 404, { error: 'Not found' });
@@ -73,6 +88,8 @@ export function createStatusServer(poller: Pick<TaskPoller, 'isSessionActive'>):
     writeJson(res, 200, {
       session_id: sessionId,
       running: poller.isSessionActive(sessionId),
+      active_session_count: poller.getActiveSessionCount(),
+      session_directory_count: countSessionDirectories(SESSION_BASE_DIR),
     });
   });
 }

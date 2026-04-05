@@ -37,6 +37,10 @@ export class TaskPoller {
     return this.activeSessions.has(sessionId);
   }
 
+  getActiveSessionCount(): number {
+    return this.activeSessions.size;
+  }
+
   async pollOnce(): Promise<void> {
     try {
       const sessions = await this.fetchMessageQueueActiveSessions();
