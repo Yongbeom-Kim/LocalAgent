@@ -242,6 +242,42 @@ export function isValidTaskSource(value: unknown): value is TaskSource {
   return false;
 }
 
+export const TASK_PHASES = ['received', 'enriching', 'queued', 'executing', 'completed'] as const;
+export type TaskPhase = (typeof TASK_PHASES)[number];
+
+export function isValidTaskPhase(value: unknown): value is TaskPhase {
+  return typeof value === 'string' && TASK_PHASES.includes(value as TaskPhase);
+}
+
+export function compareTaskPhases(a: TaskPhase, b: TaskPhase): number {
+  return TASK_PHASES.indexOf(a) - TASK_PHASES.indexOf(b);
+}
+
+export type TaskPhaseEmitter = 'lark-listener' | 'task-enrichment' | 'task-daemon';
+
+export interface TaskPhaseEventMetadata {
+  thread_id?: string;
+  emitted_by: TaskPhaseEmitter;
+  note?: string;
+}
+
+export interface TaskPhaseEventSubmission {
+  task_id: string;
+  session_id?: string;
+  task_type: string;
+  phase: TaskPhase;
+  task_source?: TaskSource;
+  executor?: TaskExecutorType;
+  executor_model?: string;
+  metadata?: TaskPhaseEventMetadata;
+}
+
+export interface TaskPhaseEvent extends TaskPhaseEventSubmission {
+  event_kind: 'phase';
+  event_id: string;
+  emitted_at: string;
+}
+
 export const RESULT_STATUSES = ['success', 'failure'] as const;
 export type ResultStatus = (typeof RESULT_STATUSES)[number];
 
@@ -265,3 +301,9 @@ export interface TaskResult extends TaskResultSubmission {
   result_id: string;
   completed_at: string;
 }
+
+export interface TaskResultEvent extends TaskResult {
+  event_kind: 'result';
+}
+
+export type TaskEvent = TaskResultEvent | TaskPhaseEvent;

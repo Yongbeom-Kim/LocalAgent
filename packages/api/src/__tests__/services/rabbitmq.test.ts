@@ -277,9 +277,11 @@ describe('RabbitMQService', () => {
   it('publishes persistent message to named exchange', async () => {
     await service.connect();
     const msg = {
+      event_kind: 'result' as const,
       result_id: 'res-1',
       job_id: 'job-456',
       task_id: 'task-123',
+      task_type: 'generic',
       status: 'success' as const,
       exit_code: 0,
       stdout: 'output',
@@ -299,9 +301,11 @@ describe('RabbitMQService', () => {
   it('returns result when message available', async () => {
     await service.connect();
     const content = JSON.stringify({
+      event_kind: 'result',
       result_id: 'res-1',
       job_id: 'job-456',
       task_id: 'task-123',
+      task_type: 'generic',
       status: 'success',
       exit_code: 0,
       stdout: 'output',
@@ -315,5 +319,27 @@ describe('RabbitMQService', () => {
     const result = await service.getNextFromQueue('lark-messages');
     expect(result).toEqual(JSON.parse(content));
     expect(service.ackFromQueue('lark-messages', 'res-1')).toBe(true);
+  });
+
+  it('tracks phase event deliveries by event_id', async () => {
+    await service.connect();
+    const content = JSON.stringify({
+      event_kind: 'phase',
+      event_id: 'evt-1',
+      task_id: 'task-123',
+      task_type: 'generic',
+      phase: 'executing',
+      emitted_at: '2026-04-05T00:00:00.000Z',
+      metadata: { emitted_by: 'task-daemon' },
+    });
+    channel.get.mockResolvedValue({
+      content: Buffer.from(content),
+      fields: { deliveryTag: 100 },
+    });
+
+    const event = await service.getNextFromQueue('lark-messages');
+
+    expect(event).toEqual(JSON.parse(content));
+    expect(service.ackFromQueue('lark-messages', 'evt-1')).toBe(true);
   });
 });

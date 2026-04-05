@@ -2,7 +2,7 @@ import amqplib from 'amqplib';
 import {
   Task,
   Job,
-  TaskResult,
+  TaskEvent,
   createLogger,
   deriveRabbitMqManagementConfig,
   DEFAULT_RESULTS_EXCHANGE_NAME,
@@ -212,31 +212,33 @@ export class RabbitMQService {
     });
   }
 
-  async publishToExchange(exchange: string, message: TaskResult): Promise<boolean> {
+  async publishToExchange(exchange: string, message: TaskEvent): Promise<boolean> {
     const buffer = Buffer.from(JSON.stringify(message));
-    return this.withChannel('publish result', (channel) =>
+    return this.withChannel('publish task event', (channel) =>
       channel.publish(exchange, '', buffer, { persistent: true }),
     );
   }
 
-  async getNextFromQueue(queueName: string): Promise<TaskResult | null> {
-    return this.withChannel('get next result', async (channel) => {
+  async getNextFromQueue(queueName: string): Promise<TaskEvent | null> {
+    return this.withChannel('get next task event', async (channel) => {
       const msg = await channel.get(queueName, { noAck: false });
       if (msg === false) return null;
 
-      const parsed = JSON.parse(msg.content.toString()) as TaskResult;
+      const parsed = JSON.parse(msg.content.toString()) as TaskEvent;
       const deliveryMap = this.getOrCreateDeliveryMap(queueName);
 
-      if (deliveryMap.has(parsed.result_id)) {
+      const deliveryId = parsed.event_kind === 'phase' ? parsed.event_id : parsed.result_id;
+
+      if (deliveryMap.has(deliveryId)) {
         logger.error(
-          { result_id: parsed.result_id, deliveryTag: msg.fields.deliveryTag, queueName },
-          'Duplicate result_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
+          { event_id: deliveryId, deliveryTag: msg.fields.deliveryTag, queueName, event_kind: parsed.event_kind },
+          'Duplicate task-event id received while an earlier delivery is still outstanding; acknowledging duplicate message',
         );
         channel.ack(msg);
         return null;
       }
 
-      deliveryMap.set(parsed.result_id, {
+      deliveryMap.set(deliveryId, {
         message: msg as unknown as GetMessage,
         generation: this.connectionGeneration,
       });
@@ -244,10 +246,10 @@ export class RabbitMQService {
     });
   }
 
-  ackFromQueue(queueName: string, resultId: string): boolean {
+  ackFromQueue(queueName: string, eventId: string): boolean {
     const deliveryMap = this.queueDeliveryMaps.get(queueName);
     if (!deliveryMap) return false;
-    return this.finalizeTrackedDelivery(deliveryMap, resultId, 'ack');
+    return this.finalizeTrackedDelivery(deliveryMap, eventId, 'ack');
   }
 
   async ensureConnected(): Promise<boolean> {

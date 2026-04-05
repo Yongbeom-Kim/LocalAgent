@@ -28,6 +28,21 @@ function validSubmission() {
   };
 }
 
+function validPhaseSubmission() {
+  return {
+    event_kind: 'phase',
+    task_id: 'task-123',
+    task_type: 'generic',
+    phase: 'queued',
+    task_source: { source: 'lark', message_id: 'om_abc123' },
+    metadata: {
+      emitted_by: 'task-enrichment',
+      thread_id: 'thread-1',
+      note: 'queued for session worker',
+    },
+  };
+}
+
 describe('POST /results', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -35,6 +50,7 @@ describe('POST /results', () => {
     const app = buildApp();
     const res = await request(app).post('/results').send(validSubmission());
     expect(res.status).toBe(201);
+    expect(res.body.event_kind).toBe('result');
     expect(res.body.result_id).toBeDefined();
     expect(res.body.completed_at).toBeDefined();
     expect(res.body.job_id).toBe('job-456');
@@ -51,6 +67,7 @@ describe('POST /results', () => {
     expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
       'results',
       expect.objectContaining({
+        event_kind: 'result',
         result_id: expect.any(String),
         job_id: 'job-456',
         task_id: 'task-123',
@@ -211,6 +228,57 @@ describe('POST /results', () => {
       });
     expect(res.status).toBe(400);
   });
+
+  it('returns 201 with generated event_id and emitted_at for phase events', async () => {
+    const app = buildApp();
+    const payload = validPhaseSubmission();
+
+    const res = await request(app).post('/results').send(payload);
+
+    expect(res.status).toBe(201);
+    expect(res.body.event_kind).toBe('phase');
+    expect(res.body.event_id).toEqual(expect.any(String));
+    expect(res.body.emitted_at).toEqual(expect.any(String));
+    expect(res.body.phase).toBe('queued');
+    expect(res.body.metadata).toEqual(payload.metadata);
+    expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
+      'results',
+      expect.objectContaining({
+        event_kind: 'phase',
+        event_id: expect.any(String),
+        task_id: 'task-123',
+        task_type: 'generic',
+        phase: 'queued',
+      }),
+    );
+  });
+
+  it('returns 400 when phase value is invalid', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({ ...validPhaseSubmission(), phase: 'invalid-phase' });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when metadata.emitted_by is invalid for phase events', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({
+        ...validPhaseSubmission(),
+        metadata: { emitted_by: 'unknown-emitter' },
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when event_kind is unknown', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({ ...validSubmission(), event_kind: 'unknown' });
+    expect(res.status).toBe(400);
+  });
 });
 
 describe('GET /results/next/:queueName', () => {
@@ -218,8 +286,11 @@ describe('GET /results/next/:queueName', () => {
 
   it('returns 200 with result when available', async () => {
     mockRabbitMQ.getNextFromQueue.mockResolvedValue({
+      event_kind: 'result',
       result_id: 'res-1',
+      job_id: 'job-1',
       task_id: 'task-123',
+      task_type: 'generic',
       status: 'success',
       exit_code: 0,
       stdout: 'output',
@@ -231,6 +302,23 @@ describe('GET /results/next/:queueName', () => {
     expect(res.status).toBe(200);
     expect(res.body.result_id).toBe('res-1');
     expect(mockRabbitMQ.getNextFromQueue).toHaveBeenCalledWith('lark-messages');
+  });
+
+  it('returns 200 with phase event when available', async () => {
+    mockRabbitMQ.getNextFromQueue.mockResolvedValue({
+      event_kind: 'phase',
+      event_id: 'evt-1',
+      task_id: 'task-123',
+      task_type: 'generic',
+      phase: 'executing',
+      emitted_at: '2026-04-05T00:00:00.000Z',
+      metadata: { emitted_by: 'task-daemon' },
+    });
+    const app = buildApp();
+    const res = await request(app).get('/results/next/lark-messages');
+    expect(res.status).toBe(200);
+    expect(res.body.event_kind).toBe('phase');
+    expect(res.body.event_id).toBe('evt-1');
   });
 
   it('returns 204 when queue is empty', async () => {
@@ -265,5 +353,6 @@ describe('POST /results/:queueName/:id/ack', () => {
     const app = buildApp();
     const res = await request(app).post('/results/lark-messages/unknown/ack');
     expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'Task event not found or already acknowledged' });
   });
 });
