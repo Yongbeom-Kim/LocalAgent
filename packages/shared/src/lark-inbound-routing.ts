@@ -5,10 +5,12 @@ import {
 } from './types';
 import {
   TASK_COMMAND_USAGE,
+  formatGcCommandUsageMessage,
   formatThreadOnlyCommandMessage,
   formatThreadReplyHelpMessage,
   formatThreadTaskCommandRejectedMessage,
 } from './routing-errors';
+import { parseGcCommand } from './gc';
 
 const GC_TASK_TYPE = 'gc';
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
@@ -171,7 +173,8 @@ export function classifyLarkInboundEnvelope(
     };
   }
 
-  if (trimmedText === '/gc') {
+  const parsedGcCommand = parseGcCommand(trimmedText);
+  if (parsedGcCommand) {
     return isThreadReply
       ? {
           kind: 'rejected',
@@ -180,10 +183,24 @@ export function classifyLarkInboundEnvelope(
         }
       : {
           kind: 'accepted',
-          task: { ...baseTask, task_type: GC_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
+          task: {
+            ...baseTask,
+            task_type: GC_TASK_TYPE,
+            payload: parsedGcCommand.payload,
+            executor: undefined,
+            executor_model: undefined,
+          },
           envelope,
           shouldMaterializeRootState: true,
         };
+  }
+
+  if (trimmedText.startsWith('/gc')) {
+    return {
+      kind: 'rejected',
+      task: { ...baseTask, task_type: GC_TASK_TYPE },
+      reason: isThreadReply ? formatThreadReplyHelpMessage() : formatGcCommandUsageMessage(),
+    };
   }
 
   return {

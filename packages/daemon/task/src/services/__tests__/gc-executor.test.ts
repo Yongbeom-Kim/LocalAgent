@@ -3,10 +3,15 @@ import { mkdirSync, rmSync, writeFileSync, utimesSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Job } from '@local-agent/shared';
 
-const { TEST_SESSION_BASE_DIR, TEST_SESSION_DIR_TTL_DAYS } = vi.hoisted(() => ({
-  TEST_SESSION_BASE_DIR: '/tmp/local-agent-gc-test/session',
-  TEST_SESSION_DIR_TTL_DAYS: 7,
-}));
+const { TEST_SESSION_BASE_DIR, TEST_SESSION_DIR_TTL_DAYS } = vi.hoisted(() => {
+  // Use a unique base dir per test file execution to avoid cross-suite
+  // interference when Vitest runs multiple suites in the same process.
+  const unique = `${process.pid}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return {
+    TEST_SESSION_BASE_DIR: `/tmp/local-agent-gc-test-${unique}/session`,
+    TEST_SESSION_DIR_TTL_DAYS: 7,
+  };
+});
 
 vi.mock('@local-agent/shared', async () => {
   const actual = await vi.importActual<typeof import('@local-agent/shared')>('@local-agent/shared');
@@ -95,6 +100,24 @@ describe('GcExecutor', () => {
     const result = await executor.execute(createJob());
 
     expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 1 session dir(s), deleted 0 DB session(s).');
+  });
+
+  it('uses custom gc age threshold from job payload', async () => {
+    const recentOldDir = makeDir('recent-old-session');
+    setDirAge(recentOldDir, 2);
+
+    const result = await executor.execute(createJob({ payload: '24h' }));
+
+    expect(result.stdout).toBe('GC complete: removed 1 session(s), retained 0.');
+  });
+
+  it('falls back to default gc age threshold when payload is invalid', async () => {
+    const recentOldDir = makeDir('recent-old-session');
+    setDirAge(recentOldDir, 2);
+
+    const result = await executor.execute(createJob({ payload: 'later' }));
+
+    expect(result.stdout).toBe('GC complete: removed 0 session(s), retained 1.');
   });
 
   it('handles mixed stale and fresh directories', async () => {

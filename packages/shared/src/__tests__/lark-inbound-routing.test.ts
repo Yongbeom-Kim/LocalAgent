@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   classifyLarkInboundEnvelope,
+  formatGcCommandUsageMessage,
   formatThreadOnlyCommandMessage,
   formatThreadReplyHelpMessage,
   formatThreadTaskCommandRejectedMessage,
@@ -179,6 +180,42 @@ describe('classifyLarkInboundEnvelope', () => {
       kind: 'rejected',
       task: expect.objectContaining({ task_type: 'gc' }),
       reason: GC_THREAD_REJECTION_REASON,
+    });
+  });
+
+  it('accepts root /gc commands with an age parameter', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({ normalized_text: '/gc 24h', raw_content: '{"text":"/gc 24h"}' }),
+    );
+
+    expect(result).toEqual({
+      kind: 'accepted',
+      task: expect.objectContaining({
+        task_type: 'gc',
+        payload: '24h',
+        executor: undefined,
+        executor_model: undefined,
+        task_source: { source: 'lark', message_id: 'om_root' },
+      }),
+      envelope: expect.objectContaining({ normalized_text: '/gc 24h' }),
+      shouldMaterializeRootState: true,
+    });
+  });
+
+  it('rejects invalid root /gc arguments with usage help', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({ normalized_text: '/gc later', raw_content: '{"text":"/gc later"}' }),
+    );
+
+    expect(result).toEqual({
+      kind: 'rejected',
+      task: expect.objectContaining({
+        task_type: 'gc',
+        task_source: { source: 'lark', message_id: 'om_root' },
+      }),
+      reason: formatGcCommandUsageMessage(),
     });
   });
 

@@ -319,7 +319,7 @@ export class EnrichmentPoller {
         const jobSubmission: JobSubmission = {
           task_id: task.task_id,
           task_type: GC_TASK_TYPE,
-          payload: '',
+          payload: task.payload,
           executors: [GC_EXECUTOR],
           submitted_at: task.submitted_at,
           session_id: sessionId,

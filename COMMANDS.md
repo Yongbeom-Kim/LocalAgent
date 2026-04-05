@@ -221,8 +221,10 @@ Trigger a GC run.
 **Grammar**
 
 ```text
-/gc
+/gc [age]
 ```
+
+`age` must be a positive integer followed by one of `s`, `m`, `h`, `d`, or `w`.
 
 **Valid Contexts**
 
@@ -231,7 +233,7 @@ Trigger a GC run.
 **Invalid Forms**
 
 - Any use in a thread reply. (Context invalid.)
-- Any trailing arguments or extra content (including newlines). (Shape invalid.)
+- Any invalid trailing arguments or extra content (including newlines). (Shape invalid.)
 
 **Examples**
 
@@ -239,6 +241,10 @@ Valid:
 
 ```text
 /gc
+```
+
+```text
+/gc 24h
 ```
 
 Invalid (extra content):

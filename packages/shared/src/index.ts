@@ -43,6 +43,7 @@ export {
 } from './types';
 export {
   TASK_COMMAND_USAGE,
+  GC_COMMAND_USAGE,
   type RoutingCommandLabel,
   formatMissingTaskTypeMessage,
   formatUnknownTaskTypeMessage,
@@ -54,6 +55,7 @@ export {
   formatThreadReplyHelpMessage,
   formatThreadTaskCommandRejectedMessage,
   formatThreadOnlyCommandMessage,
+  formatGcCommandUsageMessage,
 } from './routing-errors';
 export {
   loadApiConfig,
@@ -106,6 +108,11 @@ export {
   classifyLarkInboundEnvelope,
   type LarkInboundClassificationResult,
 } from './lark-inbound-routing';
+export {
+  DEFAULT_GC_AGE_THRESHOLD_MS,
+  parseGcAgeThresholdPayload,
+  parseGcCommand,
+} from './gc';
 export { generateSessionId } from './session';
 export { loadSqliteConfig } from './db/config';
 export { createSqliteClient, assertExpectedSchemaVersion } from './db/client';
