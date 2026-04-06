@@ -44,7 +44,13 @@ async function main() {
 
   const tokenProvider = new LarkTenantTokenProvider(config.larkAppId, config.larkAppSecret);
   const phaseNotifier = new LarkPhaseNotifier(tokenProvider, larkHistoryRepository);
-  const poller = new LarkPoller(config.apiUrl, DEFAULT_LARK_QUEUE_NAME, notifier, phaseNotifier);
+  const poller = new LarkPoller(
+    config.apiUrl,
+    DEFAULT_LARK_QUEUE_NAME,
+    notifier,
+    phaseNotifier,
+    config.apiAuthToken,
+  );
   poller.start(config.pollIntervalMs);
 
   const shutdown = () => {

@@ -23,7 +23,12 @@ async function main() {
     'Starting telegram-daemon',
   );
 
-  const poller = new TelegramPoller(config.apiUrl, DEFAULT_TELEGRAM_QUEUE_NAME, notifier);
+  const poller = new TelegramPoller(
+    config.apiUrl,
+    DEFAULT_TELEGRAM_QUEUE_NAME,
+    notifier,
+    config.apiAuthToken,
+  );
   poller.start(config.pollIntervalMs);
 
   const shutdown = () => {

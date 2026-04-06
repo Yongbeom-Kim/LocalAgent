@@ -15,7 +15,7 @@ async function main() {
 
   logger.info({ apiUrl: config.apiUrl, dedupTtlMs: config.dedupTtlMs }, 'Starting lark-listener');
 
-  const submitter = new TaskSubmitter(config.apiUrl);
+  const submitter = new TaskSubmitter(config.apiUrl, config.apiAuthToken);
   const reactor = new LarkReactor(config.appId, config.appSecret);
   const replier = new LarkReplier(config.appId, config.appSecret);
   const metadataResolver = new LarkOpenApiMessageMetadataResolver(config.appId, config.appSecret);
