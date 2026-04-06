@@ -4,6 +4,7 @@ import { TaskOrchestrator } from '../core/task-orchestrator';
 import { ClaudeExecutor } from '../adapters/claude-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 import { TaskPhasePublisher } from '../adapters/task-phase-publisher';
+import { CANCELLED_BY_KILL_MESSAGE } from '../services/cancellation-registry';
 
 const {
   mockLoggerInfo,
@@ -97,6 +98,10 @@ function createJob(overrides?: Partial<Job>): Job {
   };
 }
 
+function emptyImmediate() {
+  return { status: 204, send: () => undefined };
+}
+
 import { TaskPoller } from '../task-poller';
 import { JobEnvironment } from '../services/job-environment';
 import { SessionLockManager } from '../services/session-lock';
@@ -143,6 +148,7 @@ describe('TaskPoller', () => {
           status: 200,
           json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
+        .mockResolvedValueOnce(emptyImmediate())
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job),
@@ -170,16 +176,23 @@ describe('TaskPoller', () => {
       );
       expect(mockFetch).toHaveBeenNthCalledWith(
         2,
+        'http://localhost:3000/jobs/immediate/next/session-789',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
+        }),
+      );
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        3,
         'http://localhost:3000/jobs/next/session-789',
         expect.objectContaining({
           headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
         }),
       );
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/session-789/job-456/ack', {
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/jobs/session-789/job-456/ack', {
         method: 'POST',
         headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
       });
-      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results', {
+      expect(mockFetch).toHaveBeenNthCalledWith(5, 'http://localhost:3000/results', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -197,6 +210,7 @@ describe('TaskPoller', () => {
           status: 200,
           json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
+        .mockResolvedValueOnce(emptyImmediate())
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job),
@@ -209,8 +223,8 @@ describe('TaskPoller', () => {
 
       expect(mockPhasePublish).toHaveBeenCalledWith(job, 'executing');
       expect(mockPhasePublish).not.toHaveBeenCalledWith(job, 'completed');
-      expect(mockFetch).toHaveBeenCalledTimes(4);
-      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/session-789/job-456/ack', {
+      expect(mockFetch).toHaveBeenCalledTimes(5);
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/jobs/session-789/job-456/ack', {
         method: 'POST',
         headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
       });
@@ -224,6 +238,7 @@ describe('TaskPoller', () => {
           status: 200,
           json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
+        .mockResolvedValueOnce(emptyImmediate())
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job),
@@ -235,7 +250,7 @@ describe('TaskPoller', () => {
 
       expect(mockClaudeExecute).not.toHaveBeenCalled();
       expect(mockPhasePublish).not.toHaveBeenCalled();
-      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenCalledTimes(4);
       expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/results'))).toBe(false);
     });
 
@@ -243,6 +258,25 @@ describe('TaskPoller', () => {
       mockFetch.mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ sessions: [] }) });
       await poller.pollOnce();
       expect(mockClaudeExecute).not.toHaveBeenCalled();
+    });
+
+    it('polls immediate queues for active sessions even when session discovery is unavailable', async () => {
+      const activeRegistry = (poller as unknown as { activeSessions: Set<string> }).activeSessions;
+      activeRegistry.add('session-789');
+
+      mockFetch
+        .mockResolvedValueOnce({ status: 503, json: () => Promise.resolve({ error: 'Session queue discovery unavailable' }) })
+        .mockResolvedValueOnce(emptyImmediate());
+
+      await poller.pollOnce();
+
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'http://localhost:3000/jobs/immediate/next/session-789',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
+        }),
+      );
     });
 
     it('treats 503 from session discovery as an empty cycle', async () => {
@@ -285,6 +319,7 @@ describe('TaskPoller', () => {
           status: 200,
           json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
+        .mockResolvedValueOnce(emptyImmediate())
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job),
@@ -314,6 +349,7 @@ describe('TaskPoller', () => {
           status: 200,
           json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
+        .mockResolvedValueOnce(emptyImmediate())
         .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job) })
         .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
         .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) });
@@ -321,7 +357,7 @@ describe('TaskPoller', () => {
       await poller.pollOnce();
       await poller.drain();
 
-      const resultPostBody = JSON.parse(mockFetch.mock.calls[3][1].body);
+      const resultPostBody = JSON.parse(mockFetch.mock.calls[4][1].body);
       expect(resultPostBody.task_source).toEqual(taskSource);
       expect(mockPhasePublish).toHaveBeenCalledWith(job, 'executing');
     });
@@ -339,6 +375,7 @@ describe('TaskPoller', () => {
           status: 200,
           json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
+        .mockResolvedValueOnce(emptyImmediate())
         .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job) })
         .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
         .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) });
@@ -346,7 +383,7 @@ describe('TaskPoller', () => {
       await poller.pollOnce();
       await poller.drain();
 
-      const body = JSON.parse(mockFetch.mock.calls[3][1].body);
+      const body = JSON.parse(mockFetch.mock.calls[4][1].body);
       expect(body.stdout).toHaveLength(MAX_SNIPPET_CHARS);
       expect(body.stderr).toHaveLength(MAX_SNIPPET_CHARS);
       expect(mockPhasePublish).toHaveBeenNthCalledWith(1, job, 'executing');
@@ -368,6 +405,7 @@ describe('TaskPoller', () => {
           status: 200,
           json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
         })
+        .mockResolvedValueOnce(emptyImmediate())
         .mockResolvedValueOnce({
           status: 200,
           json: () => Promise.resolve(job),
@@ -379,7 +417,7 @@ describe('TaskPoller', () => {
       await poller.drain();
 
       expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
-      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results', {
+      expect(mockFetch).toHaveBeenNthCalledWith(5, 'http://localhost:3000/results', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -387,6 +425,48 @@ describe('TaskPoller', () => {
         },
         body: JSON.stringify(mockResultSubmission),
       });
+    });
+
+    it('acks kill jobs as a no-op when the session is idle', async () => {
+      const killJob = createJob({ job_id: 'kill-1', task_id: 'kill-task', task_type: 'kill', payload: '' });
+
+      mockFetch
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(killJob) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce(emptyImmediate())
+        .mockResolvedValueOnce({ status: 204 });
+
+      await poller.pollOnce();
+
+      expect(mockClaudeExecute).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/immediate/session-789/kill-1/ack', {
+        method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
+      });
+    });
+
+    it('publishes cancelled phase when the executor result is a kill cancellation', async () => {
+      const job = createJob();
+      mockClaudeExecute.mockResolvedValueOnce({
+        ...mockResultSubmission,
+        status: 'failure',
+        exit_code: null,
+        stderr: CANCELLED_BY_KILL_MESSAGE,
+      });
+
+      mockFetch
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }) })
+        .mockResolvedValueOnce(emptyImmediate())
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) });
+
+      await poller.pollOnce();
+      await poller.drain();
+
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(1, job, 'executing');
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(2, job, 'cancelled');
     });
   });
 });

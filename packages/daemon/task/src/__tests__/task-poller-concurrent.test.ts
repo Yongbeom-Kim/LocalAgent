@@ -99,6 +99,10 @@ function ackOk() {
   return { status: 200, json: () => Promise.resolve({ acknowledged: true }) };
 }
 
+function immediateEmpty() {
+  return { status: 204, send: () => undefined };
+}
+
 function resultOk() {
   return { status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) };
 }
@@ -157,6 +161,8 @@ describe('TaskPoller Concurrent', () => {
           ],
         }),
       })
+      .mockResolvedValueOnce(immediateEmpty())
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
       .mockResolvedValueOnce(ackOk())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
@@ -195,6 +201,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch
       .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
       .mockResolvedValueOnce(ackOk());
 
@@ -202,6 +209,7 @@ describe('TaskPoller Concurrent', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
+    mockFetch.mockResolvedValueOnce(immediateEmpty());
     await poller.pollOnce();
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
 
@@ -211,6 +219,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch
       .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
       .mockResolvedValueOnce(ackOk());
 
@@ -245,12 +254,14 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch
       .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) })
       .mockResolvedValueOnce(ackOk());
     await poller.pollOnce();
     await new Promise((r) => setTimeout(r, 10));
 
     mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
+    mockFetch.mockResolvedValueOnce(immediateEmpty());
     await poller.pollOnce();
     expect(mockCleanupExecute).not.toHaveBeenCalled();
 
@@ -260,6 +271,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch
       .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(cleanupJob) })
       .mockResolvedValueOnce(ackOk())
       .mockResolvedValueOnce(resultOk());
@@ -287,6 +299,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch
       .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
       .mockResolvedValueOnce(ackOk());
 
@@ -294,6 +307,7 @@ describe('TaskPoller Concurrent', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
+    mockFetch.mockResolvedValueOnce(immediateEmpty());
     await poller.pollOnce();
 
     expect((poller as unknown as { currentPollInterval: number }).currentPollInterval).toBe(2000);
@@ -319,6 +333,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch
       .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
       .mockResolvedValueOnce(ackOk());
 
@@ -326,6 +341,7 @@ describe('TaskPoller Concurrent', () => {
     await new Promise((r) => setTimeout(r, 10));
 
     mockFetch.mockResolvedValueOnce(sessionPayload('session-A'));
+    mockFetch.mockResolvedValueOnce(immediateEmpty());
     await poller.pollOnce();
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
 
@@ -335,6 +351,7 @@ describe('TaskPoller Concurrent', () => {
 
     mockFetch
       .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job2) })
       .mockResolvedValueOnce(ackOk())
       .mockResolvedValueOnce(resultOk());
@@ -344,5 +361,47 @@ describe('TaskPoller Concurrent', () => {
 
     // FIFO is enforced by activeSessions plus SessionLockManager, not by leaving the broker delivery unacked.
     expect(mockClaudeExecute).toHaveBeenCalledTimes(2);
+  });
+
+  it('processes kill from the immediate queue while a normal job is still running', async () => {
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 1);
+
+    let resolveJob1!: (v: TaskResultSubmission) => void;
+    const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
+    mockClaudeExecute.mockImplementationOnce(async (_attempt, _env, hooks) => {
+      await new Promise((r) => setTimeout(r, 20));
+      return {
+        ...createMockResult('job-1', 'session-A'),
+        status: hooks?.runningJob?.isCancellationRequested() ? 'failure' : 'success',
+        exit_code: hooks?.runningJob?.isCancellationRequested() ? null : 0,
+        stderr: hooks?.runningJob?.isCancellationRequested() ? 'Cancelled by /kill' : '',
+      };
+    });
+
+    const activeJob = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A' });
+    const killJob = createJob({ job_id: 'kill-1', task_id: 'kill-task', session_id: 'session-A', task_type: 'kill', payload: '' });
+
+    mockFetch
+      .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce(immediateEmpty())
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(activeJob) })
+      .mockResolvedValueOnce(ackOk());
+
+    await poller.pollOnce();
+    await new Promise((r) => setTimeout(r, 5));
+
+    mockFetch
+      .mockResolvedValueOnce(sessionPayload('session-A'))
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(killJob) })
+      .mockResolvedValueOnce(ackOk())
+      .mockResolvedValueOnce(immediateEmpty())
+      .mockResolvedValueOnce(resultOk());
+
+    await poller.pollOnce();
+    await poller.drain();
+
+    expect(mockFetch.mock.calls.some((call) => String(call[0]).includes('/jobs/immediate/session-A/kill-1/ack'))).toBe(true);
+    expect(mockPhasePublish).toHaveBeenCalledWith(activeJob, 'cancelled');
   });
 });

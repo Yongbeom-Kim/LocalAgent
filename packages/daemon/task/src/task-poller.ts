@@ -3,6 +3,7 @@ import {
   TaskPhase,
   TaskResultSubmission,
   buildApiAuthHeaders,
+  type ControlTaskType,
   createLogger,
   MAX_SNIPPET_CHARS,
   DEFAULT_MAX_CONCURRENT_SESSIONS,
@@ -10,11 +11,13 @@ import {
 import { TaskOrchestrator } from './core/task-orchestrator';
 import { SessionLockManager } from './services/session-lock';
 import { TaskPhasePublisher } from './adapters/task-phase-publisher';
+import { CANCELLED_BY_KILL_MESSAGE } from './services/cancellation-registry';
 
 const logger = createLogger('task-daemon:poller');
 const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED';
 
 export class ApiAuthConfigurationError extends Error {}
+const KILL_TASK_TYPE: ControlTaskType = 'kill';
 
 interface SessionDescriptor {
   session_id: string;
@@ -80,6 +83,11 @@ export class TaskPoller {
   async pollOnce(): Promise<void> {
     try {
       const sessions = await this.fetchMessageQueueActiveSessions();
+      const activeSessionIds = Array.from(this.activeSessions);
+      const discoveredSessionIds = sessions.map((session) => session.session_id);
+
+      await this.pollImmediateQueues(activeSessionIds);
+      await this.pollImmediateQueues(discoveredSessionIds.filter((sessionId) => !this.activeSessions.has(sessionId)));
 
       for (const session of sessions) {
         if (this.inFlightJobs.size >= this.maxConcurrency) {
@@ -111,6 +119,19 @@ export class TaskPoller {
       }
 
       logger.error({ err }, 'Poll error');
+    }
+  }
+
+  private async pollImmediateQueues(sessionIds: string[]): Promise<void> {
+    for (const sessionId of sessionIds) {
+      while (true) {
+        const job = await this.fetchNextImmediateJob(sessionId);
+        if (!job) {
+          break;
+        }
+
+        await this.handleImmediateJob(job);
+      }
     }
   }
 
@@ -150,6 +171,53 @@ export class TaskPoller {
     const job = (await res.json()) as Job;
     logger.info({ job_id: job.job_id, task_id: job.task_id, session_id: job.session_id }, 'Received job');
     return job;
+  }
+
+  private async fetchNextImmediateJob(sessionId: string): Promise<Job | null> {
+    const res = await fetch(`${this.apiUrl}/jobs/immediate/next/${encodeURIComponent(sessionId)}`, {
+      headers: this.buildApiHeaders(),
+    });
+
+    if (res.status === 204) {
+      return null;
+    }
+
+    this.throwIfAuthFailureStatus(res.status, 'GET /jobs/immediate/next/:session_id', { session_id: sessionId });
+
+    if (res.status !== 200) {
+      logger.warn({ status: res.status, session_id: sessionId }, 'Unexpected immediate job fetch response from API');
+      return null;
+    }
+
+    return (await res.json()) as Job;
+  }
+
+  private async handleImmediateJob(job: Job): Promise<void> {
+    try {
+      if (job.task_type === KILL_TASK_TYPE) {
+        const cancellation = this.orchestrator.getCancellationRegistry().requestCancellation(job.session_id);
+        logger.info({ session_id: job.session_id, job_id: job.job_id, cancellation }, 'Processed immediate kill command');
+      } else {
+        logger.warn({ job_id: job.job_id, task_type: job.task_type }, 'Unexpected immediate job type; acknowledging without execution');
+      }
+
+      const ackRes = await fetch(
+        `${this.apiUrl}/jobs/immediate/${encodeURIComponent(job.session_id)}/${job.job_id}/ack`,
+        {
+          method: 'POST',
+          headers: this.buildApiHeaders(),
+        },
+      );
+      this.throwIfAuthFailureStatus(ackRes.status, 'POST /jobs/immediate/:session_id/:job_id/ack', {
+        session_id: job.session_id,
+        job_id: job.job_id,
+      });
+      if (ackRes.status !== 200) {
+        logger.warn({ job_id: job.job_id, status: ackRes.status }, 'Immediate job ACK failed');
+      }
+    } catch (err) {
+      logger.error({ job_id: job.job_id, err }, 'Immediate job handling failed');
+    }
   }
 
   private async executeJob(job: Job): Promise<void> {
@@ -231,7 +299,7 @@ export class TaskPoller {
         if (resultRes.status !== 201) {
           logger.warn({ job_id: job.job_id, status: resultRes.status }, 'Result publish failed');
         } else {
-          await this.publishPhase(job, 'completed');
+          await this.publishPhase(job, this.isCancelledResult(resultWithSource) ? 'cancelled' : 'completed');
         }
       } catch (resultErr) {
         logger.error({ job_id: job.job_id, err: resultErr }, 'Result publish request failed');
@@ -263,6 +331,10 @@ export class TaskPoller {
         'Failed to publish task phase',
       );
     }
+  }
+
+  private isCancelledResult(result: TaskResultSubmission): boolean {
+    return result.stderr.includes(CANCELLED_BY_KILL_MESSAGE);
   }
 
   private increasePollInterval(): void {
