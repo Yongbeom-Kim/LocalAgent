@@ -27,7 +27,7 @@ vi.mock('@local-agent/shared', async () => {
     generateSessionId: mockGenerateSessionId,
     formatThreadOnlyCommandMessage: (command: '/status' | '/new' | '/end' | '/shell') =>
       `The ${command} command can only be used inside a thread.`,
-    formatShellDisabledMessage: () => 'The /shell command is disabled.',
+    formatShellDisabledMessage: () => 'The /shell command is disabled in this environment.',
     LOCAL_AGENT_DISABLE_SHELL_COMMAND: 'LOCAL_AGENT_DISABLE_SHELL_COMMAND',
   };
 });
@@ -553,6 +553,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
   afterEach(() => {
     poller.stop();
+    delete process.env.LOCAL_AGENT_DISABLE_SHELL_COMMAND;
   });
 
   it('rejects shell_command outside thread', async () => {
@@ -629,7 +630,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         task_type: 'shell_command',
         status: 'failure',
         exit_code: null,
-        stdout: 'The /shell command is disabled.',
+        stdout: 'The /shell command is disabled in this environment.',
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
