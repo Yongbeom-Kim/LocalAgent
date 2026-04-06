@@ -66,11 +66,8 @@ export class BufferedAmqpEnqueuer {
 
     if (pendingRequest.initialAttempt) {
       return await new Promise<boolean>((resolve, reject) => {
-        pendingRequest.initialAttempt = {
-          ...pendingRequest.initialAttempt,
-          resolve,
-          reject,
-        };
+        pendingRequest.initialAttempt!.resolve = resolve;
+        pendingRequest.initialAttempt!.reject = reject;
       });
     }
 
