@@ -33,11 +33,13 @@ const mockResultSubmission: TaskResultSubmission = {
   executor_model: 'opus',
 };
 
+const mockClaudePrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 
 vi.mock('../adapters/claude-executor', () => {
   return {
-    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+    ClaudeExecutor: vi.fn(function (this: { precheck: typeof mockClaudePrecheck; execute: typeof mockClaudeExecute }) {
+      this.precheck = mockClaudePrecheck;
       this.execute = mockClaudeExecute;
     }),
   };
@@ -82,6 +84,7 @@ describe('TaskPoller', () => {
 
   beforeEach(() => {
     mockFetch.mockClear();
+    mockClaudePrecheck.mockClear().mockResolvedValue({ ok: true });
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
     mockTeardown.mockClear().mockResolvedValue(undefined);

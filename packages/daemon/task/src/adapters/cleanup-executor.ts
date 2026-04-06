@@ -8,7 +8,7 @@ import {
   createSqliteClient,
   loadSqliteConfig,
 } from '@local-agent/shared';
-import { TaskExecutor } from '../ports/task-executor';
+import { ExecutorPrecheckResult, TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:cleanup-executor');
@@ -36,6 +36,10 @@ export class CleanupExecutor implements TaskExecutor {
     private readonly directoryExists: DirectoryExists = (path) => fs.existsSync(path),
     private readonly deleteSessionRows: DeleteSessionRows = deleteSessionRowsFromDb,
   ) {}
+
+  async precheck(_env: ExecutionEnvironment): Promise<ExecutorPrecheckResult> {
+    return { ok: true };
+  }
 
   async execute(job: JobAttempt, _env: ExecutionEnvironment): Promise<TaskResultSubmission> {
     const workDir = join(this.baseDir, job.session_id);
