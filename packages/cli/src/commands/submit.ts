@@ -1,6 +1,8 @@
 import { Command } from 'commander';
 import {
   DEFAULT_API_URL,
+  buildApiAuthHeaders,
+  resolveApiClientToken,
   type TaskSubmission,
   type TaskExecutorType,
 } from '@local-agent/shared';
@@ -11,6 +13,8 @@ export interface SubmitOptions {
   executor: TaskExecutorType;
   model: string;
   apiUrl: string;
+  token?: string;
+  env?: Record<string, string | undefined>;
 }
 
 export interface SubmitResult {
@@ -21,6 +25,19 @@ export interface SubmitResult {
 }
 
 export async function submitTask(options: SubmitOptions): Promise<SubmitResult> {
+  const env = options.env ?? process.env;
+  const token = resolveApiClientToken({
+    explicitToken: options.token,
+    env,
+  });
+
+  if (env.API_AUTH_DISABLED !== '1' && !token) {
+    return {
+      success: false,
+      error: 'API auth is enabled but no token is configured. Pass --token or set API_AUTH_TOKEN.',
+    };
+  }
+
   const url = `${options.apiUrl.replace(/\/+$/, '')}/tasks`;
   const body: TaskSubmission = {
     task_type: options.type,
@@ -33,7 +50,10 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
   try {
     response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildApiAuthHeaders(token),
+      },
       body: JSON.stringify(body),
     });
   } catch (err) {
@@ -74,6 +94,7 @@ export function registerSubmitCommand(
     .requiredOption('-e, --executor <string>', 'Executor')
     .requiredOption('-m, --model <string>', 'Executor model')
     .option('-u, --api-url <string>', 'API base URL')
+    .option('--token <value>', 'API bearer token')
     .action(
       async (opts: {
         payload: string;
@@ -81,6 +102,7 @@ export function registerSubmitCommand(
         executor: TaskExecutorType;
         model: string;
         apiUrl?: string;
+        token?: string;
       }) => {
       const apiUrl = opts.apiUrl ?? process.env.API_URL ?? DEFAULT_API_URL;
 
@@ -90,6 +112,7 @@ export function registerSubmitCommand(
         executor: opts.executor,
         model: opts.model,
         apiUrl,
+        token: opts.token,
       });
 
       if (result.success) {
