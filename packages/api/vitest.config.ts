@@ -10,20 +10,32 @@ const uuidEntry = require.resolve('uuid');
 const dotenvEntry = require.resolve('dotenv');
 const pinoEntry = require.resolve('pino');
 const uuidv7Entry = require.resolve('uuidv7');
+const libsqlSqlite3Entry = require.resolve('@libsql/client/sqlite3');
+const drizzleLibsqlSqlite3Entry = require.resolve('drizzle-orm/libsql/sqlite3');
+const drizzleLibsqlEntry = require.resolve('drizzle-orm/libsql');
+const drizzleOrmEntry = require.resolve('drizzle-orm');
+const drizzleSqliteCoreEntry = require.resolve('drizzle-orm/sqlite-core');
+const drizzleOrmSqlEntry = require.resolve('drizzle-orm/sql');
 const sharedSource = resolve(__dirname, '../shared/src/index.ts');
 
 export default defineConfig({
   resolve: {
-    alias: {
-      '@local-agent/shared': sharedSource,
-      express: expressEntry,
-      supertest: supertestEntry,
-      amqplib: amqplibEntry,
-      uuid: uuidEntry,
-      dotenv: dotenvEntry,
-      pino: pinoEntry,
-      uuidv7: uuidv7Entry,
-    },
+    alias: [
+      { find: '@local-agent/shared', replacement: sharedSource },
+      { find: /^express$/, replacement: expressEntry },
+      { find: /^supertest$/, replacement: supertestEntry },
+      { find: /^amqplib$/, replacement: amqplibEntry },
+      { find: /^uuid$/, replacement: uuidEntry },
+      { find: /^dotenv$/, replacement: dotenvEntry },
+      { find: /^pino$/, replacement: pinoEntry },
+      { find: /^uuidv7$/, replacement: uuidv7Entry },
+      { find: '@libsql/client/sqlite3', replacement: libsqlSqlite3Entry },
+      { find: /^drizzle-orm\/libsql\/sqlite3$/, replacement: drizzleLibsqlSqlite3Entry },
+      { find: /^drizzle-orm\/libsql$/, replacement: drizzleLibsqlEntry },
+      { find: /^drizzle-orm\/sqlite-core$/, replacement: drizzleSqliteCoreEntry },
+      { find: /^drizzle-orm\/sql$/, replacement: drizzleOrmSqlEntry },
+      { find: /^drizzle-orm$/, replacement: drizzleOrmEntry },
+    ],
   },
   test: {
     root: './src',

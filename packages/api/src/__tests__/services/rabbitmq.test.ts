@@ -4,6 +4,10 @@ import { RabbitMQService, RabbitMQUnavailableError } from '../../services/rabbit
 type MockChannel = ReturnType<typeof createMockChannel>;
 type MockConnection = ReturnType<typeof createMockConnection>;
 
+function flushAsyncWork(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
 function createMockChannel() {
   return {
     assertQueue: vi.fn().mockResolvedValue({}),
@@ -108,6 +112,7 @@ describe('RabbitMQService', () => {
     });
 
     expect(result).toBe(true);
+    await flushAsyncWork();
     expect(amqplibMock.default.connect).toHaveBeenCalledTimes(2);
     expect(second.channel.sendToQueue).toHaveBeenCalledTimes(1);
   });
@@ -135,7 +140,7 @@ describe('RabbitMQService', () => {
     expect(second.channel.get).toHaveBeenCalledTimes(1);
   });
 
-  it('throws RabbitMQUnavailableError when reconnect cannot establish a channel', async () => {
+  it('accepts publishes into the buffer when reconnect cannot establish a channel immediately', async () => {
     await service.connect();
     amqplibMock.default.connect.mockRejectedValueOnce(new Error('connect failed'));
     emitConnectionEvent(connection, 'close');
@@ -147,7 +152,87 @@ describe('RabbitMQService', () => {
         payload: 'test',
         submitted_at: '2026-03-26T00:00:00.000Z',
       }),
-    ).rejects.toBeInstanceOf(RabbitMQUnavailableError);
+    ).resolves.toBe(true);
+  });
+
+  it('propagates non-retryable publish failures to the caller when the first flush can reach RabbitMQ', async () => {
+    await service.connect();
+    channel.sendToQueue.mockImplementationOnce(() => {
+      throw new Error('queue missing');
+    });
+
+    await expect(
+      service.publish({
+        task_id: 'task-123',
+        task_type: 'generic',
+        payload: 'test',
+        submitted_at: '2026-03-26T00:00:00.000Z',
+      }),
+    ).rejects.toThrow('queue missing');
+  });
+
+  it('buffers task publishes while RabbitMQ is down and flushes them after reconnect', async () => {
+    await service.connect();
+    emitConnectionEvent(connection, 'close');
+    amqplibMock.default.connect.mockRejectedValueOnce(new Error('connect failed'));
+
+    const task = {
+      task_id: 'task-buffered',
+      task_type: 'generic',
+      payload: 'buffer me',
+      submitted_at: '2026-04-06T00:00:00.000Z',
+    };
+
+    const accepted = await service.publish(task);
+    await flushAsyncWork();
+
+    expect(accepted).toBe(true);
+    expect(amqplibMock.default.connect).toHaveBeenCalledTimes(2);
+
+    const second = queueConnection();
+    await service.ensureConnected();
+    await flushAsyncWork();
+
+    expect(second.channel.sendToQueue).toHaveBeenCalledWith(
+      'test-queue',
+      Buffer.from(JSON.stringify(task)),
+      { persistent: true },
+    );
+  });
+
+  it('buffers exchange publishes while RabbitMQ is down and flushes them after reconnect', async () => {
+    await service.connect();
+    emitConnectionEvent(connection, 'close');
+    amqplibMock.default.connect.mockRejectedValueOnce(new Error('connect failed'));
+
+    const event = {
+      event_kind: 'result' as const,
+      result_id: 'res-buffered',
+      job_id: 'job-1',
+      task_id: 'task-1',
+      task_type: 'generic',
+      status: 'success' as const,
+      exit_code: 0,
+      stdout: 'ok',
+      stderr: '',
+      completed_at: '2026-04-06T00:00:00.000Z',
+    };
+
+    const accepted = await service.publishToExchange('results', event);
+    await flushAsyncWork();
+
+    expect(accepted).toBe(true);
+
+    const second = queueConnection();
+    await service.ensureConnected();
+    await flushAsyncWork();
+
+    expect(second.channel.publish).toHaveBeenCalledWith(
+      'results',
+      '',
+      Buffer.from(JSON.stringify(event)),
+      { persistent: true },
+    );
   });
 
   it('asserts and binds per-session queues with idle ttl', async () => {
@@ -175,6 +260,7 @@ describe('RabbitMQService', () => {
     };
     const result = await service.publishJob(job as any);
     expect(result).toBe(true);
+    await flushAsyncWork();
     expect(channel.publish).toHaveBeenCalledWith(
       'jobs',
       'session-1',
