@@ -2,6 +2,7 @@ import {
   Task,
   JobSubmission,
   TaskPhase,
+  buildApiAuthHeaders,
   classifyLarkInboundEnvelope,
   createLogger,
   GC_THREAD_REJECTION_REASON,
@@ -18,7 +19,7 @@ import {
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
-import { TaskPhasePublisher } from './adapters/task-phase-publisher';
+import { ApiAuthConfigurationError, TaskPhasePublisher } from './adapters/task-phase-publisher';
 
 const logger = createLogger('enrichment-daemon:poller');
 const CLEANUP_TASK_TYPE = 'cleanup';
@@ -40,6 +41,7 @@ const STATUS_INCOMPLETE_METADATA_REASON =
   'Cannot check /status because the inherited thread metadata is incomplete.';
 const LARK_INBOUND_TASK_TYPE = 'lark_inbound';
 const LARK_INBOUND_DECODE_FAILURE_REASON = 'Failed to decode inbound Lark message envelope.';
+const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED';
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
 
@@ -152,19 +154,48 @@ function formatStatusSummary(status: StatusLookupResponse): string {
 export class EnrichmentPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private readonly phasePublisher: TaskPhasePublisher;
 
   constructor(
     private readonly apiUrl: string,
     private readonly taskDaemonStatusUrl: string,
     private readonly enrichmentService: EnrichmentService,
     private readonly threadContextFetcher?: ThreadContextFetcher,
-    private readonly phasePublisher: TaskPhasePublisher = new TaskPhasePublisher(apiUrl),
     private readonly larkHistoryRepository?: LarkHistoryWriter,
-  ) {}
+    private readonly apiAuthToken?: string,
+    phasePublisher?: TaskPhasePublisher,
+  ) {
+    this.phasePublisher = phasePublisher ?? new TaskPhasePublisher(apiUrl, apiAuthToken);
+  }
+
+  private buildApiHeaders(): Record<string, string> {
+    return {
+      'Content-Type': 'application/json',
+      ...buildApiAuthHeaders(this.apiAuthToken),
+    };
+  }
+
+  private isAuthFailureStatus(status: number): boolean {
+    return status === 401 || status === 403;
+  }
+
+  private throwIfAuthFailureStatus(status: number, context: string, taskId?: string): void {
+    if (!this.isAuthFailureStatus(status)) {
+      return;
+    }
+
+    logger.warn({ task_id: taskId, status, context }, API_AUTH_FAILURE_LOG);
+    throw new ApiAuthConfigurationError(`${context} failed with auth status ${status}`);
+  }
 
   async pollOnce(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiUrl}/tasks/next`);
+      const nextTaskHeaders = buildApiAuthHeaders(this.apiAuthToken);
+      const res = Object.keys(nextTaskHeaders).length > 0
+        ? await fetch(`${this.apiUrl}/tasks/next`, { headers: nextTaskHeaders })
+        : await fetch(`${this.apiUrl}/tasks/next`);
+
+      this.throwIfAuthFailureStatus(res.status, 'GET /tasks/next');
 
       if (res.status === 204) {
         logger.debug('No tasks available');
@@ -329,9 +360,10 @@ export class EnrichmentPoller {
         try {
           const jobRes = await fetch(`${this.apiUrl}/jobs`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: this.buildApiHeaders(),
             body: JSON.stringify(jobSubmission),
           });
+          this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
           if (jobRes.status !== 201) {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for gc task - not acking task');
             return;
@@ -442,9 +474,10 @@ export class EnrichmentPoller {
         try {
           const jobRes = await fetch(`${this.apiUrl}/jobs`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: this.buildApiHeaders(),
             body: JSON.stringify(enrichmentResult.job),
           });
+          this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
           if (jobRes.status !== 201) {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for new_instance - not acking');
             return;
@@ -501,9 +534,10 @@ export class EnrichmentPoller {
         try {
           const jobRes = await fetch(`${this.apiUrl}/jobs`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: this.buildApiHeaders(),
             body: JSON.stringify(enrichmentResult.job),
           });
+          this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
           if (jobRes.status !== 201) {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for thread_reply rewrite - not acking task');
             return;
@@ -564,9 +598,10 @@ export class EnrichmentPoller {
       try {
         const jobRes = await fetch(`${this.apiUrl}/jobs`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.buildApiHeaders(),
           body: JSON.stringify(enrichmentResult.job),
         });
+        this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
         if (jobRes.status !== 201) {
           logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed - not acking task');
           return;
@@ -579,6 +614,11 @@ export class EnrichmentPoller {
 
       await this.ackTask(task.task_id);
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        logger.error({ err }, 'Stopping enrichment poll due to API auth configuration error');
+        this.stop();
+        return;
+      }
       logger.error({ err }, 'Enrichment poll error');
     }
   }
@@ -695,9 +735,11 @@ export class EnrichmentPoller {
 
       const res = await fetch(`${this.apiUrl}/results`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildApiHeaders(),
         body: JSON.stringify(body),
       });
+
+      this.throwIfAuthFailureStatus(res.status, 'POST /results', task.task_id);
 
       if (res.status !== 201) {
         logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for rejection');
@@ -707,6 +749,9 @@ export class EnrichmentPoller {
       logger.info({ task_id: task.task_id }, 'Published rejection result');
       return true;
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        throw err;
+      }
       logger.error({ task_id: task.task_id, err }, 'Failed to publish rejection result');
       return false;
     }
@@ -716,6 +761,9 @@ export class EnrichmentPoller {
     try {
       await this.phasePublisher.publish(task, phase);
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        throw err;
+      }
       logger.warn({ task_id: task.task_id, task_type: task.task_type, phase, err }, 'Failed to publish task phase');
     }
   }
@@ -744,9 +792,11 @@ export class EnrichmentPoller {
 
       const res = await fetch(`${this.apiUrl}/results`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: this.buildApiHeaders(),
         body: JSON.stringify(body),
       });
+
+      this.throwIfAuthFailureStatus(res.status, 'POST /results', task.task_id);
 
       if (res.status !== 201) {
         logger.error({ task_id: task.task_id, status: res.status }, 'POST /results failed for status result');
@@ -755,6 +805,9 @@ export class EnrichmentPoller {
 
       return true;
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        throw err;
+      }
       logger.error({ task_id: task.task_id, err }, 'Failed to publish status result');
       return false;
     }
@@ -762,13 +815,20 @@ export class EnrichmentPoller {
 
   private async ackTask(taskId: string): Promise<void> {
     try {
-      const ackRes = await fetch(`${this.apiUrl}/tasks/${taskId}/ack`, { method: 'POST' });
+      const ackHeaders = buildApiAuthHeaders(this.apiAuthToken);
+      const ackRes = Object.keys(ackHeaders).length > 0
+        ? await fetch(`${this.apiUrl}/tasks/${taskId}/ack`, { method: 'POST', headers: ackHeaders })
+        : await fetch(`${this.apiUrl}/tasks/${taskId}/ack`, { method: 'POST' });
+      this.throwIfAuthFailureStatus(ackRes.status, 'POST /tasks/:id/ack', taskId);
       if (ackRes.status !== 200) {
         logger.warn({ task_id: taskId, status: ackRes.status }, 'Task ACK failed');
       } else {
         logger.info({ task_id: taskId }, 'Task acknowledged');
       }
     } catch (ackErr) {
+      if (ackErr instanceof ApiAuthConfigurationError) {
+        throw ackErr;
+      }
       logger.error({ task_id: taskId, err: ackErr }, 'Task ACK request failed');
     }
   }
