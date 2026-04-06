@@ -120,7 +120,7 @@ describe('startTaskDaemon', () => {
       createMachineLock,
       createPoller: vi.fn(() => fakePoller) as never,
       createStatusServer: vi.fn(() => fakeServer) as never,
-      processObject: { env: { TASK_DAEMON_DISABLE_MACHINE_LOCK: '1' }, on: vi.fn() },
+      processObject: { env: { TASK_DAEMON_DISABLE_MACHINE_LOCK: '1', API_AUTH_DISABLED: '1' }, on: vi.fn() },
       exit: vi.fn() as never,
     });
 
@@ -158,7 +158,7 @@ describe('startTaskDaemon', () => {
         }),
         createPoller: vi.fn(() => fakePoller) as never,
         createStatusServer: vi.fn(() => fakeServer) as never,
-        processObject: { env: {}, on: vi.fn() },
+        processObject: { env: { API_AUTH_DISABLED: '1' }, on: vi.fn() },
         exit: vi.fn() as never,
       }),
     ).rejects.toThrow(/only one task-daemon/i);
@@ -200,7 +200,7 @@ describe('startTaskDaemon', () => {
         createMachineLock: () => machineLock,
         createPoller: vi.fn(() => fakePoller) as never,
         createStatusServer: vi.fn(() => fakeServer) as never,
-        processObject: { env: {}, on: vi.fn() },
+        processObject: { env: { API_AUTH_DISABLED: '1' }, on: vi.fn() },
         exit: vi.fn() as never,
       }),
     ).rejects.toThrow(/bind failed/);
@@ -236,7 +236,7 @@ describe('startTaskDaemon', () => {
       createMachineLock: () => machineLock,
       createPoller: vi.fn(() => fakePoller) as never,
       createStatusServer: vi.fn(() => fakeServer) as never,
-      processObject: { env: {}, on: vi.fn() },
+      processObject: { env: { API_AUTH_DISABLED: '1' }, on: vi.fn() },
       exit: vi.fn() as never,
     });
 
