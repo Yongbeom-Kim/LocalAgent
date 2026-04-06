@@ -1,4 +1,4 @@
-import { TaskResult, createLogger } from '@local-agent/shared';
+import { TaskResult, buildApiAuthHeaders, createLogger } from '@local-agent/shared';
 import { LarkPhaseNotifier, type TaskPhaseEventLike } from './adapters/lark-phase-notifier';
 import { LarkNotifier } from './adapters/lark-notifier';
 import {
@@ -36,15 +36,44 @@ export class LarkPoller {
     private readonly queueName: string,
     private readonly notifier: LarkNotifier,
     private readonly phaseNotifier: LarkPhaseNotifier,
+    private readonly apiAuthToken?: string,
   ) {}
+
+  private buildApiHeaders(): Record<string, string> {
+    return {
+      ...buildApiAuthHeaders(this.apiAuthToken),
+    };
+  }
+
+  private isAuthFailureStatus(status: number): boolean {
+    return status === 401 || status === 403;
+  }
+
+  private logAuthFailure(context: string, status: number, details?: Record<string, unknown>): void {
+    logger.warn(
+      {
+        ...details,
+        status,
+        context,
+      },
+      'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED',
+    );
+  }
 
   async pollOnce(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`);
+      const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`, {
+        headers: this.buildApiHeaders(),
+      });
 
       if (res.status === 204) {
         logger.debug('No results available');
         return;
+      }
+
+      if (this.isAuthFailureStatus(res.status)) {
+        this.logAuthFailure('GET /results/next/:queue_name', res.status, { queue_name: this.queueName });
+        throw new Error(`API auth failure (${res.status}) while polling results`);
       }
 
       if (res.status !== 200) {
@@ -215,7 +244,15 @@ export class LarkPoller {
     try {
       const ackRes = await fetch(`${this.apiUrl}/results/${this.queueName}/${id}/ack`, {
         method: 'POST',
+        headers: this.buildApiHeaders(),
       });
+      if (this.isAuthFailureStatus(ackRes.status)) {
+        this.logAuthFailure('POST /results/:queue_name/:id/ack', ackRes.status, {
+          queue_name: this.queueName,
+          id,
+        });
+        throw new Error(`API auth failure (${ackRes.status}) while acknowledging task event`);
+      }
       if (ackRes.status !== 200) {
         logger.warn({ id, status: ackRes.status }, 'Task event ACK failed');
       } else {
@@ -223,6 +260,7 @@ export class LarkPoller {
       }
     } catch (ackErr) {
       logger.error({ id, err: ackErr }, 'Task event ACK request failed');
+      throw ackErr;
     }
   }
 
