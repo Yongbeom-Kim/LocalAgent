@@ -9,6 +9,9 @@ import {
 
 const logger = createLogger('lark-daemon:poller');
 const PHASE_GUARD_TTL_MS = 10 * 60 * 1000;
+const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED';
+
+class ApiAuthConfigurationError extends Error {}
 
 type TaskEventKind = 'result' | 'phase';
 
@@ -56,8 +59,17 @@ export class LarkPoller {
         status,
         context,
       },
-      'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED',
+      API_AUTH_FAILURE_LOG,
     );
+  }
+
+  private throwIfAuthFailureStatus(status: number, context: string, details?: Record<string, unknown>): void {
+    if (!this.isAuthFailureStatus(status)) {
+      return;
+    }
+
+    this.logAuthFailure(context, status, details);
+    throw new ApiAuthConfigurationError(`${context} failed with auth status ${status}`);
   }
 
   async pollOnce(): Promise<void> {
@@ -71,10 +83,7 @@ export class LarkPoller {
         return;
       }
 
-      if (this.isAuthFailureStatus(res.status)) {
-        this.logAuthFailure('GET /results/next/:queue_name', res.status, { queue_name: this.queueName });
-        throw new Error(`API auth failure (${res.status}) while polling results`);
-      }
+      this.throwIfAuthFailureStatus(res.status, 'GET /results/next/:queue_name', { queue_name: this.queueName });
 
       if (res.status !== 200) {
         logger.warn({ status: res.status }, 'Unexpected response from API');
@@ -123,6 +132,12 @@ export class LarkPoller {
       }
       return;
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        logger.error({ err }, 'Stopping lark poll due to API auth configuration error');
+        this.stop();
+        return;
+      }
+
       logger.error({ err }, 'Lark poll error');
     }
   }
@@ -246,19 +261,20 @@ export class LarkPoller {
         method: 'POST',
         headers: this.buildApiHeaders(),
       });
-      if (this.isAuthFailureStatus(ackRes.status)) {
-        this.logAuthFailure('POST /results/:queue_name/:id/ack', ackRes.status, {
-          queue_name: this.queueName,
-          id,
-        });
-        throw new Error(`API auth failure (${ackRes.status}) while acknowledging task event`);
-      }
+      this.throwIfAuthFailureStatus(ackRes.status, 'POST /results/:queue_name/:id/ack', {
+        queue_name: this.queueName,
+        id,
+      });
       if (ackRes.status !== 200) {
         logger.warn({ id, status: ackRes.status }, 'Task event ACK failed');
       } else {
         logger.info({ id }, 'Task event acknowledged');
       }
     } catch (ackErr) {
+      if (ackErr instanceof ApiAuthConfigurationError) {
+        throw ackErr;
+      }
+
       logger.error({ id, err: ackErr }, 'Task event ACK request failed');
       throw ackErr;
     }

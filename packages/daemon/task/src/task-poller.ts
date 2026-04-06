@@ -12,6 +12,9 @@ import { SessionLockManager } from './services/session-lock';
 import { TaskPhasePublisher } from './adapters/task-phase-publisher';
 
 const logger = createLogger('task-daemon:poller');
+const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED';
+
+export class ApiAuthConfigurationError extends Error {}
 
 interface SessionDescriptor {
   session_id: string;
@@ -53,8 +56,17 @@ export class TaskPoller {
         status,
         context,
       },
-      'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED',
+      API_AUTH_FAILURE_LOG,
     );
+  }
+
+  private throwIfAuthFailureStatus(status: number, context: string, details?: Record<string, unknown>): void {
+    if (!this.isAuthFailureStatus(status)) {
+      return;
+    }
+
+    this.logAuthFailure(context, status, details);
+    throw new ApiAuthConfigurationError(`${context} failed with auth status ${status}`);
   }
 
   isSessionActive(sessionId: string): boolean {
@@ -92,6 +104,12 @@ export class TaskPoller {
         this.inFlightJobs.set(job.job_id, promise);
       }
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        logger.error({ err }, 'Stopping task poll due to API auth configuration error');
+        this.stop();
+        return;
+      }
+
       logger.error({ err }, 'Poll error');
     }
   }
@@ -104,10 +122,7 @@ export class TaskPoller {
       logger.warn('Session queue discovery unavailable');
       return [];
     }
-    if (this.isAuthFailureStatus(res.status)) {
-      this.logAuthFailure('GET /jobs/sessions', res.status);
-      return [];
-    }
+    this.throwIfAuthFailureStatus(res.status, 'GET /jobs/sessions');
     if (res.status !== 200) {
       logger.warn({ status: res.status }, 'Unexpected response from API while listing sessions');
       return [];
@@ -125,10 +140,7 @@ export class TaskPoller {
       return null;
     }
 
-    if (this.isAuthFailureStatus(res.status)) {
-      this.logAuthFailure('GET /jobs/next/:session_id', res.status, { session_id: sessionId });
-      return null;
-    }
+    this.throwIfAuthFailureStatus(res.status, 'GET /jobs/next/:session_id', { session_id: sessionId });
 
     if (res.status !== 200) {
       logger.warn({ status: res.status, session_id: sessionId }, 'Unexpected job fetch response from API');
@@ -168,13 +180,10 @@ export class TaskPoller {
             headers: this.buildApiHeaders(),
           },
         );
-        if (this.isAuthFailureStatus(ackRes.status)) {
-          this.logAuthFailure('POST /jobs/:session_id/:job_id/ack', ackRes.status, {
-            session_id: job.session_id,
-            job_id: job.job_id,
-          });
-          return;
-        }
+        this.throwIfAuthFailureStatus(ackRes.status, 'POST /jobs/:session_id/:job_id/ack', {
+          session_id: job.session_id,
+          job_id: job.job_id,
+        });
         if (ackRes.status !== 200) {
           logger.warn({ job_id: job.job_id, status: ackRes.status }, 'Immediate ACK failed; refusing execution');
           return;
@@ -214,14 +223,11 @@ export class TaskPoller {
           headers: this.buildApiHeaders('application/json'),
           body: JSON.stringify(resultWithSource),
         });
-        if (this.isAuthFailureStatus(resultRes.status)) {
-          this.logAuthFailure('POST /results', resultRes.status, {
-            session_id: job.session_id,
-            job_id: job.job_id,
-            task_id: job.task_id,
-          });
-          return;
-        }
+        this.throwIfAuthFailureStatus(resultRes.status, 'POST /results', {
+          session_id: job.session_id,
+          job_id: job.job_id,
+          task_id: job.task_id,
+        });
         if (resultRes.status !== 201) {
           logger.warn({ job_id: job.job_id, status: resultRes.status }, 'Result publish failed');
         } else {
@@ -248,6 +254,10 @@ export class TaskPoller {
     try {
       await this.phasePublisher.publish(job, phase);
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        throw err;
+      }
+
       logger.warn(
         { job_id: job.job_id, task_id: job.task_id, task_type: job.task_type, phase, err },
         'Failed to publish task phase',
