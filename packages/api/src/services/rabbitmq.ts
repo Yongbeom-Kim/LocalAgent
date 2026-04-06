@@ -12,6 +12,7 @@ import {
   DEFAULT_SESSION_QUEUE_IDLE_TTL_MS,
   DEFAULT_TELEGRAM_QUEUE_NAME,
 } from '@local-agent/shared';
+import { BufferedAmqpEnqueuer } from './buffered-amqp-enqueuer';
 
 interface GetMessage {
   content: Buffer;
@@ -50,6 +51,15 @@ export class RabbitMQService {
   private connectionGeneration = 0;
   private deliveryMap = new Map<string, TrackedDelivery>();
   private queueDeliveryMaps = new Map<string, Map<string, TrackedDelivery>>();
+  private publishBuffer = new BufferedAmqpEnqueuer({
+    resolveChannel: async () => {
+      const connected = await this.ensureConnected();
+      return connected ? this.channel : null;
+    },
+    clearConnectionState: () => this.clearConnectionState(),
+    isRetryableError: (error) => this.isRetryableChannelError(error),
+    logger,
+  });
 
   constructor(
     private readonly url: string,
@@ -70,6 +80,7 @@ export class RabbitMQService {
 
   async close(): Promise<void> {
     this.closing = true;
+    this.publishBuffer.close();
 
     try {
       await this.reconnectPromise;
@@ -85,9 +96,10 @@ export class RabbitMQService {
 
   async publish(message: Task): Promise<boolean> {
     const buffer = Buffer.from(JSON.stringify(message));
-    return this.withChannel('publish task', (channel) =>
-      channel.sendToQueue(this.queueName, buffer, { persistent: true }),
-    );
+    return this.publishBuffer.enqueue({
+      operationName: 'publish task',
+      publish: (channel) => channel.sendToQueue(this.queueName, buffer, { persistent: true }),
+    });
   }
 
   async ensureSessionJobQueue(sessionId: string): Promise<string> {
@@ -100,11 +112,14 @@ export class RabbitMQService {
 
   async publishJob(message: Job): Promise<boolean> {
     const buffer = Buffer.from(JSON.stringify(message));
-    return this.withChannel('publish job', async (channel) => {
-      await this.assertSessionJobQueue(channel, message.session_id);
-      return channel.publish(DEFAULT_JOBS_EXCHANGE_NAME, message.session_id, buffer, {
-        persistent: true,
-      });
+    return this.publishBuffer.enqueue({
+      operationName: 'publish job',
+      publish: async (channel) => {
+        await this.assertSessionJobQueue(channel, message.session_id);
+        return channel.publish(DEFAULT_JOBS_EXCHANGE_NAME, message.session_id, buffer, {
+          persistent: true,
+        });
+      },
     });
   }
 
@@ -214,9 +229,10 @@ export class RabbitMQService {
 
   async publishToExchange(exchange: string, message: TaskEvent): Promise<boolean> {
     const buffer = Buffer.from(JSON.stringify(message));
-    return this.withChannel('publish task event', (channel) =>
-      channel.publish(exchange, '', buffer, { persistent: true }),
-    );
+    return this.publishBuffer.enqueue({
+      operationName: 'publish task event',
+      publish: (channel) => channel.publish(exchange, '', buffer, { persistent: true }),
+    });
   }
 
   async getNextFromQueue(queueName: string): Promise<TaskEvent | null> {
@@ -290,6 +306,7 @@ export class RabbitMQService {
       // Deliveries tied to a dead channel cannot be ACKed safely after reconnect.
       // Clearing them forces later ACK calls to return false and rely on redelivery.
       this.clearDeliveryTracking();
+      this.publishBuffer.requestFlush();
     } catch (err) {
       await conn.close().catch(() => undefined);
       throw err;
