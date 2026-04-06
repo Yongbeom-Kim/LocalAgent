@@ -31,7 +31,7 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
     env,
   });
 
-  if (env.API_AUTH_DISABLED !== '1' && !token) {
+  if (env.API_AUTH_DISABLED?.trim() !== '1' && !token) {
     return {
       success: false,
       error: 'API auth is enabled but no token is configured. Pass --token or set API_AUTH_TOKEN.',

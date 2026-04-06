@@ -105,11 +105,8 @@ describe('loadApiAuthConfig', () => {
     expect(loadApiAuthConfig({ API_AUTH_DISABLED: '1' })).toEqual({ enabled: false });
   });
 
-  it('treats whitespace around disable flag as enabled', () => {
-    expect(loadApiAuthConfig({ API_AUTH_DISABLED: ' 1 ', API_AUTH_TOKEN: 'x' })).toEqual({
-      enabled: true,
-      token: 'x',
-    });
+  it('treats whitespace around disable flag as disabled', () => {
+    expect(loadApiAuthConfig({ API_AUTH_DISABLED: ' 1 ' })).toEqual({ enabled: false });
   });
 
   it('trims API_AUTH_TOKEN', () => {
