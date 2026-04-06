@@ -44,6 +44,7 @@ export {
 export {
   TASK_COMMAND_USAGE,
   GC_COMMAND_USAGE,
+  SHELL_COMMAND_USAGE,
   type RoutingCommandLabel,
   formatMissingTaskTypeMessage,
   formatUnknownTaskTypeMessage,
@@ -55,6 +56,7 @@ export {
   formatThreadReplyHelpMessage,
   formatThreadTaskCommandRejectedMessage,
   formatThreadOnlyCommandMessage,
+  formatShellDisabledMessage,
   formatGcCommandUsageMessage,
 } from './routing-errors';
 export {
@@ -105,6 +107,7 @@ export {
 export {
   GC_THREAD_REJECTION_REASON,
   ROOT_TASK_USAGE_HINT,
+  SHELL_COMMAND_THREAD_ONLY_MESSAGE,
   classifyLarkInboundEnvelope,
   type LarkInboundClassificationResult,
 } from './lark-inbound-routing';

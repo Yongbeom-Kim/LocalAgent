@@ -212,6 +212,49 @@ Invalid (extra content):
 - `/end` is rejected unless it can be associated with an existing thread session.
 - When accepted, cleanup may execute only after earlier same-session work finishes.
 
+### /shell
+
+**Purpose**
+
+Run a shell command in the current thread session.
+
+**Grammar**
+
+```text
+/shell <command>
+```
+
+**Valid Contexts**
+
+- Thread reply only.
+
+**Invalid Forms**
+
+- Any use as a root message. (Context invalid.)
+- `/shell` (missing `<command>`). (Shape invalid.)
+- Any newline after the `/shell` line. (Shape invalid.)
+
+**Examples**
+
+Valid:
+
+```text
+/shell <command>
+```
+
+Invalid (missing command):
+
+```text
+/shell
+```
+
+Invalid (extra content on a new line):
+
+```text
+/shell <command>
+second line
+```
+
 ### /gc
 
 **Purpose**

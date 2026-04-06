@@ -219,6 +219,83 @@ describe('classifyLarkInboundEnvelope', () => {
     });
   });
 
+  it('accepts threaded /shell commands as a control task', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({
+        message_id: 'om_reply',
+        root_message_id: 'om_root',
+        thread_id: 'omt_1',
+        normalized_text: '/shell ls -la',
+        raw_content: '{"text":"/shell ls -la"}',
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: 'accepted',
+      task: expect.objectContaining({
+        task_type: 'shell_command',
+        payload: 'ls -la',
+        executor: undefined,
+        executor_model: undefined,
+        task_source: { source: 'lark', message_id: 'om_reply' },
+      }),
+      envelope: expect.objectContaining({ message_id: 'om_reply' }),
+      shouldMaterializeRootState: false,
+    });
+  });
+
+  it('rejects root /shell commands as thread-only', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({ normalized_text: '/shell ls', raw_content: '{"text":"/shell ls"}' }),
+    );
+
+    expect(result).toEqual({
+      kind: 'rejected',
+      task: expect.objectContaining({ task_type: 'shell_command' }),
+      reason: formatThreadOnlyCommandMessage('/shell'),
+    });
+  });
+
+  it('rejects bare threaded /shell commands', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({
+        message_id: 'om_reply',
+        root_message_id: 'om_root',
+        thread_id: 'omt_1',
+        normalized_text: '/shell',
+        raw_content: '{"text":"/shell"}',
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: 'rejected',
+      task: expect.objectContaining({ task_type: 'shell_command' }),
+      reason: formatThreadReplyHelpMessage(),
+    });
+  });
+
+  it('rejects threaded /shell commands with trailing newline content', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({
+        message_id: 'om_reply',
+        root_message_id: 'om_root',
+        thread_id: 'omt_1',
+        normalized_text: '/shell ls\nnext',
+        raw_content: '{"text":"/shell ls\\nnext"}',
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: 'rejected',
+      task: expect.objectContaining({ task_type: 'shell_command' }),
+      reason: formatThreadReplyHelpMessage(),
+    });
+  });
+
   it('rejects non-normalizable threaded input with thread help', () => {
     const result = classifyLarkInboundEnvelope(
       createTask(),

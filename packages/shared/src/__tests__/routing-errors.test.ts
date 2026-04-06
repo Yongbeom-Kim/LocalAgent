@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   TASK_COMMAND_USAGE,
+  SHELL_COMMAND_USAGE,
   formatMissingTaskTypeMessage,
   formatUnknownTaskTypeMessage,
   formatMissingExecutorMessage,
@@ -8,6 +9,7 @@ import {
   formatMissingPayloadMessage,
   formatInvalidExecutorMessage,
   formatInvalidModelMessage,
+  formatShellDisabledMessage,
   type TaskSubmission,
 } from '../index';
 import {
@@ -89,13 +91,13 @@ describe('progressive /task help', () => {
 describe('thread routing guidance messages', () => {
   it('formats thread reply help message', () => {
     expect(formatThreadReplyHelpMessage()).toBe(
-      'Thread replies must be natural language, /status, /new, or /end.',
+      'Thread replies must be natural language, /status, /new, /end, or /shell.',
     );
   });
 
   it('formats /task rejected in thread message', () => {
     expect(formatThreadTaskCommandRejectedMessage()).toBe(
-      'Cannot use /task in a thread. Reply with natural language, /status, /new, or /end.\nUse /task only as a new root message.',
+      'Cannot use /task in a thread. Reply with natural language, /status, /new, /end, or /shell.\nUse /task only as a new root message.',
     );
   });
 
@@ -109,5 +111,21 @@ describe('thread routing guidance messages', () => {
     expect(formatThreadOnlyCommandMessage('/status')).toBe(
       'The /status command can only be used inside a thread.',
     );
+  });
+
+  it('formats thread-only shell command message', () => {
+    expect(formatThreadOnlyCommandMessage('/shell')).toBe(
+      'The /shell command can only be used inside a thread.',
+    );
+  });
+});
+
+describe('shell helpers', () => {
+  it('defines the shell usage string', () => {
+    expect(SHELL_COMMAND_USAGE).toBe('/shell <command>');
+  });
+
+  it('formats shell disabled message', () => {
+    expect(formatShellDisabledMessage()).toBe('The /shell command is disabled.');
   });
 });

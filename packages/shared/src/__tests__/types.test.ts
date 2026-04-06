@@ -373,6 +373,7 @@ describe('isControlTaskType', () => {
     expect(isControlTaskType('new_instance')).toBe(true);
     expect(isControlTaskType('gc')).toBe(true);
     expect(isControlTaskType('cleanup')).toBe(true);
+    expect(isControlTaskType('shell_command')).toBe(true);
   });
 
   it('returns false for normal task types', () => {
