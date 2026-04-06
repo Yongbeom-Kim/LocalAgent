@@ -6,12 +6,14 @@ import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
+  spawnSync: vi.fn(),
 }));
 
 import { ClaudeExecutor } from '../claude-executor';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const mockSpawn = vi.mocked(spawn);
+const mockSpawnSync = vi.mocked(spawnSync);
 
 function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
   return {
@@ -75,7 +77,28 @@ describe('ClaudeExecutor', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSpawnSync.mockReturnValue({ status: 0 } as any);
     executor = new ClaudeExecutor();
+  });
+
+  it('returns success when the claude binary is available in PATH', async () => {
+    mockSpawnSync.mockReturnValueOnce({ status: 0 } as any);
+
+    await expect(executor.precheck(createEnv())).resolves.toEqual({ ok: true });
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      'sh',
+      ['-lc', 'command -v claude >/dev/null 2>&1'],
+      { stdio: 'ignore' },
+    );
+  });
+
+  it('returns failure when the claude binary is missing from PATH', async () => {
+    mockSpawnSync.mockReturnValueOnce({ status: 1 } as any);
+
+    await expect(executor.precheck(createEnv())).resolves.toEqual({
+      ok: false,
+      stderr: 'Executor "claude" unavailable: missing required binaries in PATH: claude',
+    });
   });
 
   it('returns success result with stdout and stderr on successful execution', async () => {
