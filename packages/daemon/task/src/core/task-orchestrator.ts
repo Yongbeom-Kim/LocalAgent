@@ -3,6 +3,7 @@ import { ClaudeExecutor } from '../adapters/claude-executor';
 import { CleanupExecutor } from '../adapters/cleanup-executor';
 import { ClaudeWExecutor } from '../adapters/claude-w-executor';
 import { CursorExecutor } from '../adapters/cursor-executor';
+import { ShellExecutor } from '../adapters/shell-executor';
 import { TTCodexExecutor } from '../adapters/ttcodex-executor';
 import { TaskExecutor } from '../ports/task-executor';
 import { GcExecutor } from '../services/gc-executor';
@@ -19,8 +20,10 @@ const EMPTY_EXECUTION_ENVIRONMENT: ExecutionEnvironment = {
 
 export class TaskOrchestrator {
   private readonly executors: Record<TaskExecutorType, TaskExecutor>;
+  private readonly shellExecutor: TaskExecutor;
 
   constructor(private readonly jobEnv: JobEnvironment) {
+    this.shellExecutor = new ShellExecutor();
     this.executors = {
       claude: new ClaudeExecutor(),
       'claude-w': new ClaudeWExecutor(),
@@ -123,7 +126,7 @@ export class TaskOrchestrator {
       const isLast = i === job.executors.length - 1;
 
       try {
-        const executor = this.resolveExecutor(pref.executor);
+        const executor = this.resolveExecutor(pref.executor, job.task_type);
         const attempt: JobAttempt = {
           job_id: job.job_id,
           task_id: job.task_id,
@@ -183,7 +186,10 @@ export class TaskOrchestrator {
     return lastResult!;
   }
 
-  private resolveExecutor(executor: TaskExecutorType): TaskExecutor {
+  private resolveExecutor(executor: TaskExecutorType, taskType: string): TaskExecutor {
+    if (executor === 'builtin' && taskType === 'shell_command') {
+      return this.shellExecutor;
+    }
     const resolved = this.executors[executor];
     if (!resolved) {
       throw new Error(`Unknown executor: ${executor}`);
