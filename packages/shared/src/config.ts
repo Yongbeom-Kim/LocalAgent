@@ -41,6 +41,11 @@ export interface DaemonConfig {
   statusPort: number;
 }
 
+export interface ApiAuthConfig {
+  enabled: boolean;
+  token?: string;
+}
+
 export interface RabbitMqManagementConfig {
   baseUrl: string;
   username: string;
@@ -98,5 +103,16 @@ export function loadDaemonConfig(env: Record<string, string | undefined> = proce
     pollIntervalMs: env.POLL_INTERVAL_MS ? parseInt(env.POLL_INTERVAL_MS, 10) : DEFAULT_POLL_INTERVAL_MS,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
     statusPort: env.TASK_DAEMON_STATUS_PORT ? parseInt(env.TASK_DAEMON_STATUS_PORT, 10) : DEFAULT_TASK_DAEMON_STATUS_PORT,
+  };
+}
+
+export function loadApiAuthConfig(env: Record<string, string | undefined> = process.env): ApiAuthConfig {
+  if (env.API_AUTH_DISABLED === '1') {
+    return { enabled: false };
+  }
+
+  return {
+    enabled: true,
+    token: requireEnvValue(env, 'API_AUTH_TOKEN'),
   };
 }
