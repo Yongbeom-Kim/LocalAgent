@@ -27,7 +27,6 @@ export class ShellExecutor implements TaskExecutor {
     return new Promise((resolve) => {
       const child = spawn('zsh', ['-lc', job.payload], {
         cwd: env.workDir,
-        detached: process.platform !== 'win32',
       });
       const stdoutCapture = new OutputCapture();
       const stderrCapture = new OutputCapture();

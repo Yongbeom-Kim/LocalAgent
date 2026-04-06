@@ -5,7 +5,9 @@ import {
 } from './types';
 import {
   TASK_COMMAND_USAGE,
+  SHELL_COMMAND_USAGE,
   formatGcCommandUsageMessage,
+  formatShellCommandUsageMessage,
   formatThreadOnlyCommandMessage,
   formatThreadReplyHelpMessage,
   formatThreadTaskCommandRejectedMessage,
@@ -23,6 +25,7 @@ const LARK_INBOUND_TASK_TYPE = 'lark_inbound';
 export const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
 export const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end, /shell (in a thread)`;
 export const SHELL_COMMAND_THREAD_ONLY_MESSAGE = formatThreadOnlyCommandMessage('/shell');
+export const SHELL_COMMAND_USAGE_HINT = `Usage: ${SHELL_COMMAND_USAGE}`;
 
 export type LarkInboundClassificationResult =
   | {
@@ -108,7 +111,7 @@ export function classifyLarkInboundEnvelope(
     return {
       kind: 'rejected',
       task: { ...baseTask, task_type: SHELL_COMMAND_TASK_TYPE },
-      reason: isThreadReply ? formatThreadReplyHelpMessage() : SHELL_COMMAND_THREAD_ONLY_MESSAGE,
+      reason: isThreadReply ? formatShellCommandUsageMessage() : SHELL_COMMAND_THREAD_ONLY_MESSAGE,
     };
   }
 

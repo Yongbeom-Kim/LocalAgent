@@ -157,8 +157,9 @@ function formatStatusSummary(status: StatusLookupResponse): string {
 export class EnrichmentPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
-  private readonly shellCommandDisabled =
-    process.env[LOCAL_AGENT_DISABLE_SHELL_COMMAND] === '1';
+  private isShellCommandDisabled(): boolean {
+    return process.env[LOCAL_AGENT_DISABLE_SHELL_COMMAND] === '1';
+  }
 
   constructor(
     private readonly apiUrl: string,
@@ -317,7 +318,7 @@ export class EnrichmentPoller {
       }
 
       if (isShellCommandTask) {
-        if (this.shellCommandDisabled) {
+        if (this.isShellCommandDisabled()) {
           logger.warn({ task_id: task.task_id }, 'Rejected shell_command task when disabled');
           const published = await this.publishRejection(task, formatShellDisabledMessage());
           if (published) {

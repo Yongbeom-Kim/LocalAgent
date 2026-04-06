@@ -17,6 +17,7 @@ import {
   formatMissingExecutorMessage,
   formatMissingModelMessage,
   formatMissingPayloadMessage,
+  formatShellCommandUsageMessage,
   SHELL_COMMAND_USAGE,
 } from '@local-agent/shared';
 
@@ -155,7 +156,7 @@ export class EnrichmentService {
       executors = [{ executor: 'builtin', executor_model: 'none' }];
     } else if (normalizedTaskType === 'shell_command') {
       if (task.payload.trim() === '') {
-        return { type: 'rejected', reason: `Usage: ${SHELL_COMMAND_USAGE}` };
+        return { type: 'rejected', reason: formatShellCommandUsageMessage() };
       }
       executors = [{ executor: 'builtin', executor_model: 'none' }];
     } else if (normalizedTaskType === 'new_instance') {

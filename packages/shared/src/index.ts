@@ -56,6 +56,7 @@ export {
   formatThreadReplyHelpMessage,
   formatThreadTaskCommandRejectedMessage,
   formatThreadOnlyCommandMessage,
+  formatShellCommandUsageMessage,
   formatShellDisabledMessage,
   formatGcCommandUsageMessage,
 } from './routing-errors';

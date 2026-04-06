@@ -273,7 +273,7 @@ describe('classifyLarkInboundEnvelope', () => {
     expect(result).toEqual({
       kind: 'rejected',
       task: expect.objectContaining({ task_type: 'shell_command' }),
-      reason: formatThreadReplyHelpMessage(),
+      reason: 'Usage: /shell <command>',
     });
   });
 
@@ -292,7 +292,7 @@ describe('classifyLarkInboundEnvelope', () => {
     expect(result).toEqual({
       kind: 'rejected',
       task: expect.objectContaining({ task_type: 'shell_command' }),
-      reason: formatThreadReplyHelpMessage(),
+      reason: 'Usage: /shell <command>',
     });
   });
 

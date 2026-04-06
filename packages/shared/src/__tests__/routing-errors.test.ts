@@ -126,6 +126,6 @@ describe('shell helpers', () => {
   });
 
   it('formats shell disabled message', () => {
-    expect(formatShellDisabledMessage()).toBe('The /shell command is disabled.');
+    expect(formatShellDisabledMessage()).toBe('The /shell command is disabled in this environment.');
   });
 });

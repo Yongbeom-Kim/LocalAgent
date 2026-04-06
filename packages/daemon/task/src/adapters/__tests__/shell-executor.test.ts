@@ -110,7 +110,7 @@ describe('ShellExecutor', () => {
     expect(mockSpawn).toHaveBeenCalledWith(
       'zsh',
       ['-lc', 'pwd'],
-      { cwd: '/tmp/shell-cwd', detached: true },
+      { cwd: '/tmp/shell-cwd' },
     );
   });
 });

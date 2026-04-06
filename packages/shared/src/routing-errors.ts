@@ -60,8 +60,12 @@ export function formatThreadOnlyCommandMessage(command: '/status' | '/new' | '/e
   return `The ${command} command can only be used inside a thread.`;
 }
 
+export function formatShellCommandUsageMessage(): string {
+  return `Usage: ${SHELL_COMMAND_USAGE}`;
+}
+
 export function formatShellDisabledMessage(): string {
-  return 'The /shell command is disabled.';
+  return 'The /shell command is disabled in this environment.';
 }
 
 export function formatGcCommandUsageMessage(): string {
