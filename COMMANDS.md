@@ -172,6 +172,47 @@ Invalid (extra content):
 - `/status` is rejected unless it can be associated with an existing thread session.
 - When accepted, the reply reports whether the current thread session has an active executor, how many sessions currently have an ongoing executor, and how many session directories are present on local disk.
 
+### /kill
+
+**Purpose**
+
+Cancel the current running job for the thread session.
+
+**Grammar**
+
+```text
+/kill
+```
+
+**Valid Contexts**
+
+- Thread reply only.
+
+**Invalid Forms**
+
+- Any use as a root message. (Context invalid.)
+- Any trailing arguments or extra content (including newlines). (Shape invalid.)
+
+**Examples**
+
+Valid:
+
+```text
+/kill
+```
+
+Invalid (extra content):
+
+```text
+/kill now
+```
+
+**Notes**
+
+- `/kill` is rejected unless it can be associated with an existing thread session.
+- When accepted, `/kill` targets only the currently running job for that thread session.
+- If nothing is running by the time `/kill` is processed, it is treated as an accepted no-op.
+
 ### /end
 
 **Purpose**

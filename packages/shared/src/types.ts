@@ -144,7 +144,7 @@ export function isValidExecutorPreferences(
   );
 }
 
-export const CONTROL_TASK_TYPES = ['new_instance', 'gc', 'cleanup', 'status'] as const;
+export const CONTROL_TASK_TYPES = ['new_instance', 'gc', 'cleanup', 'status', 'kill'] as const;
 export type ControlTaskType = (typeof CONTROL_TASK_TYPES)[number];
 
 export function isControlTaskType(value: unknown): value is ControlTaskType {
@@ -280,7 +280,7 @@ export function isValidTaskSource(value: unknown): value is TaskSource {
   return false;
 }
 
-export const TASK_PHASES = ['received', 'enriching', 'queued', 'executing', 'completed'] as const;
+export const TASK_PHASES = ['received', 'enriching', 'queued', 'executing', 'cancelled', 'completed'] as const;
 export type TaskPhase = (typeof TASK_PHASES)[number];
 
 export function isValidTaskPhase(value: unknown): value is TaskPhase {

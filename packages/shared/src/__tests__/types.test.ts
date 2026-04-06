@@ -379,6 +379,8 @@ describe('isControlTaskType', () => {
     expect(isControlTaskType('new_instance')).toBe(true);
     expect(isControlTaskType('gc')).toBe(true);
     expect(isControlTaskType('cleanup')).toBe(true);
+    expect(isControlTaskType('status')).toBe(true);
+    expect(isControlTaskType('kill')).toBe(true);
   });
 
   it('returns false for normal task types', () => {
@@ -409,11 +411,12 @@ describe('TaskSubmission routing fields', () => {
 
 describe('task phase events', () => {
   it('exports the supported task phases in lifecycle order', () => {
-    expect(TASK_PHASES).toEqual(['received', 'enriching', 'queued', 'executing', 'completed']);
+    expect(TASK_PHASES).toEqual(['received', 'enriching', 'queued', 'executing', 'cancelled', 'completed']);
   });
 
   it('validates task phase payload values', () => {
     expect(isValidTaskPhase('queued')).toBe(true);
+    expect(isValidTaskPhase('cancelled')).toBe(true);
     expect(isValidTaskPhase('completed')).toBe(true);
     expect(isValidTaskPhase('unknown')).toBe(false);
     expect(isValidTaskPhase(123)).toBe(false);
@@ -421,6 +424,8 @@ describe('task phase events', () => {
 
   it('compares task phases monotonically', () => {
     expect(compareTaskPhases('queued', 'executing')).toBeLessThan(0);
+    expect(compareTaskPhases('executing', 'cancelled')).toBeLessThan(0);
+    expect(compareTaskPhases('cancelled', 'completed')).toBeLessThan(0);
     expect(compareTaskPhases('executing', 'queued')).toBeGreaterThan(0);
     expect(compareTaskPhases('completed', 'completed')).toBe(0);
   });

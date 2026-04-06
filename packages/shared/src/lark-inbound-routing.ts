@@ -15,12 +15,13 @@ import { parseGcCommand } from './gc';
 const GC_TASK_TYPE = 'gc';
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
 const STATUS_TASK_TYPE = 'status';
+const KILL_TASK_TYPE = 'kill';
 const CLEANUP_TASK_TYPE = 'cleanup';
 const THREAD_REPLY_TASK_TYPE = 'thread_reply';
 const LARK_INBOUND_TASK_TYPE = 'lark_inbound';
 
 export const GC_THREAD_REJECTION_REASON = 'The /gc command can only be used as a base message, not inside a thread.';
-export const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /end (in a thread)`;
+export const ROOT_TASK_USAGE_HINT = `Usage: ${TASK_COMMAND_USAGE} or /status, /kill, /end (in a thread)`;
 
 export type LarkInboundClassificationResult =
   | {
@@ -125,6 +126,21 @@ export function classifyLarkInboundEnvelope(
           kind: 'rejected',
           task: { ...baseTask, task_type: STATUS_TASK_TYPE },
           reason: formatThreadOnlyCommandMessage('/status'),
+        };
+  }
+
+  if (trimmedText === '/kill') {
+    return isThreadReply
+      ? {
+          kind: 'accepted',
+          task: { ...baseTask, task_type: KILL_TASK_TYPE, payload: '', executor: undefined, executor_model: undefined },
+          envelope,
+          shouldMaterializeRootState: false,
+        }
+      : {
+          kind: 'rejected',
+          task: { ...baseTask, task_type: KILL_TASK_TYPE },
+          reason: formatThreadOnlyCommandMessage('/kill'),
         };
   }
 

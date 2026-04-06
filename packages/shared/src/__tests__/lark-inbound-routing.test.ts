@@ -164,6 +164,63 @@ describe('classifyLarkInboundEnvelope', () => {
     });
   });
 
+  it('accepts threaded /kill', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({
+        message_id: 'om_reply',
+        root_message_id: 'om_root',
+        thread_id: 'omt_1',
+        normalized_text: '/kill',
+        raw_content: '{"text":"/kill"}',
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: 'accepted',
+      task: expect.objectContaining({
+        task_type: 'kill',
+        payload: '',
+        executor: undefined,
+        executor_model: undefined,
+      }),
+      envelope: expect.objectContaining({ message_id: 'om_reply' }),
+      shouldMaterializeRootState: false,
+    });
+  });
+
+  it('rejects root /kill commands as thread-only', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({ normalized_text: '/kill', raw_content: '{"text":"/kill"}' }),
+    );
+
+    expect(result).toEqual({
+      kind: 'rejected',
+      task: expect.objectContaining({ task_type: 'kill' }),
+      reason: formatThreadOnlyCommandMessage('/kill'),
+    });
+  });
+
+  it('rejects malformed threaded /kill variants with thread help', () => {
+    const result = classifyLarkInboundEnvelope(
+      createTask(),
+      createEnvelope({
+        message_id: 'om_reply',
+        root_message_id: 'om_root',
+        thread_id: 'omt_1',
+        normalized_text: '/kill now',
+        raw_content: '{"text":"/kill now"}',
+      }),
+    );
+
+    expect(result).toEqual({
+      kind: 'rejected',
+      task: expect.objectContaining({ task_type: 'thread_reply' }),
+      reason: formatThreadReplyHelpMessage(),
+    });
+  });
+
   it('rejects threaded /gc commands', () => {
     const result = classifyLarkInboundEnvelope(
       createTask(),
