@@ -87,23 +87,48 @@ describe('TTCodexExecutor', () => {
     executor = new TTCodexExecutor();
   });
 
-  it('returns success when the ttadk binary is available in PATH', async () => {
-    mockSpawnSync.mockReturnValueOnce({ status: 0 } as any);
+  it('returns success when both ttadk and codex binaries are available in PATH', async () => {
+    mockSpawnSync.mockReturnValueOnce({ status: 0 } as any).mockReturnValueOnce({ status: 0 } as any);
 
     await expect(executor.precheck(createEnv())).resolves.toEqual({ ok: true });
-    expect(mockSpawnSync).toHaveBeenCalledWith(
+    expect(mockSpawnSync).toHaveBeenNthCalledWith(
+      1,
       'sh',
       ['-lc', 'command -v ttadk >/dev/null 2>&1'],
+      { stdio: 'ignore' },
+    );
+    expect(mockSpawnSync).toHaveBeenNthCalledWith(
+      2,
+      'sh',
+      ['-lc', 'command -v codex >/dev/null 2>&1'],
       { stdio: 'ignore' },
     );
   });
 
   it('returns failure when the ttadk binary is missing from PATH', async () => {
-    mockSpawnSync.mockReturnValueOnce({ status: 1 } as any);
+    mockSpawnSync.mockReturnValueOnce({ status: 1 } as any).mockReturnValueOnce({ status: 0 } as any);
 
     await expect(executor.precheck(createEnv())).resolves.toEqual({
       ok: false,
       stderr: 'Executor "ttcodex" unavailable: missing required binaries in PATH: ttadk',
+    });
+  });
+
+  it('returns failure when the codex binary is missing from PATH', async () => {
+    mockSpawnSync.mockReturnValueOnce({ status: 0 } as any).mockReturnValueOnce({ status: 1 } as any);
+
+    await expect(executor.precheck(createEnv())).resolves.toEqual({
+      ok: false,
+      stderr: 'Executor "ttcodex" unavailable: missing required binaries in PATH: codex',
+    });
+  });
+
+  it('reports all missing binaries when ttadk and codex are both missing from PATH', async () => {
+    mockSpawnSync.mockReturnValueOnce({ status: 1 } as any).mockReturnValueOnce({ status: 1 } as any);
+
+    await expect(executor.precheck(createEnv())).resolves.toEqual({
+      ok: false,
+      stderr: 'Executor "ttcodex" unavailable: missing required binaries in PATH: ttadk, codex',
     });
   });
 
