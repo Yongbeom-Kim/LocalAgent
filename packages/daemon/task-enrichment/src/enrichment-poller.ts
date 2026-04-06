@@ -37,11 +37,13 @@ const CLEANUP_REJECTION_REASON = 'Cleanup tasks in existing threads require an i
 const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source to resolve the existing session.';
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
 const STATUS_TASK_TYPE = 'status';
+const KILL_TASK_TYPE = 'kill';
 const THREAD_REPLY_TASK_TYPE = 'thread_reply';
 const NEW_INSTANCE_PROMPT = 'Respond with: New session instance started.';
 const NEW_INSTANCE_MISSING_SOURCE_REASON = 'The /new command requires a Lark source.';
 const NEW_INSTANCE_MISSING_SESSION_REASON = 'The /new command requires an existing session in this thread.';
 const STATUS_MISSING_SESSION_REASON = 'The /status command requires an existing session in this thread.';
+const KILL_MISSING_SESSION_REASON = 'The /kill command requires an existing session in this thread.';
 const STATUS_LOOKUP_FAILURE_REASON = 'Failed to check live executor status. Please retry in the thread.';
 const THREAD_LOOKUP_ERROR_REASON = 'Failed to recover thread state. Please retry in the thread.';
 const THREAD_REPLY_INCOMPLETE_METADATA_REASON =
@@ -290,6 +292,7 @@ export class EnrichmentPoller {
       const isGcTask = task.task_type === GC_TASK_TYPE;
       const isNewInstanceTask = task.task_type === NEW_INSTANCE_TASK_TYPE;
       const isStatusTask = task.task_type === STATUS_TASK_TYPE;
+      const isKillTask = task.task_type === KILL_TASK_TYPE;
       const isThreadReplyTask = task.task_type === THREAD_REPLY_TASK_TYPE;
       let threadResult: ThreadContextResult | undefined;
 
@@ -350,6 +353,15 @@ export class EnrichmentPoller {
         if (isStatusTask && threadResult.kind === 'not_thread') {
           logger.warn({ task_id: task.task_id }, 'Rejected status task outside thread');
           const published = await this.publishRejection(task, formatThreadOnlyCommandMessage('/status'));
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
+          return;
+        }
+
+        if (isKillTask && threadResult.kind === 'not_thread') {
+          logger.warn({ task_id: task.task_id }, 'Rejected kill task outside thread');
+          const published = await this.publishRejection(task, formatThreadOnlyCommandMessage('/kill'));
           if (published) {
             await this.ackTask(task.task_id);
           }
@@ -506,6 +518,46 @@ export class EnrichmentPoller {
           }
           return;
         }
+      }
+
+      if (isKillTask) {
+        if (threadResult?.kind !== 'thread' || !threadResult.inheritedSessionId) {
+          logger.warn({ task_id: task.task_id, threadResult }, 'Rejected kill task without inherited session_id');
+          const published = await this.publishRejection(task, KILL_MISSING_SESSION_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
+          return;
+        }
+
+        const jobSubmission: JobSubmission = {
+          task_id: task.task_id,
+          task_type: KILL_TASK_TYPE,
+          payload: '',
+          executors: [{ executor: 'builtin', executor_model: 'none' }],
+          submitted_at: task.submitted_at,
+          session_id: threadResult.inheritedSessionId,
+          ...(task.task_source ? { task_source: task.task_source } : {}),
+        };
+
+        try {
+          const jobRes = await fetch(`${this.apiUrl}/jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(jobSubmission),
+          });
+          if (jobRes.status !== 201) {
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for kill task - not acking');
+            return;
+          }
+          await this.publishPhase(task, 'queued');
+        } catch (jobErr) {
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for kill task - not acking task');
+          return;
+        }
+
+        await this.ackTask(task.task_id);
+        return;
       }
 
       if (isNewInstanceTask) {

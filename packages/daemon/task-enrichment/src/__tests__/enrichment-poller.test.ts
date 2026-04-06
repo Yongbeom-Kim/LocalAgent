@@ -28,8 +28,8 @@ vi.mock('@local-agent/shared', async () => {
     ...actual,
     generateSessionId: mockGenerateSessionId,
     formatThreadTaskCommandRejectedMessage: () =>
-      'Cannot use /task in a thread. Reply with natural language, /status, /new, or /end.\nUse /task only as a new root message.',
-    formatThreadOnlyCommandMessage: (command: '/status' | '/new' | '/end') =>
+      'Cannot use /task in a thread. Reply with natural language, /status, /kill, /new, or /end.\nUse /task only as a new root message.',
+    formatThreadOnlyCommandMessage: (command: '/status' | '/kill' | '/new' | '/end') =>
       `The ${command} command can only be used inside a thread.`,
   };
 });
@@ -1089,6 +1089,118 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
   });
 
+  it('rejects kill task outside thread', async () => {
+    const task = createTask({
+      task_type: 'kill',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'kill',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'The /kill command can only be used inside a thread.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('rejects kill task without inherited session_id', async () => {
+    const task = createTask({
+      task_type: 'kill',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
+      threadContext: 'assistant: prior',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: null,
+      inheritedExecutor: 'claude',
+      inheritedExecutorModel: 'sonnet',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        job_id: 'task-123',
+        task_id: 'task-123',
+        task_type: 'kill',
+        status: 'failure',
+        exit_code: null,
+        stdout: 'The /kill command requires an existing session in this thread.',
+        stderr: '',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+  });
+
+  it('submits immediate kill job for threaded kill task', async () => {
+    const task = createTask({
+      task_type: 'kill',
+      payload: '',
+      task_source: { source: 'lark', message_id: 'om_msg1' },
+    });
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({
+      kind: 'thread',
+      threadContext: 'assistant: prior',
+      inheritedTaskType: 'deploy',
+      inheritedSessionId: 'thread-session-id',
+      inheritedExecutor: 'claude',
+      inheritedExecutorModel: 'sonnet',
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-kill-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'queued');
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        task_id: 'task-123',
+        task_type: 'kill',
+        payload: '',
+        executors: [{ executor: 'builtin', executor_model: 'none' }],
+        submitted_at: '2026-03-29T00:00:00.000Z',
+        session_id: 'thread-session-id',
+        task_source: { source: 'lark', message_id: 'om_msg1' },
+      }),
+    });
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
+      method: 'POST',
+    });
+  });
+
   it('rejects status task without inherited thread metadata', async () => {
     const task = createTask({
       task_type: 'status',
@@ -1485,7 +1597,7 @@ describe('EnrichmentPoller lark_inbound flow', () => {
         task_type: 'deploy',
         status: 'failure',
         exit_code: null,
-        stdout: 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)',
+        stdout: 'Usage: /task <type> <executor> <model> <payload> or /status, /kill, /end (in a thread)',
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_root_inbound' },
       }),
