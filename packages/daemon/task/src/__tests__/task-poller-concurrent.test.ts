@@ -130,7 +130,7 @@ describe('TaskPoller Concurrent', () => {
 
   it('dispatches multiple jobs for different sessions concurrently', async () => {
     const jobEnv = new JobEnvironment(false);
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5, 'secret');
 
     let resolveJob1!: (v: TaskResultSubmission) => void;
     let resolveJob2!: (v: TaskResultSubmission) => void;
@@ -176,7 +176,7 @@ describe('TaskPoller Concurrent', () => {
 
   it('preserves fifo within a session across repeated polls', async () => {
     const jobEnv = new JobEnvironment(false);
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5, 'secret');
 
     let resolveJob1!: (v: TaskResultSubmission) => void;
     let resolveJob2!: (v: TaskResultSubmission) => void;
@@ -221,7 +221,7 @@ describe('TaskPoller Concurrent', () => {
 
   it('runs cleanup in normal fifo order for the same session', async () => {
     const jobEnv = new JobEnvironment(false);
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5, 'secret');
 
     let resolveActive!: (v: TaskResultSubmission) => void;
     const activePromise = new Promise<TaskResultSubmission>((r) => { resolveActive = r; });
@@ -268,7 +268,7 @@ describe('TaskPoller Concurrent', () => {
   it('backs off when active session count hits concurrency limit', async () => {
     vi.useFakeTimers();
     const jobEnv = new JobEnvironment(false);
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 1);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 1, 'secret');
 
     let resolveJob1!: (v: TaskResultSubmission) => void;
     const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
@@ -302,7 +302,7 @@ describe('TaskPoller Concurrent', () => {
 
   it('keeps the next job in a session from starting before the first lock is released', async () => {
     const jobEnv = new JobEnvironment(false);
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5, 'secret');
 
     let resolveJob1!: (v: TaskResultSubmission) => void;
     const firstPromise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });

@@ -2,6 +2,7 @@ import {
   Job,
   TaskPhase,
   TaskResultSubmission,
+  buildApiAuthHeaders,
   createLogger,
   MAX_SNIPPET_CHARS,
   DEFAULT_MAX_CONCURRENT_SESSIONS,
@@ -30,8 +31,31 @@ export class TaskPoller {
     private readonly orchestrator: TaskOrchestrator,
     private readonly sessionLock: SessionLockManager,
     private readonly maxConcurrency: number = DEFAULT_MAX_CONCURRENT_SESSIONS,
-    private readonly phasePublisher: TaskPhasePublisher = new TaskPhasePublisher(apiUrl),
+    private readonly apiAuthToken?: string,
+    private readonly phasePublisher: TaskPhasePublisher = new TaskPhasePublisher(apiUrl, apiAuthToken),
   ) {}
+
+  private buildApiHeaders(contentType?: 'application/json'): Record<string, string> {
+    return {
+      ...(contentType ? { 'Content-Type': contentType } : {}),
+      ...buildApiAuthHeaders(this.apiAuthToken),
+    };
+  }
+
+  private isAuthFailureStatus(status: number): boolean {
+    return status === 401 || status === 403;
+  }
+
+  private logAuthFailure(context: string, status: number, details?: Record<string, unknown>): void {
+    logger.warn(
+      {
+        ...details,
+        status,
+        context,
+      },
+      'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED',
+    );
+  }
 
   isSessionActive(sessionId: string): boolean {
     return this.activeSessions.has(sessionId);
@@ -73,9 +97,15 @@ export class TaskPoller {
   }
 
   private async fetchMessageQueueActiveSessions(): Promise<SessionDescriptor[]> {
-    const res = await fetch(`${this.apiUrl}/jobs/sessions`);
+    const res = await fetch(`${this.apiUrl}/jobs/sessions`, {
+      headers: this.buildApiHeaders(),
+    });
     if (res.status === 503) {
       logger.warn('Session queue discovery unavailable');
+      return [];
+    }
+    if (this.isAuthFailureStatus(res.status)) {
+      this.logAuthFailure('GET /jobs/sessions', res.status);
       return [];
     }
     if (res.status !== 200) {
@@ -87,9 +117,16 @@ export class TaskPoller {
   }
 
   private async fetchNextJob(sessionId: string): Promise<Job | null> {
-    const res = await fetch(`${this.apiUrl}/jobs/next/${encodeURIComponent(sessionId)}`);
+    const res = await fetch(`${this.apiUrl}/jobs/next/${encodeURIComponent(sessionId)}`, {
+      headers: this.buildApiHeaders(),
+    });
 
     if (res.status === 204) {
+      return null;
+    }
+
+    if (this.isAuthFailureStatus(res.status)) {
+      this.logAuthFailure('GET /jobs/next/:session_id', res.status, { session_id: sessionId });
       return null;
     }
 
@@ -110,6 +147,7 @@ export class TaskPoller {
       try {
         await fetch(`${this.apiUrl}/jobs/${encodeURIComponent(job.session_id)}/${job.job_id}/nack`, {
           method: 'POST',
+          headers: this.buildApiHeaders(),
         });
       } catch (nackErr) {
         logger.error({ job_id: job.job_id, err: nackErr }, 'NACK request failed');
@@ -125,8 +163,18 @@ export class TaskPoller {
       try {
         const ackRes = await fetch(
           `${this.apiUrl}/jobs/${encodeURIComponent(job.session_id)}/${job.job_id}/ack`,
-          { method: 'POST' },
+          {
+            method: 'POST',
+            headers: this.buildApiHeaders(),
+          },
         );
+        if (this.isAuthFailureStatus(ackRes.status)) {
+          this.logAuthFailure('POST /jobs/:session_id/:job_id/ack', ackRes.status, {
+            session_id: job.session_id,
+            job_id: job.job_id,
+          });
+          return;
+        }
         if (ackRes.status !== 200) {
           logger.warn({ job_id: job.job_id, status: ackRes.status }, 'Immediate ACK failed; refusing execution');
           return;
@@ -163,9 +211,17 @@ export class TaskPoller {
       try {
         const resultRes = await fetch(`${this.apiUrl}/results`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: this.buildApiHeaders('application/json'),
           body: JSON.stringify(resultWithSource),
         });
+        if (this.isAuthFailureStatus(resultRes.status)) {
+          this.logAuthFailure('POST /results', resultRes.status, {
+            session_id: job.session_id,
+            job_id: job.job_id,
+            task_id: job.task_id,
+          });
+          return;
+        }
         if (resultRes.status !== 201) {
           logger.warn({ job_id: job.job_id, status: resultRes.status }, 'Result publish failed');
         } else {

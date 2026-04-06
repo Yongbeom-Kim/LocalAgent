@@ -2,6 +2,8 @@ import { createServer, type Server, type IncomingMessage, type ServerResponse } 
 import { readdirSync } from 'node:fs';
 import {
   loadDaemonConfig,
+  loadApiAuthConfig,
+  resolveApiClientToken,
   createLogger,
   DEFAULT_MAX_CONCURRENT_SESSIONS,
   SESSION_BASE_DIR,
@@ -34,6 +36,7 @@ type StartTaskDaemonDeps = {
     orchestrator: TaskOrchestrator;
     sessionLock: SessionLockManager;
     maxConcurrency: number;
+    apiAuthToken?: string;
   }) => PollerLike;
   createStatusServer: (poller: Pick<TaskPoller, 'isSessionActive' | 'getActiveSessionCount'>) => StatusServerLike;
   exit: (code: number) => never;
@@ -128,8 +131,8 @@ const defaultDeps: StartTaskDaemonDeps = {
   createOrchestrator: (jobEnv) => new TaskOrchestrator(jobEnv),
   createSessionLock: () => new SessionLockManager(),
   createMachineLock: () => new MachineLockManager(),
-  createPoller: ({ apiUrl, orchestrator, sessionLock, maxConcurrency }) =>
-    new TaskPoller(apiUrl, orchestrator, sessionLock, maxConcurrency),
+  createPoller: ({ apiUrl, orchestrator, sessionLock, maxConcurrency, apiAuthToken }) =>
+    new TaskPoller(apiUrl, orchestrator, sessionLock, maxConcurrency, apiAuthToken),
   createStatusServer,
   exit: (code: number) => process.exit(code),
   processObject: process,
@@ -190,6 +193,13 @@ class TaskDaemonApp {
       const orchestrator = this.deps.createOrchestrator(jobEnv);
       const sessionLock = this.deps.createSessionLock();
       const maxConcurrency = parseInt(this.deps.processObject.env.MAX_CONCURRENT_SESSIONS ?? '', 10) || DEFAULT_MAX_CONCURRENT_SESSIONS;
+      const authConfig = loadApiAuthConfig(this.deps.processObject.env);
+      const apiAuthToken = authConfig.enabled
+        ? resolveApiClientToken({
+            explicitToken: authConfig.token,
+            env: this.deps.processObject.env,
+          })
+        : undefined;
 
       this.logger.info({ maxConcurrency }, 'Concurrency limit');
 
@@ -198,6 +208,7 @@ class TaskDaemonApp {
         orchestrator,
         sessionLock,
         maxConcurrency,
+        apiAuthToken,
       });
       this.statusServer = this.deps.createStatusServer(this.poller);
       await listen(this.statusServer, this.config.statusPort);

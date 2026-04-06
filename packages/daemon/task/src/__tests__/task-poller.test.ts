@@ -5,6 +5,34 @@ import { ClaudeExecutor } from '../adapters/claude-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 import { TaskPhasePublisher } from '../adapters/task-phase-publisher';
 
+const {
+  mockLoggerInfo,
+  mockLoggerWarn,
+  mockLoggerError,
+  mockLoggerFatal,
+  mockLoggerDebug,
+} = vi.hoisted(() => ({
+  mockLoggerInfo: vi.fn(),
+  mockLoggerWarn: vi.fn(),
+  mockLoggerError: vi.fn(),
+  mockLoggerFatal: vi.fn(),
+  mockLoggerDebug: vi.fn(),
+}));
+
+vi.mock('@local-agent/shared', async () => {
+  const actual = await vi.importActual<typeof import('@local-agent/shared')>('@local-agent/shared');
+  return {
+    ...actual,
+    createLogger: vi.fn(() => ({
+      info: mockLoggerInfo,
+      warn: mockLoggerWarn,
+      error: mockLoggerError,
+      fatal: mockLoggerFatal,
+      debug: mockLoggerDebug,
+    })),
+  };
+});
+
 const mockEnv: ExecutionEnvironment = {
   workDir: '/tmp/localagent-job-test',
   pluginDirs: [],
@@ -88,10 +116,15 @@ describe('TaskPoller', () => {
     mockPhasePublish.mockClear().mockResolvedValue(undefined);
     vi.mocked(TaskPhasePublisher).mockClear();
     vi.mocked(ClaudeExecutor).mockClear();
+    mockLoggerInfo.mockClear();
+    mockLoggerWarn.mockClear();
+    mockLoggerError.mockClear();
+    mockLoggerFatal.mockClear();
+    mockLoggerDebug.mockClear();
     (mockSessionLock.acquire as ReturnType<typeof vi.fn>).mockClear().mockReturnValue(true);
     (mockSessionLock.release as ReturnType<typeof vi.fn>).mockClear();
     const jobEnv = new JobEnvironment(false);
-    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5, 'secret');
   });
 
   afterEach(() => {
@@ -125,14 +158,30 @@ describe('TaskPoller', () => {
 
       expect(mockPhasePublish).toHaveBeenNthCalledWith(1, job, 'executing');
       expect(mockPhasePublish).toHaveBeenNthCalledWith(2, job, 'completed');
-      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/jobs/sessions');
-      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs/next/session-789');
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        1,
+        'http://localhost:3000/jobs/sessions',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
+        }),
+      );
+      expect(mockFetch).toHaveBeenNthCalledWith(
+        2,
+        'http://localhost:3000/jobs/next/session-789',
+        expect.objectContaining({
+          headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
+        }),
+      );
       expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/session-789/job-456/ack', {
         method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
       });
       expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer secret',
+        },
         body: JSON.stringify(mockResultSubmission),
       });
     });
@@ -160,6 +209,7 @@ describe('TaskPoller', () => {
       expect(mockFetch).toHaveBeenCalledTimes(4);
       expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/session-789/job-456/ack', {
         method: 'POST',
+        headers: expect.objectContaining({ Authorization: 'Bearer secret' }),
       });
     });
 
@@ -200,6 +250,24 @@ describe('TaskPoller', () => {
 
       await expect(poller.pollOnce()).resolves.toBeUndefined();
       expect(mockClaudeExecute).not.toHaveBeenCalled();
+    });
+
+    it('warns on auth failures and does not treat 403 job fetch as a normal empty cycle', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
+        })
+        .mockResolvedValueOnce({ status: 403, json: () => Promise.resolve({ error: 'forbidden' }) });
+
+      await poller.pollOnce();
+      await poller.drain();
+
+      expect(mockClaudeExecute).not.toHaveBeenCalled();
+      expect(mockLoggerWarn).toHaveBeenCalledWith(
+        expect.objectContaining({ status: 403, session_id: 'session-789' }),
+        expect.any(String),
+      );
     });
 
     it('recovers on the next successful poll after a 503 discovery failure', async () => {
@@ -310,7 +378,10 @@ describe('TaskPoller', () => {
       expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
       expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer secret',
+        },
         body: JSON.stringify(mockResultSubmission),
       });
     });
