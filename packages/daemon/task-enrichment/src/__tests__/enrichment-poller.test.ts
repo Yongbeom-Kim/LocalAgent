@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   Task,
   JobSubmission,
+  buildApiAuthHeaders,
   type LarkInboundEnvelope,
   formatUnknownTaskTypeMessage,
   formatMissingTaskTypeMessage,
@@ -43,11 +44,15 @@ const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
 const mockPhasePublish = vi.fn();
 
-vi.mock('../adapters/task-phase-publisher', () => ({
-  TaskPhasePublisher: vi.fn().mockImplementation(function () {
-    this.publish = mockPhasePublish;
-  }),
-}));
+vi.mock('../adapters/task-phase-publisher', async () => {
+  const actual = await vi.importActual<typeof import('../adapters/task-phase-publisher')>('../adapters/task-phase-publisher');
+  return {
+    ...actual,
+    TaskPhasePublisher: vi.fn().mockImplementation(function () {
+      this.publish = mockPhasePublish;
+    }),
+  };
+});
 
 function createTask(overrides?: Partial<Task>): Task {
   return {
@@ -111,7 +116,7 @@ describe('EnrichmentPoller', () => {
     mockPhasePublish.mockReset().mockResolvedValue(undefined);
     vi.mocked(TaskPhasePublisher).mockClear();
     const service = new EnrichmentService() as any;
-    poller = new EnrichmentPoller('http://localhost:3000', 'http://task-daemon:7070', service);
+    poller = new EnrichmentPoller('http://localhost:3000', 'http://task-daemon:7070', service, undefined, undefined, 'daemon-token');
   });
 
   afterEach(() => {
@@ -142,16 +147,35 @@ describe('EnrichmentPoller', () => {
 
     expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
     expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'queued');
-    expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next');
     expect(mockEnrich).toHaveBeenCalledWith(task, 'generated-session-id', undefined);
+    expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next', {
+      headers: buildApiAuthHeaders('daemon-token'),
+    });
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildApiAuthHeaders('daemon-token'),
+      },
       body: JSON.stringify(jobSubmission),
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
+  });
+
+  it('stops polling when GET /tasks/next returns 401', async () => {
+    mockFetch.mockResolvedValueOnce({ status: 401 });
+
+    await poller.pollOnce();
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks/next', {
+      headers: buildApiAuthHeaders('daemon-token'),
+    });
+
+    expect(mockEnrich).not.toHaveBeenCalled();
+    expect(mockPhasePublish).not.toHaveBeenCalled();
   });
 
   it('does nothing when queue is empty (204)', async () => {
@@ -191,7 +215,7 @@ describe('EnrichmentPoller', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -204,6 +228,7 @@ describe('EnrichmentPoller', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -237,7 +262,7 @@ describe('EnrichmentPoller', () => {
     // Verify POST /results with failure
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -252,6 +277,7 @@ describe('EnrichmentPoller', () => {
     // Verify task is acked
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -288,7 +314,7 @@ describe('EnrichmentPoller', () => {
     expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -334,7 +360,7 @@ describe('EnrichmentPoller', () => {
     expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -382,7 +408,7 @@ describe('EnrichmentPoller', () => {
     expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -416,7 +442,7 @@ describe('EnrichmentPoller', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -429,6 +455,7 @@ describe('EnrichmentPoller', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -451,7 +478,7 @@ describe('EnrichmentPoller', () => {
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         task_id: 'task-123',
         task_type: 'gc',
@@ -464,6 +491,7 @@ describe('EnrichmentPoller', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -484,6 +512,7 @@ describe('EnrichmentPoller', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -518,11 +547,12 @@ describe('EnrichmentPoller', () => {
 
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify(jobSubmission),
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 });
@@ -548,6 +578,8 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
       'http://task-daemon:7070',
       service,
       mockThreadFetcher as unknown as ThreadContextFetcher,
+      undefined,
+      'daemon-token',
     );
   });
 
@@ -580,7 +612,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -594,6 +626,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -699,7 +732,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -713,6 +746,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -742,7 +776,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -756,6 +790,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 
@@ -778,7 +813,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         task_id: 'task-123',
         task_type: 'gc',
@@ -811,7 +846,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -851,7 +886,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -906,7 +941,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     );
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify(jobSubmission),
     });
   });
@@ -1039,7 +1074,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1077,7 +1112,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1115,7 +1150,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1162,7 +1197,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1209,7 +1244,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'completed');
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1251,7 +1286,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1297,8 +1332,8 @@ describe('EnrichmentPoller lark_inbound flow', () => {
       'http://task-daemon:7070',
       service,
       mockThreadFetcher as unknown as ThreadContextFetcher,
-      undefined,
       mockHistoryRepository as any,
+      'daemon-token',
     );
   });
 
@@ -1379,7 +1414,7 @@ describe('EnrichmentPoller lark_inbound flow', () => {
     expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1419,7 +1454,7 @@ describe('EnrichmentPoller lark_inbound flow', () => {
     expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1460,7 +1495,7 @@ describe('EnrichmentPoller lark_inbound flow', () => {
     expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
       body: JSON.stringify({
         job_id: 'task-123',
         task_id: 'task-123',
@@ -1497,6 +1532,7 @@ describe('EnrichmentPoller lark_inbound flow', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/tasks/task-123/ack', {
       method: 'POST',
+      headers: buildApiAuthHeaders('daemon-token'),
     });
   });
 });

@@ -7,6 +7,7 @@ describe('loadEnrichmentDaemonConfig', () => {
       API_URL: 'http://localhost:3000',
       TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
       LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
+      API_AUTH_TOKEN: 'daemon-token',
     });
     expect(config.apiUrl).toBe('http://localhost:3000');
     expect(config.pollIntervalMs).toBe(5000);
@@ -26,6 +27,7 @@ describe('loadEnrichmentDaemonConfig', () => {
       LOCAL_AGENT_DB_PATH: '/tmp/other.sqlite',
       LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '2',
       ENRICHMENT_CONFIG_DIR: '/custom/config/dir',
+      API_AUTH_TOKEN: 'daemon-token',
     });
     expect(config.apiUrl).toBe('http://other:4000');
     expect(config.pollIntervalMs).toBe(2000);
@@ -40,6 +42,45 @@ describe('loadEnrichmentDaemonConfig', () => {
     expect(() => loadEnrichmentDaemonConfig({
       API_URL: 'http://localhost:3000',
       TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
+      API_AUTH_TOKEN: 'daemon-token',
     })).toThrow('LOCAL_AGENT_DB_PATH is required');
+
+    expect(() => loadEnrichmentDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
+      LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
+    })).toThrow('API_AUTH_TOKEN is required');
+  });
+
+  it('requires API_AUTH_TOKEN when API auth is enabled', () => {
+    expect(() => loadEnrichmentDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
+      LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
+    })).toThrow('API_AUTH_TOKEN is required');
+  });
+
+  it('allows startup without token when API_AUTH_DISABLED is 1', () => {
+    const config = loadEnrichmentDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
+      LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
+      API_AUTH_DISABLED: '1',
+    });
+
+    expect(config.apiAuthEnabled).toBe(false);
+    expect(config.apiAuthToken).toBeUndefined();
+  });
+
+  it('exposes api auth token for HTTP request builders', () => {
+    const config = loadEnrichmentDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TASK_DAEMON_STATUS_URL: 'http://127.0.0.1:7070',
+      LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
+      API_AUTH_TOKEN: '  daemon-token  ',
+    });
+
+    expect(config.apiAuthEnabled).toBe(true);
+    expect(config.apiAuthToken).toBe('daemon-token');
   });
 });
