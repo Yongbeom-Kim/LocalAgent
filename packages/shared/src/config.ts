@@ -41,10 +41,14 @@ export interface DaemonConfig {
   statusPort: number;
 }
 
-export interface ApiAuthConfig {
-  enabled: boolean;
-  token?: string;
-}
+export type ApiAuthConfig =
+  | {
+      enabled: false;
+    }
+  | {
+      enabled: true;
+      token: string;
+    };
 
 export interface RabbitMqManagementConfig {
   baseUrl: string;

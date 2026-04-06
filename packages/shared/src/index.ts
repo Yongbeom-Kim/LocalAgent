@@ -117,18 +117,7 @@ export {
   parseGcCommand,
 } from './gc';
 export { generateSessionId } from './session';
-export { loadSqliteConfig } from './db/config';
-export { createSqliteClient, assertExpectedSchemaVersion } from './db/client';
-export { sqliteSchema, schemaVersionTable, larkThreadsTable, larkMessagesTable } from './db/schema';
-export { LarkHistoryRepository } from './db/lark-history-repository';
-export { formatLarkPromptHistory } from './db/history-format';
-export type { SqliteConfig, SqliteClient } from './db/types';
-export type {
-  LarkMessageRow,
-  LarkThreadRow,
-  RecordInboundAuditMessageParams,
-  UpsertInboundLarkMessageParams,
-  RecordOutboundLarkMessageParams,
-  MarkLarkThreadNewInstanceParams,
-  UpsertLarkThreadStateParams,
-} from './db/lark-history-repository';
+
+// DB exports are intentionally not re-exported from shared entrypoint.
+// They pull in native-ish and ESM dependency trees that can break consumers
+// that only need non-DB utilities (for example the API package tests).

@@ -19,10 +19,12 @@ vi.mock('../../services/rabbitmq', () => {
   };
 });
 
-vi.mock('@local-agent/shared', async () => {
+vi.mock('@local-agent/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@local-agent/shared')>();
   const types = await import('../../../../shared/src/types');
 
   return {
+    ...actual,
     isValidExecutorPreferences: types.isValidExecutorPreferences,
     isValidTaskSource: types.isValidTaskSource,
   };
