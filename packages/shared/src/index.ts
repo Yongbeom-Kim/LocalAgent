@@ -59,14 +59,17 @@ export {
 } from './routing-errors';
 export {
   loadApiConfig,
+  loadApiAuthConfig,
   loadDaemonConfig,
   loadEnvFromRoot,
   requireEnvValue,
   deriveRabbitMqManagementConfig,
   type ApiConfig,
+  type ApiAuthConfig,
   type DaemonConfig,
   type RabbitMqManagementConfig,
 } from './config';
+export { buildApiAuthHeaders, resolveApiClientToken } from './api-auth';
 export { createLogger } from './logger';
 export {
   DEFAULT_QUEUE_NAME,

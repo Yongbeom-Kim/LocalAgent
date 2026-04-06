@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { deriveRabbitMqManagementConfig, loadApiConfig, loadDaemonConfig } from '../config';
+import { deriveRabbitMqManagementConfig, loadApiAuthConfig, loadApiConfig, loadDaemonConfig } from '../config';
 
 describe('loadApiConfig', () => {
   it('returns defaults when required env vars are set', () => {
@@ -93,5 +93,29 @@ describe('deriveRabbitMqManagementConfig', () => {
     expect(() => deriveRabbitMqManagementConfig('not-a-url')).toThrow(
       'RABBITMQ_URL must be a valid URL for management discovery',
     );
+  });
+});
+
+describe('loadApiAuthConfig', () => {
+  it('enables auth by default and requires API_AUTH_TOKEN', () => {
+    expect(() => loadApiAuthConfig({})).toThrow('API_AUTH_TOKEN is required');
+  });
+
+  it('allows missing token when API_AUTH_DISABLED is 1', () => {
+    expect(loadApiAuthConfig({ API_AUTH_DISABLED: '1' })).toEqual({ enabled: false });
+  });
+
+  it('treats whitespace around disable flag as enabled', () => {
+    expect(loadApiAuthConfig({ API_AUTH_DISABLED: ' 1 ', API_AUTH_TOKEN: 'x' })).toEqual({
+      enabled: true,
+      token: 'x',
+    });
+  });
+
+  it('trims API_AUTH_TOKEN', () => {
+    expect(loadApiAuthConfig({ API_AUTH_TOKEN: '  secret-token  ' })).toEqual({
+      enabled: true,
+      token: 'secret-token',
+    });
   });
 });
