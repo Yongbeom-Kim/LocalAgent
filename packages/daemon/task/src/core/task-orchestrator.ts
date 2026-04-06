@@ -127,6 +127,8 @@ export class TaskOrchestrator {
         const precheckResult = await this.runPrecheck(executor, pref.executor, pref.executor_model, env);
 
         if (!precheckResult.ok) {
+          // Precheck failures intentionally reuse the normal executor-failure path
+          // so fallback ordering and final result reporting stay identical.
           lastResult = {
             job_id: job.job_id,
             task_id: job.task_id,
