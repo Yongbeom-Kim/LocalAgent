@@ -37,6 +37,7 @@ const sampleResult: TaskResult = {
 
 describe('LarkPoller', () => {
   let poller: LarkPoller;
+  const authHeaders = { Authorization: 'Bearer lark-result-token' };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -46,7 +47,7 @@ describe('LarkPoller', () => {
     const phaseNotifier = new LarkPhaseNotifier({
       getTenantAccessToken: vi.fn().mockResolvedValue('token'),
     });
-    poller = new LarkPoller('http://localhost:3000', 'lark-messages', notifier, phaseNotifier);
+    poller = new LarkPoller('http://localhost:3000', 'lark-messages', notifier, phaseNotifier, 'lark-result-token');
   });
 
   afterEach(() => {
@@ -67,11 +68,14 @@ describe('LarkPoller', () => {
 
       await poller.pollOnce();
 
-      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/lark-messages');
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/lark-messages', {
+        headers: authHeaders,
+      });
       expect(mockNotify).toHaveBeenCalledWith(sampleResult);
       expect(mockPhaseNotify).not.toHaveBeenCalled();
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/lark-messages/res-1/ack', {
         method: 'POST',
+        headers: authHeaders,
       });
     });
 
@@ -103,6 +107,7 @@ describe('LarkPoller', () => {
       expect(mockNotify).not.toHaveBeenCalled();
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/lark-messages/evt-1/ack', {
         method: 'POST',
+        headers: authHeaders,
       });
     });
 
@@ -141,7 +146,28 @@ describe('LarkPoller', () => {
       expect(mockPhaseNotify).toHaveBeenCalledTimes(1);
       expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results/lark-messages/evt-queued/ack', {
         method: 'POST',
+        headers: authHeaders,
       });
+    });
+
+    it('logs and stops normal processing when the api returns 401', async () => {
+      mockFetch.mockResolvedValueOnce({ status: 401 });
+
+      await poller.pollOnce();
+
+      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockPhaseNotify).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs and stops normal processing when the api returns 403', async () => {
+      mockFetch.mockResolvedValueOnce({ status: 403 });
+
+      await poller.pollOnce();
+
+      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockPhaseNotify).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('does nothing when queue is empty (204)', async () => {
@@ -157,4 +183,3 @@ describe('LarkPoller', () => {
     });
   });
 });
-

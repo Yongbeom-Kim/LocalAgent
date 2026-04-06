@@ -5,10 +5,13 @@ describe('loadTelegramDaemonConfig', () => {
   it('returns defaults when required env vars are set', () => {
     const config = loadTelegramDaemonConfig({
       API_URL: 'http://localhost:3000',
+      API_AUTH_TOKEN: 'telegram-result-token',
       TELEGRAM_BOT_TOKEN: 'bot123:ABC',
       TELEGRAM_CHAT_ID: '456789',
     });
     expect(config.apiUrl).toBe('http://localhost:3000');
+    expect(config.apiAuthEnabled).toBe(true);
+    expect(config.apiAuthToken).toBe('telegram-result-token');
     expect(config.pollIntervalMs).toBe(5000);
     expect(config.logLevel).toBe('info');
     expect(config.telegramBotToken).toBe('bot123:ABC');
@@ -18,23 +21,54 @@ describe('loadTelegramDaemonConfig', () => {
   it('reads from env vars', () => {
     const config = loadTelegramDaemonConfig({
       API_URL: 'http://other:4000',
+      API_AUTH_TOKEN: 'daemon-token',
       POLL_INTERVAL_MS: '2000',
       LOG_LEVEL: 'debug',
       TELEGRAM_BOT_TOKEN: 'bot123:ABC',
       TELEGRAM_CHAT_ID: '456789',
     });
     expect(config.apiUrl).toBe('http://other:4000');
+    expect(config.apiAuthEnabled).toBe(true);
+    expect(config.apiAuthToken).toBe('daemon-token');
     expect(config.pollIntervalMs).toBe(2000);
     expect(config.logLevel).toBe('debug');
     expect(config.telegramBotToken).toBe('bot123:ABC');
     expect(config.telegramChatId).toBe('456789');
   });
 
+  it('allows startup without token when API_AUTH_DISABLED is 1', () => {
+    const config = loadTelegramDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      API_AUTH_DISABLED: '1',
+      TELEGRAM_BOT_TOKEN: 'bot123:ABC',
+      TELEGRAM_CHAT_ID: '456789',
+    });
+
+    expect(config.apiAuthEnabled).toBe(false);
+    expect(config.apiAuthToken).toBeUndefined();
+  });
+
+  it('requires API_AUTH_TOKEN when API auth is enabled', () => {
+    expect(() => loadTelegramDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      TELEGRAM_BOT_TOKEN: 'bot123:ABC',
+      TELEGRAM_CHAT_ID: '456789',
+    })).toThrow('API_AUTH_TOKEN is required');
+  });
+
   it('throws when required env vars are missing', () => {
-    expect(() => loadTelegramDaemonConfig({ API_URL: 'http://localhost:3000', TELEGRAM_CHAT_ID: '456789' })).toThrow(
+    expect(() => loadTelegramDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      API_AUTH_TOKEN: 'telegram-result-token',
+      TELEGRAM_CHAT_ID: '456789',
+    })).toThrow(
       'TELEGRAM_BOT_TOKEN is required',
     );
-    expect(() => loadTelegramDaemonConfig({ API_URL: 'http://localhost:3000', TELEGRAM_BOT_TOKEN: 'bot123:ABC' })).toThrow(
+    expect(() => loadTelegramDaemonConfig({
+      API_URL: 'http://localhost:3000',
+      API_AUTH_TOKEN: 'telegram-result-token',
+      TELEGRAM_BOT_TOKEN: 'bot123:ABC',
+    })).toThrow(
       'TELEGRAM_CHAT_ID is required',
     );
   });

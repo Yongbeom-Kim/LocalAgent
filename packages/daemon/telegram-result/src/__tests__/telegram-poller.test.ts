@@ -29,12 +29,13 @@ const sampleResult: TaskResult = {
 
 describe('TelegramPoller', () => {
   let poller: TelegramPoller;
+  const authHeaders = { Authorization: 'Bearer telegram-result-token' };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockNotify.mockResolvedValue(undefined);
     const notifier = new TelegramNotifier('bot123:ABC', '456789');
-    poller = new TelegramPoller('http://localhost:3000', 'telegram-messages', notifier);
+    poller = new TelegramPoller('http://localhost:3000', 'telegram-messages', notifier, 'telegram-result-token');
   });
 
   afterEach(() => {
@@ -55,10 +56,13 @@ describe('TelegramPoller', () => {
 
       await poller.pollOnce();
 
-      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages');
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages', {
+        headers: authHeaders,
+      });
       expect(mockNotify).toHaveBeenCalledWith(sampleResult);
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/res-1/ack', {
         method: 'POST',
+        headers: authHeaders,
       });
     });
 
@@ -85,7 +89,26 @@ describe('TelegramPoller', () => {
       expect(mockNotify).not.toHaveBeenCalled();
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/evt-1/ack', {
         method: 'POST',
+        headers: authHeaders,
       });
+    });
+
+    it('logs and stops normal processing when the api returns 401', async () => {
+      mockFetch.mockResolvedValueOnce({ status: 401 });
+
+      await poller.pollOnce();
+
+      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    });
+
+    it('logs and stops normal processing when the api returns 403', async () => {
+      mockFetch.mockResolvedValueOnce({ status: 403 });
+
+      await poller.pollOnce();
+
+      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('does nothing when queue is empty (204)', async () => {
