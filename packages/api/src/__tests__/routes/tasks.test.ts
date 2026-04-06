@@ -1,8 +1,34 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
+import type { Test } from 'supertest';
 import { createTaskRoutes } from '../../routes/tasks';
 import { RabbitMQUnavailableError } from '../../services/rabbitmq';
+import { createApiAuthMiddleware } from '../../middleware/auth';
+
+vi.mock('../../services/rabbitmq', () => {
+  class MockRabbitMQUnavailableError extends Error {
+    constructor(message = 'RabbitMQ temporarily unavailable') {
+      super(message);
+      this.name = 'RabbitMQUnavailableError';
+    }
+  }
+
+  return {
+    RabbitMQUnavailableError: MockRabbitMQUnavailableError,
+  };
+});
+
+vi.mock('@local-agent/shared', async () => {
+  const types = await import('../../../../shared/src/types');
+
+  return {
+    isValidTaskSource: types.isValidTaskSource,
+    isControlTaskType: types.isControlTaskType,
+    isTaskExecutorType: types.isTaskExecutorType,
+    isValidExecutorModel: types.isValidExecutorModel,
+  };
+});
 
 const mockRabbitMQ = {
   publish: vi.fn().mockResolvedValue(true),
@@ -13,17 +39,28 @@ const mockRabbitMQ = {
 function buildApp() {
   const app = express();
   app.use(express.json());
+  app.use(createApiAuthMiddleware({ enabled: true, token: 'secret' }));
   app.use('/tasks', createTaskRoutes(mockRabbitMQ as any));
   return app;
+}
+
+function authedRequest(req: Test) {
+  return req.set('Authorization', 'Bearer secret');
 }
 
 describe('POST /tasks', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('returns 401 when authorization header is missing', async () => {
+    const app = buildApp();
+    const res = await request(app).post('/tasks').send({ task_type: 'generic', payload: 'hello' });
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+  });
+
   it('returns 201 with submitted task', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'generic',
         payload: 'hello',
@@ -48,8 +85,7 @@ describe('POST /tasks', () => {
   it('returns 503 when broker publish applies backpressure', async () => {
     mockRabbitMQ.publish.mockResolvedValueOnce(false);
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'generic',
         payload: 'hello',
@@ -65,23 +101,21 @@ describe('POST /tasks', () => {
   it('returns 503 when task publish cannot reconnect to RabbitMQ', async () => {
     mockRabbitMQ.publish.mockRejectedValueOnce(new RabbitMQUnavailableError());
     const app = buildApp();
-    const res = await request(app).post('/tasks').send({ task_type: 'generic', payload: 'hello' });
+    const res = await authedRequest(request(app).post('/tasks')).send({ task_type: 'generic', payload: 'hello' });
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
 
   it('returns 400 when task_type missing', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({ payload: 'hello' });
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when payload missing', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({ task_type: 'generic' });
     expect(res.status).toBe(400);
   });
@@ -89,8 +123,7 @@ describe('POST /tasks', () => {
   it('returns 201 with task_source when provided', async () => {
     const app = buildApp();
     const taskSource = { source: 'lark', message_id: 'om_abc123' };
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'generic',
         payload: 'hello',
@@ -107,8 +140,7 @@ describe('POST /tasks', () => {
 
   it('returns 201 without task_source when not provided', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'generic',
         payload: 'hello',
@@ -121,8 +153,7 @@ describe('POST /tasks', () => {
 
   it('returns 400 when task_source has invalid shape', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'generic',
         payload: 'hello',
@@ -135,8 +166,7 @@ describe('POST /tasks', () => {
 
   it('returns 400 when task_source.source is lark but message_id is missing', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'generic',
         payload: 'hello',
@@ -149,8 +179,7 @@ describe('POST /tasks', () => {
 
   it('returns 201 for non-control task with explicit executor/model', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'code_review',
         payload: 'review this diff',
@@ -161,29 +190,29 @@ describe('POST /tasks', () => {
   });
 
   it('accepts non-control task with empty task_type for pipeline help', async () => {
-    const res = await request(buildApp())
-      .post('/tasks')
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({ task_type: '', payload: '' });
     expect(res.status).toBe(201);
   });
 
   it('accepts non-control task with task_type only', async () => {
-    const res = await request(buildApp())
-      .post('/tasks')
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({ task_type: 'localagent', payload: '' });
     expect(res.status).toBe(201);
   });
 
   it('accepts non-control task with executor but no model', async () => {
-    const res = await request(buildApp())
-      .post('/tasks')
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({ task_type: 'localagent', payload: '', executor: 'cursor' });
     expect(res.status).toBe(201);
   });
 
   it('accepts non-control task with invalid executor/model pair so enrichment can explain it', async () => {
-    const res = await request(buildApp())
-      .post('/tasks')
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'localagent',
         payload: '',
@@ -194,8 +223,8 @@ describe('POST /tasks', () => {
   });
 
   it('rejects executor_model without executor', async () => {
-    const res = await request(buildApp())
-      .post('/tasks')
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'localagent',
         payload: '',
@@ -206,8 +235,8 @@ describe('POST /tasks', () => {
   });
 
   it('keeps explicit /new validation strict', async () => {
-    const res = await request(buildApp())
-      .post('/tasks')
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'new_instance',
         payload: '',
@@ -219,16 +248,14 @@ describe('POST /tasks', () => {
 
   it('accepts non-control task when executor is omitted (partial routing)', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({ task_type: 'code_review', payload: 'review this diff' });
     expect(res.status).toBe(201);
   });
 
   it('accepts non-control task when payload is whitespace-only', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'code_review',
         payload: '   ',
@@ -240,16 +267,14 @@ describe('POST /tasks', () => {
 
   it('returns 201 when control task omits executor/model', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({ task_type: 'new_instance', payload: '' });
     expect(res.status).toBe(201);
   });
 
   it('returns 201 when control task includes a valid explicit executor/model pair', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'new_instance',
         payload: '',
@@ -261,8 +286,7 @@ describe('POST /tasks', () => {
 
   it('returns 201 when control task uses ttcodex with an allowlisted model', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'new_instance',
         payload: '',
@@ -274,8 +298,7 @@ describe('POST /tasks', () => {
 
   it('accepts non-control task when executor is present without model', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'code_review',
         payload: 'review this diff',
@@ -286,8 +309,7 @@ describe('POST /tasks', () => {
 
   it('returns 201 for lark task with invalid model so enrichment can reject it later', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'localagent',
         payload: 'test',
@@ -308,8 +330,7 @@ describe('POST /tasks', () => {
 
   it('returns 400 for control /new task with invalid executor/model pair even with lark source', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'new_instance',
         payload: '',
@@ -324,8 +345,7 @@ describe('POST /tasks', () => {
 
   it('accepts non-lark non-control task with invalid executor for enrichment', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'code_review',
         payload: 'review this diff',
@@ -338,8 +358,7 @@ describe('POST /tasks', () => {
 
   it('accepts non-lark non-control task with invalid model for enrichment', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'code_review',
         payload: 'review this diff',
@@ -355,6 +374,13 @@ describe('POST /tasks', () => {
 describe('GET /tasks/next', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('returns 401 when authorization header is missing', async () => {
+    const app = buildApp();
+    const res = await request(app).get('/tasks/next');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+  });
+
   it('returns 200 with task when available', async () => {
     mockRabbitMQ.getNext.mockResolvedValue({
       task_id: 'abc-123',
@@ -365,7 +391,7 @@ describe('GET /tasks/next', () => {
       submitted_at: '2026-03-26T00:00:00.000Z',
     });
     const app = buildApp();
-    const res = await request(app).get('/tasks/next');
+    const res = await authedRequest(request(app).get('/tasks/next'));
     expect(res.status).toBe(200);
     expect(res.body.task_id).toBe('abc-123');
   });
@@ -373,14 +399,14 @@ describe('GET /tasks/next', () => {
   it('returns 204 when queue is empty', async () => {
     mockRabbitMQ.getNext.mockResolvedValue(null);
     const app = buildApp();
-    const res = await request(app).get('/tasks/next');
+    const res = await authedRequest(request(app).get('/tasks/next'));
     expect(res.status).toBe(204);
   });
 
   it('returns 503 when task fetch cannot reconnect to RabbitMQ', async () => {
     mockRabbitMQ.getNext.mockRejectedValueOnce(new RabbitMQUnavailableError());
     const app = buildApp();
-    const res = await request(app).get('/tasks/next');
+    const res = await authedRequest(request(app).get('/tasks/next'));
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
@@ -389,10 +415,17 @@ describe('GET /tasks/next', () => {
 describe('POST /tasks/:id/ack', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('returns 401 when authorization header is missing', async () => {
+    const app = buildApp();
+    const res = await request(app).post('/tasks/abc-123/ack');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+  });
+
   it('returns 200 when ACK succeeds', async () => {
     mockRabbitMQ.ack.mockReturnValue(true);
     const app = buildApp();
-    const res = await request(app).post('/tasks/abc-123/ack');
+    const res = await authedRequest(request(app).post('/tasks/abc-123/ack'));
     expect(res.status).toBe(200);
     expect(res.body.acknowledged).toBe(true);
   });
@@ -400,7 +433,7 @@ describe('POST /tasks/:id/ack', () => {
   it('returns 404 when task ID unknown', async () => {
     mockRabbitMQ.ack.mockReturnValue(false);
     const app = buildApp();
-    const res = await request(app).post('/tasks/unknown/ack');
+    const res = await authedRequest(request(app).post('/tasks/unknown/ack'));
     expect(res.status).toBe(404);
   });
 });

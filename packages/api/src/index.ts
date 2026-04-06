@@ -1,9 +1,10 @@
-import { loadApiConfig, createLogger } from '@local-agent/shared';
+import { loadApiConfig, loadApiAuthConfig, createLogger } from '@local-agent/shared';
 import { RabbitMQService } from './services/rabbitmq';
 import { createApp } from './app';
 
 async function main() {
   const config = loadApiConfig();
+  const auth = loadApiAuthConfig();
   const logger = createLogger('api', config.logLevel);
 
   const rabbitmq = new RabbitMQService(config.rabbitmqUrl, config.queueName);
@@ -28,7 +29,7 @@ async function main() {
     process.exit(1);
   }
 
-  const app = createApp(rabbitmq);
+  const app = createApp(rabbitmq, auth);
 
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port }, 'API server started');
