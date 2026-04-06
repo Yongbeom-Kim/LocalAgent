@@ -1,11 +1,16 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { JobAttempt, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
-import { TaskExecutor } from '../ports/task-executor';
+import { ExecutorPrecheckResult, TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:claude');
+const REQUIRED_BINARIES = ['claude'] as const;
 
 export class ClaudeExecutor implements TaskExecutor {
+  async precheck(_env: ExecutionEnvironment): Promise<ExecutorPrecheckResult> {
+    return this.checkRequiredBinaries('claude', REQUIRED_BINARIES);
+  }
+
   async execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
     logger.info({ job_id: job.job_id, task_id: job.task_id, task_type: job.task_type }, 'Spawning Claude');
 
@@ -43,6 +48,35 @@ export class ClaudeExecutor implements TaskExecutor {
       input: this.buildFreshInput(job),
     });
   }
+
+  private checkRequiredBinaries(
+    executorName: string,
+    binaries: readonly string[],
+  ): ExecutorPrecheckResult {
+    try {
+      const missing = binaries.filter((binary) => {
+        const result = spawnSync('sh', ['-lc', `command -v ${binary} >/dev/null 2>&1`], {
+          stdio: 'ignore',
+        });
+        return result.status !== 0;
+      });
+
+      if (missing.length === 0) {
+        return { ok: true };
+      }
+
+      return {
+        ok: false,
+        stderr: `Executor "${executorName}" unavailable: missing required binaries in PATH: ${missing.join(', ')}`,
+      };
+    } catch {
+      return {
+        ok: false,
+        stderr: `Executor "${executorName}" unavailable: missing required binaries in PATH: ${binaries.join(', ')}`,
+      };
+    }
+  }
+
   private buildFreshInput(job: JobAttempt): string {
     if (!job.history) {
       return job.payload;

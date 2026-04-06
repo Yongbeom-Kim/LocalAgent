@@ -34,18 +34,22 @@ vi.mock('../services/job-environment', () => ({
   }),
 }));
 
+const mockClaudePrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockClaudeExecute = vi.fn();
+const mockCleanupPrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockCleanupExecute = vi.fn();
 vi.mock('../adapters/claude-executor', () => {
   return {
-    ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+    ClaudeExecutor: vi.fn(function (this: { precheck: typeof mockClaudePrecheck; execute: typeof mockClaudeExecute }) {
+      this.precheck = mockClaudePrecheck;
       this.execute = mockClaudeExecute;
     }),
   };
 });
 
 vi.mock('../adapters/cleanup-executor', () => ({
-  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute }) {
+  CleanupExecutor: vi.fn(function (this: { precheck: typeof mockCleanupPrecheck; execute: typeof mockCleanupExecute }) {
+    this.precheck = mockCleanupPrecheck;
     this.execute = mockCleanupExecute;
   }),
 }));
@@ -109,7 +113,9 @@ describe('TaskPoller Concurrent', () => {
   beforeEach(() => {
     rmSync(TEST_SESSION_BASE_DIR, { recursive: true, force: true });
     mockFetch.mockReset();
+    mockClaudePrecheck.mockReset().mockResolvedValue({ ok: true });
     mockClaudeExecute.mockReset();
+    mockCleanupPrecheck.mockReset().mockResolvedValue({ ok: true });
     mockCleanupExecute.mockReset();
     mockSetup.mockReset().mockResolvedValue(mockEnv);
     mockTeardown.mockReset().mockResolvedValue(undefined);

@@ -124,6 +124,32 @@ export class TaskOrchestrator {
 
       try {
         const executor = this.resolveExecutor(pref.executor);
+        const precheckResult = await this.runPrecheck(executor, pref.executor, pref.executor_model, env);
+
+        if (!precheckResult.ok) {
+          lastResult = {
+            job_id: job.job_id,
+            task_id: job.task_id,
+            task_type: job.task_type,
+            session_id: job.session_id,
+            status: 'failure',
+            exit_code: null,
+            stdout: '',
+            stderr: precheckResult.stderr,
+            executor: pref.executor,
+            executor_model: pref.executor_model,
+          };
+
+          if (!isLast) {
+            logger.warn(
+              { job_id: job.job_id, executor: pref.executor, model: pref.executor_model, attempt: i + 1 },
+              'Executor failed, trying next preference',
+            );
+          }
+
+          continue;
+        }
+
         const attempt: JobAttempt = {
           job_id: job.job_id,
           task_id: job.task_id,
@@ -181,6 +207,31 @@ export class TaskOrchestrator {
     }
 
     return lastResult!;
+  }
+
+  private async runPrecheck(
+    executor: TaskExecutor,
+    executorName: TaskExecutorType,
+    executorModel: string,
+    env: ExecutionEnvironment,
+  ) {
+    try {
+      const result = await executor.precheck(env);
+      if (!result.ok) {
+        logger.warn(
+          { executor: executorName, model: executorModel, stderr: result.stderr },
+          'Executor precheck failed, trying next preference',
+        );
+      }
+      return result;
+    } catch (error) {
+      const stderr = `Executor "${executorName}" precheck threw: ${error instanceof Error ? error.message : String(error)}`;
+      logger.warn(
+        { executor: executorName, model: executorModel, stderr },
+        'Executor precheck failed, trying next preference',
+      );
+      return { ok: false as const, stderr };
+    }
   }
 
   private resolveExecutor(executor: TaskExecutorType): TaskExecutor {
