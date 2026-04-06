@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RabbitMQService, RabbitMQUnavailableError } from '../../services/rabbitmq';
 
 type MockChannel = ReturnType<typeof createMockChannel>;
@@ -74,6 +74,10 @@ describe('RabbitMQService', () => {
     connection = createMockConnection(channel);
     amqplibMock.__queueConnection(connection);
     service = new RabbitMQService('amqp://localhost', 'test-queue');
+  });
+
+  afterEach(async () => {
+    await service.close();
   });
 
   it('connects and asserts durable task queue and jobs exchange', async () => {
@@ -169,6 +173,41 @@ describe('RabbitMQService', () => {
         submitted_at: '2026-03-26T00:00:00.000Z',
       }),
     ).rejects.toThrow('queue missing');
+  });
+
+  it('propagates non-retryable publish failures for later queued publishes on a healthy channel', async () => {
+    await service.connect();
+
+    let releaseFirstPublish: (() => void) | null = null;
+    channel.sendToQueue
+      .mockImplementationOnce(
+        () =>
+          new Promise<boolean>((resolve) => {
+            releaseFirstPublish = () => resolve(true);
+          }),
+      )
+      .mockImplementationOnce(() => {
+        throw new Error('queue missing');
+      });
+
+    const firstPublish = service.publish({
+      task_id: 'task-1',
+      task_type: 'generic',
+      payload: 'first',
+      submitted_at: '2026-03-26T00:00:00.000Z',
+    });
+    const secondPublish = service.publish({
+      task_id: 'task-2',
+      task_type: 'generic',
+      payload: 'second',
+      submitted_at: '2026-03-26T00:00:00.000Z',
+    });
+
+    await flushAsyncWork();
+    releaseFirstPublish?.();
+
+    await expect(firstPublish).resolves.toBe(true);
+    await expect(secondPublish).rejects.toThrow('queue missing');
   });
 
   it('buffers task publishes while RabbitMQ is down and flushes them after reconnect', async () => {

@@ -6,7 +6,7 @@ export interface BufferedEnqueueRequest {
 }
 
 interface PendingBufferedEnqueueRequest extends BufferedEnqueueRequest {
-  initialAttempt?: {
+  settlement: {
     settled: boolean;
     resolve: (buffered: boolean) => void;
     reject: (error: unknown) => void;
@@ -38,6 +38,7 @@ export class BufferedAmqpEnqueuer {
   private flushPromise: Promise<void> | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
   private nextRetryDelayMs: number;
+  private buffering = false;
   private closed = false;
 
   constructor(private readonly options: BufferedAmqpEnqueuerOptions) {
@@ -62,16 +63,19 @@ export class BufferedAmqpEnqueuer {
 
     const pendingRequest = this.createPendingRequest(request);
     this.pending.push(pendingRequest);
+    if (this.buffering || this.retryTimer) {
+      this.resolveSettlement(pendingRequest, true);
+    }
     this.requestFlush();
 
-    if (pendingRequest.initialAttempt) {
-      return await new Promise<boolean>((resolve, reject) => {
-        pendingRequest.initialAttempt!.resolve = resolve;
-        pendingRequest.initialAttempt!.reject = reject;
-      });
-    }
+    return await new Promise<boolean>((resolve, reject) => {
+      pendingRequest.settlement.resolve = resolve;
+      pendingRequest.settlement.reject = reject;
 
-    return true;
+      if (pendingRequest.settlement.settled) {
+        resolve(true);
+      }
+    });
   }
 
   requestFlush(): void {
@@ -100,6 +104,11 @@ export class BufferedAmqpEnqueuer {
       clearTimeout(this.retryTimer);
       this.retryTimer = null;
     }
+
+    for (const request of this.pending) {
+      this.resolveSettlement(request, false);
+    }
+    this.pending = [];
   }
 
   private async flushPending(): Promise<void> {
@@ -107,17 +116,20 @@ export class BufferedAmqpEnqueuer {
       const channel = await this.options.resolveChannel();
 
       if (!channel) {
+        this.buffering = true;
         this.resolveBufferedPending();
         this.scheduleRetry();
         return;
       }
+
+      this.buffering = false;
 
       const next = this.pending[0];
 
       try {
         const buffered = await next.publish(channel);
         this.pending.shift();
-        this.resolveInitialAttempt(next, buffered);
+        this.resolveSettlement(next, buffered);
         this.nextRetryDelayMs = this.initialRetryDelayMs;
 
         if (!buffered) {
@@ -128,6 +140,7 @@ export class BufferedAmqpEnqueuer {
         }
       } catch (err) {
         if (this.options.isRetryableError(err)) {
+          this.buffering = true;
           this.resolveBufferedPending();
           this.options.clearConnectionState();
           this.scheduleRetry();
@@ -135,7 +148,7 @@ export class BufferedAmqpEnqueuer {
         }
 
         this.pending.shift();
-        this.rejectInitialAttempt(next, err);
+        this.rejectSettlement(next, err);
         this.options.logger.error(
           { err, operationName: next.operationName, pendingCount: this.pending.length },
           'Dropping buffered AMQP publish after non-retryable error',
@@ -158,13 +171,9 @@ export class BufferedAmqpEnqueuer {
   }
 
   private createPendingRequest(request: BufferedEnqueueRequest): PendingBufferedEnqueueRequest {
-    if (this.pending.length > 0 || this.flushPromise || this.retryTimer) {
-      return request;
-    }
-
     return {
       ...request,
-      initialAttempt: {
+      settlement: {
         settled: false,
         resolve: () => undefined,
         reject: () => undefined,
@@ -172,27 +181,27 @@ export class BufferedAmqpEnqueuer {
     };
   }
 
-  private resolveInitialAttempt(request: PendingBufferedEnqueueRequest, buffered: boolean): void {
-    if (!request.initialAttempt || request.initialAttempt.settled) {
+  private resolveSettlement(request: PendingBufferedEnqueueRequest, buffered: boolean): void {
+    if (request.settlement.settled) {
       return;
     }
 
-    request.initialAttempt.settled = true;
-    request.initialAttempt.resolve(buffered);
+    request.settlement.settled = true;
+    request.settlement.resolve(buffered);
   }
 
-  private rejectInitialAttempt(request: PendingBufferedEnqueueRequest, error: unknown): void {
-    if (!request.initialAttempt || request.initialAttempt.settled) {
+  private rejectSettlement(request: PendingBufferedEnqueueRequest, error: unknown): void {
+    if (request.settlement.settled) {
       return;
     }
 
-    request.initialAttempt.settled = true;
-    request.initialAttempt.reject(error);
+    request.settlement.settled = true;
+    request.settlement.reject(error);
   }
 
   private resolveBufferedPending(): void {
     for (const request of this.pending) {
-      this.resolveInitialAttempt(request, true);
+      this.resolveSettlement(request, true);
     }
   }
 }
