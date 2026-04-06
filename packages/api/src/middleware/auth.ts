@@ -1,9 +1,6 @@
 import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
-import type { ApiAuthConfig } from '../../../shared/src/config';
-import { createLogger } from '../../../shared/src/logger';
-
-const logger = createLogger('api:auth', process.env.LOG_LEVEL ?? 'info');
+import { createLogger, type ApiAuthConfig } from '@local-agent/shared';
 
 function tokensMatch(providedToken: string, expectedToken: string): boolean {
   const provided = Buffer.from(providedToken, 'utf8');
@@ -19,6 +16,8 @@ function tokensMatch(providedToken: string, expectedToken: string): boolean {
 }
 
 export function createApiAuthMiddleware(config: ApiAuthConfig): RequestHandler {
+  const logger = createLogger('api:auth');
+
   return (req, res, next) => {
     if (!config.enabled) {
       return next();

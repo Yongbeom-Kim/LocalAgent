@@ -111,7 +111,7 @@ export function loadDaemonConfig(env: Record<string, string | undefined> = proce
 }
 
 export function loadApiAuthConfig(env: Record<string, string | undefined> = process.env): ApiAuthConfig {
-  if (env.API_AUTH_DISABLED === '1') {
+  if (env.API_AUTH_DISABLED?.trim() === '1') {
     return { enabled: false };
   }
 
