@@ -7,6 +7,7 @@ import {
   DEFAULT_LOG_LEVEL,
   DEFAULT_POLL_INTERVAL_MS,
   DEFAULT_TASK_DAEMON_STATUS_PORT,
+  LOCAL_AGENT_DISABLE_SHELL_COMMAND,
 } from './constants';
 
 /**
@@ -39,6 +40,7 @@ export interface DaemonConfig {
   pollIntervalMs: number;
   logLevel: string;
   statusPort: number;
+  shellCommandDisabled: boolean;
 }
 
 export interface RabbitMqManagementConfig {
@@ -98,5 +100,6 @@ export function loadDaemonConfig(env: Record<string, string | undefined> = proce
     pollIntervalMs: env.POLL_INTERVAL_MS ? parseInt(env.POLL_INTERVAL_MS, 10) : DEFAULT_POLL_INTERVAL_MS,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
     statusPort: env.TASK_DAEMON_STATUS_PORT ? parseInt(env.TASK_DAEMON_STATUS_PORT, 10) : DEFAULT_TASK_DAEMON_STATUS_PORT,
+    shellCommandDisabled: env[LOCAL_AGENT_DISABLE_SHELL_COMMAND] === '1',
   };
 }

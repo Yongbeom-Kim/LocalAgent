@@ -13,6 +13,7 @@ import {
   formatMissingExecutorMessage,
   formatMissingModelMessage,
   formatMissingPayloadMessage,
+  SHELL_COMMAND_USAGE,
 } from '@local-agent/shared';
 import { EnrichmentService } from '../enrichment-service';
 
@@ -508,6 +509,48 @@ describe('EnrichmentService', () => {
       expect((result as { type: 'enriched'; job: JobSubmission }).job.executors).toEqual([
         { executor: 'builtin', executor_model: 'none' },
       ]);
+    });
+
+    it('sets builtin executor for shell_command and preserves payload', () => {
+      const service = EnrichmentService.fromObject({
+        rules: { shell_command: {} },
+      });
+
+      const result = service.enrich(
+        createTask({
+          task_type: 'shell_command',
+          payload: 'ls -la',
+          executor: undefined,
+          executor_model: undefined,
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result.type).toBe('enriched');
+      const job = (result as { type: 'enriched'; job: JobSubmission }).job;
+      expect(job.payload).toBe('ls -la');
+      expect(job.executors).toEqual([{ executor: 'builtin', executor_model: 'none' }]);
+    });
+
+    it('rejects empty shell_command payload with usage hint', () => {
+      const service = EnrichmentService.fromObject({
+        rules: { shell_command: {} },
+      });
+
+      const result = service.enrich(
+        createTask({
+          task_type: 'shell_command',
+          payload: '',
+          executor: undefined,
+          executor_model: undefined,
+        }),
+        TEST_SESSION_ID,
+      );
+
+      expect(result).toEqual({
+        type: 'rejected',
+        reason: `Usage: ${SHELL_COMMAND_USAGE}`,
+      });
     });
 
     it('rejects gc at enrichment layer', () => {

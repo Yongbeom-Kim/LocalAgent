@@ -17,6 +17,7 @@ import {
   formatMissingExecutorMessage,
   formatMissingModelMessage,
   formatMissingPayloadMessage,
+  SHELL_COMMAND_USAGE,
 } from '@local-agent/shared';
 
 const logger = createLogger('enrichment-daemon:service');
@@ -151,6 +152,11 @@ export class EnrichmentService {
       }
       executors = [{ executor: exec, executor_model: task.executor_model }];
     } else if (normalizedTaskType === 'cleanup') {
+      executors = [{ executor: 'builtin', executor_model: 'none' }];
+    } else if (normalizedTaskType === 'shell_command') {
+      if (task.payload.trim() === '') {
+        return { type: 'rejected', reason: `Usage: ${SHELL_COMMAND_USAGE}` };
+      }
       executors = [{ executor: 'builtin', executor_model: 'none' }];
     } else if (normalizedTaskType === 'new_instance') {
       if (task.executor && task.executor_model) {

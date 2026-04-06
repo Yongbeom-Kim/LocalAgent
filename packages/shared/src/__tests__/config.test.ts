@@ -39,6 +39,7 @@ describe('loadDaemonConfig', () => {
     expect(config.pollIntervalMs).toBe(5000);
     expect(config.logLevel).toBe('info');
     expect(config.statusPort).toBe(7070);
+    expect(config.shellCommandDisabled).toBe(false);
   });
 
   it('reads from env vars', () => {
@@ -47,11 +48,13 @@ describe('loadDaemonConfig', () => {
       POLL_INTERVAL_MS: '1000',
       LOG_LEVEL: 'warn',
       TASK_DAEMON_STATUS_PORT: '7171',
+      LOCAL_AGENT_DISABLE_SHELL_COMMAND: '1',
     });
     expect(config.apiUrl).toBe('http://other:4000');
     expect(config.pollIntervalMs).toBe(1000);
     expect(config.logLevel).toBe('warn');
     expect(config.statusPort).toBe(7171);
+    expect(config.shellCommandDisabled).toBe(true);
   });
 
   it('throws when API_URL is missing', () => {

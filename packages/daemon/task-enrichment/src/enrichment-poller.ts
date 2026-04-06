@@ -12,9 +12,11 @@ import {
   type LarkInboundEnvelope,
   formatThreadOnlyCommandMessage,
   formatThreadTaskCommandRejectedMessage,
+  formatShellDisabledMessage,
   type TaskExecutorType,
   type LarkHistoryRepository,
   ROOT_TASK_USAGE_HINT,
+  LOCAL_AGENT_DISABLE_SHELL_COMMAND,
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
@@ -28,6 +30,9 @@ const CLEANUP_MISSING_SOURCE_REASON = 'Cleanup tasks require a Lark task source 
 const NEW_INSTANCE_TASK_TYPE = 'new_instance';
 const STATUS_TASK_TYPE = 'status';
 const THREAD_REPLY_TASK_TYPE = 'thread_reply';
+const SHELL_COMMAND_TASK_TYPE = 'shell_command';
+const SHELL_COMMAND_MISSING_SESSION_REASON =
+  'The /shell command requires an existing session in this thread.';
 const NEW_INSTANCE_PROMPT = 'Respond with: New session instance started.';
 const NEW_INSTANCE_MISSING_SOURCE_REASON = 'The /new command requires a Lark source.';
 const NEW_INSTANCE_MISSING_SESSION_REASON = 'The /new command requires an existing session in this thread.';
@@ -152,6 +157,8 @@ function formatStatusSummary(status: StatusLookupResponse): string {
 export class EnrichmentPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
+  private readonly shellCommandDisabled =
+    process.env[LOCAL_AGENT_DISABLE_SHELL_COMMAND] === '1';
 
   constructor(
     private readonly apiUrl: string,
@@ -212,6 +219,7 @@ export class EnrichmentPoller {
       const isNewInstanceTask = task.task_type === NEW_INSTANCE_TASK_TYPE;
       const isStatusTask = task.task_type === STATUS_TASK_TYPE;
       const isThreadReplyTask = task.task_type === THREAD_REPLY_TASK_TYPE;
+      const isShellCommandTask = task.task_type === SHELL_COMMAND_TASK_TYPE;
       let threadResult: ThreadContextResult | undefined;
 
       if (isCleanupTask && task.task_source?.source !== 'lark') {
@@ -277,6 +285,15 @@ export class EnrichmentPoller {
           return;
         }
 
+        if (isShellCommandTask && threadResult.kind === 'not_thread') {
+          logger.warn({ task_id: task.task_id }, 'Rejected shell_command task outside thread');
+          const published = await this.publishRejection(task, formatThreadOnlyCommandMessage('/shell'));
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
+          return;
+        }
+
         if (threadResult.kind === 'thread' && !isControlTaskType(task.task_type) && !isThreadReplyTask) {
           logger.warn(
             { task_id: task.task_id, task_type: task.task_type },
@@ -296,6 +313,65 @@ export class EnrichmentPoller {
         if (published) {
           await this.ackTask(task.task_id);
         }
+        return;
+      }
+
+      if (isShellCommandTask) {
+        if (this.shellCommandDisabled) {
+          logger.warn({ task_id: task.task_id }, 'Rejected shell_command task when disabled');
+          const published = await this.publishRejection(task, formatShellDisabledMessage());
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
+          return;
+        }
+
+        if (!threadResult || threadResult.kind === 'error') {
+          logger.warn({ task_id: task.task_id }, 'Rejected shell_command task after thread lookup failure');
+          const published = await this.publishRejection(task, threadResult?.reason ?? THREAD_LOOKUP_ERROR_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
+          return;
+        }
+
+        if (!threadResult.inheritedSessionId) {
+          logger.warn({ task_id: task.task_id, threadResult }, 'Rejected shell_command without inherited session_id');
+          const published = await this.publishRejection(task, SHELL_COMMAND_MISSING_SESSION_REASON);
+          if (published) {
+            await this.ackTask(task.task_id);
+          }
+          return;
+        }
+
+        const shellJob: JobSubmission = {
+          task_id: task.task_id,
+          task_type: SHELL_COMMAND_TASK_TYPE,
+          payload: task.payload,
+          executors: [{ executor: 'builtin', executor_model: 'none' }],
+          submitted_at: task.submitted_at,
+          session_id: threadResult.inheritedSessionId,
+          skipContinue: true,
+          ...(task.task_source ? { task_source: task.task_source } : {}),
+        };
+
+        try {
+          const jobRes = await fetch(`${this.apiUrl}/jobs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(shellJob),
+          });
+          if (jobRes.status !== 201) {
+            logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for shell_command - not acking');
+            return;
+          }
+          await this.publishPhase(task, 'queued');
+        } catch (jobErr) {
+          logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for shell_command - not acking');
+          return;
+        }
+
+        await this.ackTask(task.task_id);
         return;
       }
 

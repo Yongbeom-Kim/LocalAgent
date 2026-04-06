@@ -18,6 +18,7 @@ export const DEFAULT_REQUEUE_DELAY_MS = 5000;
 export const DEFAULT_TASK_DAEMON_STATUS_PORT = 7070;
 export const DEFAULT_TASK_DAEMON_MACHINE_LOCK_PATH = '/var/tmp/local-agent/task-daemon.lock';
 export const TASK_DAEMON_MACHINE_LOCK_DISABLE_ENV = 'TASK_DAEMON_DISABLE_MACHINE_LOCK';
+export const LOCAL_AGENT_DISABLE_SHELL_COMMAND = 'LOCAL_AGENT_DISABLE_SHELL_COMMAND';
 export const MAX_SNIPPET_CHARS = 100000;
 
 /** Express `json()` body limit (also headroom for non-result routes). RabbitMQ default max message size is far larger. */
