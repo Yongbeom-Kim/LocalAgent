@@ -46,6 +46,8 @@ Copy `.env.example` before starting anything. Service endpoint variables are req
 |----------|---------|----------|
 | `PORT` | `3000` | No |
 | `RABBITMQ_URL` | Example: `amqp://guest:guest@localhost:5672` | Yes |
+| `API_AUTH_TOKEN` | Example: `replace_me` | Yes unless `API_AUTH_DISABLED=1` |
+| `API_AUTH_DISABLED` | unset | No; dev/test only |
 | `API_URL` | Example: `http://localhost:3000` | Yes |
 | `POLL_INTERVAL_MS` | `5000` | No |
 | `TASK_DAEMON_STATUS_PORT` | `7070` | No |
@@ -95,6 +97,17 @@ Runs on http://localhost:3000. Verify with:
 curl http://localhost:3000/health
 ```
 
+Bearer auth is enabled by default for every API route except `/health`.
+
+Protected-route smoke check:
+
+```bash
+curl http://localhost:3000/tasks/next \
+  -H "Authorization: Bearer ${API_AUTH_TOKEN}"
+```
+
+For local debugging only, `API_AUTH_DISABLED=1` disables auth on non-health routes. Do not use that setting outside controlled dev/test workflows.
+
 ## 6. Start the Enrichment Daemon
 
 ```bash
@@ -143,6 +156,17 @@ npm run dev --prefix packages/daemon/lark-listener
 ```bash
 # Any terminal (project root)
 npm run dev --prefix packages/cli -- submit --payload "hello world"
+```
+
+If you want to pass the token explicitly instead of relying on `.env`:
+
+```bash
+npm run dev --prefix packages/cli -- submit \
+  --payload "hello world" \
+  --type generic \
+  --executor claude \
+  --model sonnet \
+  --token "$API_AUTH_TOKEN"
 ```
 
 ## Summary
