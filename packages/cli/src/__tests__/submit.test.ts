@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import { DEFAULT_API_URL } from '@local-agent/shared';
 
 const mockFetch = vi.fn();
+const AUTH_ENV = { API_AUTH_TOKEN: 'test-token' };
 
 import * as submitModule from '../commands/submit';
 
@@ -34,6 +35,7 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
     });
 
     expect(result).toEqual({
@@ -61,11 +63,15 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://example.com:3000',
+      env: AUTH_ENV,
     });
 
     expect(mockFetch).toHaveBeenCalledWith('http://example.com:3000/tasks', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+      },
       body: JSON.stringify({
         task_type: 'code-review',
         payload: 'review this',
@@ -92,6 +98,165 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+      },
+      body: JSON.stringify({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      }),
+    });
+  });
+
+  it('sends Authorization bearer header from explicit token', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        task_id: 'task-123',
+        task_type: 'code_review',
+        submitted_at: '2026-03-26T10:00:00.000Z',
+      }),
+    });
+
+    await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      token: 'explicit-token',
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer explicit-token',
+      },
+      body: JSON.stringify({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      }),
+    });
+  });
+
+  it('uses API_AUTH_TOKEN when explicit token is omitted', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        task_id: 'task-123',
+        task_type: 'code_review',
+        submitted_at: '2026-03-26T10:00:00.000Z',
+      }),
+    });
+
+    await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      env: { API_AUTH_TOKEN: 'env-token' },
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer env-token',
+      },
+      body: JSON.stringify({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      }),
+    });
+  });
+
+  it('prefers explicit token over API_AUTH_TOKEN', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        task_id: 'task-123',
+        task_type: 'code_review',
+        submitted_at: '2026-03-26T10:00:00.000Z',
+      }),
+    });
+
+    await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      token: 'explicit-token',
+      env: { API_AUTH_TOKEN: 'env-token' },
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer explicit-token',
+      },
+      body: JSON.stringify({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
+      }),
+    });
+  });
+
+  it('fails fast when auth is enabled and no token is configured', async () => {
+    const result = await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      env: {},
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'API auth is enabled but no token is configured. Pass --token or set API_AUTH_TOKEN.',
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('allows missing token when API_AUTH_DISABLED is 1', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        task_id: 'task-123',
+        task_type: 'code_review',
+        submitted_at: '2026-03-26T10:00:00.000Z',
+      }),
+    });
+
+    await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      env: { API_AUTH_DISABLED: '1' },
     });
 
     expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', {
@@ -120,6 +285,7 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
     });
 
     expect(result).toEqual({
@@ -142,6 +308,7 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
     });
 
     expect(result).toEqual({
@@ -160,6 +327,7 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
     });
 
     expect(result).toEqual({
@@ -177,6 +345,7 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
     });
 
     expect(result).toEqual({
@@ -200,6 +369,7 @@ describe('submitTask', () => {
       executor: 'claude',
       model: 'sonnet',
       apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
     });
 
     expect(result).toEqual({
@@ -264,6 +434,46 @@ describe('registerSubmitCommand', () => {
       apiUrl: 'http://example.com:3000',
     });
     expect(logSpy).toHaveBeenCalledWith('Task submitted successfully.');
+  });
+
+  it('wires explicit token from CLI options into submitTask', async () => {
+    const submitTaskSpy = vi.fn().mockResolvedValue({
+      success: true,
+      taskType: 'generic',
+      submittedAt: '2026-03-26T10:00:00.000Z',
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const program = new Command();
+    submitModule.registerSubmitCommand(program, submitTaskSpy);
+
+    await program.parseAsync(
+      [
+        'submit',
+        '--payload',
+        'test prompt',
+        '--type',
+        'generic',
+        '--executor',
+        'claude',
+        '--model',
+        'sonnet',
+        '--token',
+        'explicit-token',
+      ],
+      {
+        from: 'user',
+      },
+    );
+
+    expect(submitTaskSpy).toHaveBeenCalledWith({
+      payload: 'test prompt',
+      type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: DEFAULT_API_URL,
+      token: 'explicit-token',
+    });
   });
 
   it('uses DEFAULT_API_URL when apiUrl option and API_URL env are unset', async () => {
