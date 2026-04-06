@@ -515,6 +515,8 @@ describe('registerSubmitCommand', () => {
 
   it('requires --type, --executor, and --model in the command wiring', async () => {
     const program = new Command();
+    program.configureOutput({ writeOut: () => undefined, writeErr: () => undefined });
+    program.exitOverride();
     submitModule.registerSubmitCommand(program, vi.fn());
 
     await expect(
