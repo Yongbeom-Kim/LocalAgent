@@ -246,8 +246,7 @@ describe('POST /results', () => {
       topic_id: '42',
       message_id: '99',
     };
-    const res = await request(app)
-      .post('/results')
+    const res = await authedRequest(request(app).post('/results'))
       .send({ ...validSubmission(), task_source: taskSource });
 
     expect(res.status).toBe(201);
@@ -342,8 +341,7 @@ describe('POST /results', () => {
 
   it('accepts telegram-listener as a valid received-phase emitter', async () => {
     const app = buildApp();
-    const res = await request(app)
-      .post('/results')
+    const res = await authedRequest(request(app).post('/results'))
       .send({
         ...validPhaseSubmission(),
         phase: 'received',
@@ -358,7 +356,7 @@ describe('POST /results', () => {
     const app = buildApp();
     const payload = validMirrorSubmission();
 
-    const res = await request(app).post('/results').send(payload);
+    const res = await authedRequest(request(app).post('/results')).send(payload);
 
     expect(res.status).toBe(201);
     expect(res.body.event_kind).toBe('mirror');

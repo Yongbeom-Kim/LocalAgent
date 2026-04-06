@@ -391,14 +391,14 @@ export class EnrichmentPoller {
         return;
       }
 
-      const rootSessionId = inboundClassification?.shouldMaterializeRootState
+      const rootSessionId = inboundClassification?.shouldMaterializeRootState && inboundClassification.envelope.platform === 'lark'
         ? await this.getAuthoritativeSessionIdForRoot(inboundClassification.envelope.root_message_id)
         : null;
 
       if (isGcTask) {
         const sessionId = rootSessionId ?? generateSessionId();
 
-        if (inboundClassification?.shouldMaterializeRootState) {
+        if (inboundClassification?.shouldMaterializeRootState && inboundClassification.envelope.platform === 'lark') {
           await this.materializeRootThreadState(inboundClassification.envelope, {
             sessionId,
             taskType: GC_TASK_TYPE,

@@ -4,6 +4,7 @@ import {
   isValidTelegramTopicTaskSource,
   normalizeTelegramInboundContent,
   type TaskSource,
+  type TelegramTopicTaskSource,
 } from '@local-agent/shared';
 import { TelegramPhasePublisher } from './adapters/telegram-phase-publisher';
 import { TelegramTaskSubmitter } from './adapters/telegram-task-submitter';
@@ -150,6 +151,10 @@ export class TelegramUpdatePoller {
   }
 
   private async publishSyntheticFailure(taskSource: TaskSource, reason: string): Promise<void> {
+    if (taskSource.source !== 'telegram') {
+      return;
+    }
+
     const syntheticTaskId = `telegram-reject:${taskSource.chat_id}:${taskSource.message_id}`;
 
     await this.phasePublisher.publishCompletedSyntheticFailure({
@@ -158,6 +163,10 @@ export class TelegramUpdatePoller {
       taskSource,
       reason,
     });
+  }
+
+  private isTelegramTopicTaskSource(taskSource: TaskSource): taskSource is TelegramTopicTaskSource {
+    return taskSource.source === 'telegram' && 'topic_id' in taskSource;
   }
 
   private isBotAuthored(message: TelegramMessage): boolean {

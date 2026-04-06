@@ -1,5 +1,6 @@
 import {
   DEFAULT_LOG_LEVEL,
+  loadApiAuthConfig,
   loadEnvFromRoot,
   loadSqliteConfig,
   requireEnvValue,
@@ -12,6 +13,8 @@ export interface LarkListenerConfig {
   appId: string;
   appSecret: string;
   apiUrl: string;
+  apiAuthEnabled: boolean;
+  apiAuthToken?: string;
   logLevel: string;
   dedupTtlMs: number;
   dbPath: string;
@@ -24,12 +27,15 @@ export function loadLarkListenerConfig(
   const appId = requireEnvValue(env, 'LARK_APP_ID');
   const appSecret = requireEnvValue(env, 'LARK_APP_SECRET');
   const apiUrl = requireEnvValue(env, 'API_URL');
+  const apiAuthConfig = loadApiAuthConfig(env);
   const sqliteConfig = loadSqliteConfig(env);
 
   return {
     appId,
     appSecret,
     apiUrl,
+    apiAuthEnabled: apiAuthConfig.enabled,
+    apiAuthToken: apiAuthConfig.enabled ? apiAuthConfig.token : undefined,
     logLevel: env.LOG_LEVEL ?? DEFAULT_LOG_LEVEL,
     dedupTtlMs: env.DEDUP_TTL_MS
       ? parseInt(env.DEDUP_TTL_MS, 10)
