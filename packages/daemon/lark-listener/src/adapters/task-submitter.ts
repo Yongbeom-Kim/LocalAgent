@@ -1,5 +1,7 @@
 import {
+  buildApiAuthHeaders,
   createLogger,
+  resolveApiClientToken,
   type TaskPhaseEventSubmission,
   type TaskSubmission,
   type TaskSource,
@@ -13,7 +15,13 @@ function sleep(ms: number): Promise<void> {
 }
 
 export class TaskSubmitter {
-  constructor(private readonly apiUrl: string) {}
+  private readonly apiUrl: string;
+  private readonly apiAuthToken?: string;
+
+  constructor(apiUrl: string, apiAuthToken?: string) {
+    this.apiUrl = apiUrl;
+    this.apiAuthToken = resolveApiClientToken({ explicitToken: apiAuthToken, env: process.env });
+  }
 
   /**
    * Submit a task to the API. Returns the task_id on success, null on failure.
@@ -43,9 +51,20 @@ export class TaskSubmitter {
       try {
         const res = await fetch(`${this.apiUrl}/tasks`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type': 'application/json',
+            ...buildApiAuthHeaders(this.apiAuthToken),
+          },
           body: JSON.stringify(body),
         });
+
+        if (res.status === 401 || res.status === 403) {
+          logger.warn(
+            { status: res.status, taskType, attempt },
+            'API authentication failed while submitting task; check API_AUTH_TOKEN or API_AUTH_DISABLED',
+          );
+          return null;
+        }
 
         if (!res.ok) {
           throw new Error(`API returned status ${res.status}`);
@@ -70,9 +89,24 @@ export class TaskSubmitter {
   async publishPhase(phaseEvent: TaskPhaseEventSubmission): Promise<void> {
     const res = await fetch(`${this.apiUrl}/results`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...buildApiAuthHeaders(this.apiAuthToken),
+      },
       body: JSON.stringify({ event_kind: 'phase', ...phaseEvent }),
     });
+
+    if (res.status === 401 || res.status === 403) {
+      logger.warn(
+        {
+          task_id: phaseEvent.task_id,
+          session_id: phaseEvent.session_id,
+          status: res.status,
+        },
+        'API authentication failed while publishing task phase; check API_AUTH_TOKEN or API_AUTH_DISABLED',
+      );
+      throw new Error(`Phase publish failed with auth status ${res.status}`);
+    }
 
     if (!res.ok) {
       throw new Error(`Phase publish failed with status ${res.status}`);

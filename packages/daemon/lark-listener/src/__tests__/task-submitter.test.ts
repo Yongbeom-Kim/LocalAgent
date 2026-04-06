@@ -11,7 +11,7 @@ describe('TaskSubmitter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useFakeTimers();
-    submitter = new TaskSubmitter('http://localhost:3000');
+    submitter = new TaskSubmitter('http://localhost:3000', 'listener-token');
   });
 
   afterEach(() => {
@@ -32,7 +32,10 @@ describe('TaskSubmitter', () => {
       'http://localhost:3000/tasks',
       expect.objectContaining({
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer listener-token',
+        },
         body: JSON.stringify({
           task_type: 'generic',
           payload: 'hello',
@@ -141,5 +144,44 @@ describe('TaskSubmitter', () => {
       executor: 'foo',
       executor_model: 'bar',
     });
+  });
+
+  it('sends bearer auth header when publishing task phase to /results', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, status: 204 });
+
+    await submitter.publishPhase({
+      task_id: 'task-123',
+      task_type: 'lark_inbound',
+      session_id: 'session-1',
+      phase: 'queued',
+      metadata: { emitted_by: 'lark-listener' },
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      'http://localhost:3000/results',
+      expect.objectContaining({
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer listener-token',
+        },
+      }),
+    );
+  });
+
+  it('does not retry task submissions on auth failures (401/403)', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 401, json: () => Promise.resolve({}) });
+
+    const result = await submitter.submit('generic', 'hello');
+
+    expect(result).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403, json: () => Promise.resolve({}) });
+
+    const secondResult = await submitter.submit('generic', 'hello-again');
+
+    expect(secondResult).toBeNull();
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
