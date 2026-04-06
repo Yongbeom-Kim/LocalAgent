@@ -120,6 +120,7 @@ import { GcExecutor } from '../../services/gc-executor';
 import { SetupHookExecutionError } from '../../services/setup-hook-runner';
 import { TaskOrchestrator } from '../task-orchestrator';
 import { JobEnvironment } from '../../services/job-environment';
+import { CancellationRegistry, CANCELLED_BY_KILL_MESSAGE } from '../../services/cancellation-registry';
 
 function createJob(overrides?: Partial<Job>): Job {
   return {
@@ -138,6 +139,7 @@ function createJob(overrides?: Partial<Job>): Job {
 describe('TaskOrchestrator', () => {
   let orchestrator: TaskOrchestrator;
   let jobEnv: JobEnvironment;
+  let cancellationRegistry: CancellationRegistry;
 
   beforeEach(() => {
     mockClaudePrecheck.mockClear().mockResolvedValue({ ok: true });
@@ -160,7 +162,8 @@ describe('TaskOrchestrator', () => {
     vi.mocked(CleanupExecutor).mockClear();
     vi.mocked(GcExecutor).mockClear();
     jobEnv = new JobEnvironment(false);
-    orchestrator = new TaskOrchestrator(jobEnv);
+    cancellationRegistry = new CancellationRegistry();
+    orchestrator = new TaskOrchestrator(jobEnv, cancellationRegistry);
   });
 
   it('calls setup once before execution and never tears down', async () => {
@@ -182,7 +185,7 @@ describe('TaskOrchestrator', () => {
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockSetup).toHaveBeenCalledWith(job);
     expect(mockClaudePrecheck).toHaveBeenCalledWith(mockEnv);
-    expect(mockClaudeExecute).toHaveBeenCalledWith(expectedAttempt, mockEnv);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(expectedAttempt, mockEnv, expect.any(Object));
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
@@ -265,6 +268,7 @@ describe('TaskOrchestrator', () => {
         executor_model: 'opus',
       }),
       mockEnv,
+      expect.any(Object),
     );
     expect(result).toEqual(mockResultSubmission);
     expect(mockTeardown).not.toHaveBeenCalled();
@@ -320,6 +324,7 @@ describe('TaskOrchestrator', () => {
         executor_model: 'gpt-5.4',
       }),
       mockEnv,
+      expect.any(Object),
     );
     expect(result).toEqual({ ...mockResultSubmission, executor: 'claude-w', executor_model: 'gpt-5.4' });
     expect(mockTeardown).not.toHaveBeenCalled();
@@ -341,6 +346,7 @@ describe('TaskOrchestrator', () => {
         executor_model: 'auto',
       }),
       mockEnv,
+      expect.any(Object),
     );
     expect(result).toEqual({ ...mockResultSubmission, executor: 'cursor', executor_model: 'auto' });
     expect(mockTeardown).not.toHaveBeenCalled();
@@ -363,6 +369,7 @@ describe('TaskOrchestrator', () => {
         executor_model: 'gpt-5.4',
       }),
       mockEnv,
+      expect.any(Object),
     );
     expect(result).toEqual({ ...mockResultSubmission, executor: 'ttcodex', executor_model: 'gpt-5.4' });
     expect(mockTeardown).not.toHaveBeenCalled();
@@ -387,6 +394,7 @@ describe('TaskOrchestrator', () => {
         executor_model: 'none',
       }),
       emptyEnv,
+      expect.any(Object),
     );
     expect(result).toEqual(mockCleanupResultSubmission);
   });
@@ -407,6 +415,7 @@ describe('TaskOrchestrator', () => {
         task_type: 'cleanup',
       }),
       emptyEnv,
+      expect.any(Object),
     );
   });
 
@@ -489,6 +498,42 @@ describe('TaskOrchestrator', () => {
     expect(result.stderr).toContain('execution boom');
   });
 
+  it('registers and clears running jobs in the cancellation registry', async () => {
+    const job = createJob();
+    let hasRunningInsideExecute = false;
+
+    mockClaudeExecute.mockImplementationOnce(async () => {
+      hasRunningInsideExecute = cancellationRegistry.hasRunningJob('session-789');
+      return mockResultSubmission;
+    });
+
+    await orchestrator.handle(job);
+
+    expect(hasRunningInsideExecute).toBe(true);
+    expect(cancellationRegistry.hasRunningJob('session-789')).toBe(false);
+  });
+
+  it('normalizes a cancelled execution into a stable kill failure result', async () => {
+    const job = createJob();
+    mockClaudeExecute.mockImplementationOnce(async (_attempt, _env, hooks) => {
+      hooks?.runningJob?.attachCancellationHandle({ cancel: () => undefined });
+      cancellationRegistry.requestCancellation('session-789');
+      return {
+        ...mockResultSubmission,
+        stdout: 'partial output',
+        stderr: 'executor stderr',
+      };
+    });
+
+    const result = await orchestrator.handle(job);
+
+    expect(result.status).toBe('failure');
+    expect(result.exit_code).toBeNull();
+    expect(result.stdout).toBe('partial output');
+    expect(result.stderr).toContain('executor stderr');
+    expect(result.stderr).toContain(CANCELLED_BY_KILL_MESSAGE);
+  });
+
   it('returns failure for unknown executor without teardown', async () => {
     const job = createJob({
       executors: [{ executor: 'invalid' as never, executor_model: 'test' }],
@@ -539,8 +584,8 @@ describe('TaskOrchestrator', () => {
     expect(mockClaudeExecute).toHaveBeenCalledTimes(1);
     expect(mockClaudeWExecute).toHaveBeenCalledTimes(1);
     expect(mockSetup).toHaveBeenCalledTimes(1);
-    expect(mockClaudeExecute).toHaveBeenCalledWith(expect.anything(), mockEnv);
-    expect(mockClaudeWExecute).toHaveBeenCalledWith(expect.anything(), mockEnv);
+    expect(mockClaudeExecute).toHaveBeenCalledWith(expect.anything(), mockEnv, expect.any(Object));
+    expect(mockClaudeWExecute).toHaveBeenCalledWith(expect.anything(), mockEnv, expect.any(Object));
     expect(mockTeardown).not.toHaveBeenCalled();
   });
 
@@ -622,10 +667,12 @@ describe('TaskOrchestrator', () => {
     expect(mockClaudeExecute).toHaveBeenCalledWith(
       expect.objectContaining({ executor: 'claude', executor_model: 'opus' }),
       mockEnv,
+      expect.any(Object),
     );
     expect(mockClaudeWExecute).toHaveBeenCalledWith(
       expect.objectContaining({ executor: 'claude-w', executor_model: 'gpt-5.4' }),
       mockEnv,
+      expect.any(Object),
     );
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockTeardown).not.toHaveBeenCalled();
@@ -640,6 +687,7 @@ describe('TaskOrchestrator', () => {
     expect(mockClaudeExecute).toHaveBeenCalledWith(
       expect.objectContaining({ history }),
       mockEnv,
+      expect.any(Object),
     );
   });
 

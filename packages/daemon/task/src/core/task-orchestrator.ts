@@ -4,10 +4,15 @@ import { CleanupExecutor } from '../adapters/cleanup-executor';
 import { ClaudeWExecutor } from '../adapters/claude-w-executor';
 import { CursorExecutor } from '../adapters/cursor-executor';
 import { TTCodexExecutor } from '../adapters/ttcodex-executor';
-import { TaskExecutor } from '../ports/task-executor';
+import { TaskExecutionHooks, TaskExecutor } from '../ports/task-executor';
 import { GcExecutor } from '../services/gc-executor';
 import { JobEnvironment, ExecutionEnvironment } from '../services/job-environment';
 import { SetupHookExecutionError } from '../services/setup-hook-runner';
+import {
+  CancellationRegistry,
+  CANCELLED_BY_KILL_MESSAGE,
+  RunningJobRegistration,
+} from '../services/cancellation-registry';
 
 const logger = createLogger('task-daemon:orchestrator');
 const NEW_INSTANCE_MAX_RETRIES = 3;
@@ -20,7 +25,10 @@ const EMPTY_EXECUTION_ENVIRONMENT: ExecutionEnvironment = {
 export class TaskOrchestrator {
   private readonly executors: Record<TaskExecutorType, TaskExecutor>;
 
-  constructor(private readonly jobEnv: JobEnvironment) {
+  constructor(
+    private readonly jobEnv: JobEnvironment,
+    private readonly cancellationRegistry: CancellationRegistry = new CancellationRegistry(),
+  ) {
     this.executors = {
       claude: new ClaudeExecutor(),
       'claude-w': new ClaudeWExecutor(),
@@ -115,32 +123,79 @@ export class TaskOrchestrator {
     return lastResult!;
   }
 
+  getCancellationRegistry(): CancellationRegistry {
+    return this.cancellationRegistry;
+  }
+
   private async runExecutors(job: Job, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
     let lastResult: TaskResultSubmission | null = null;
+    const runningJob = this.cancellationRegistry.register(job.session_id, job.job_id);
 
-    for (let i = 0; i < job.executors.length; i++) {
-      const pref = job.executors[i];
-      const isLast = i === job.executors.length - 1;
+    try {
+      for (let i = 0; i < job.executors.length; i++) {
+        const pref = job.executors[i];
+        const isLast = i === job.executors.length - 1;
 
-      try {
-        const executor = this.resolveExecutor(pref.executor);
-        const precheckResult = await this.runPrecheck(executor, pref.executor, pref.executor_model, env);
+        try {
+          const executor = this.resolveExecutor(pref.executor);
+          const precheckResult = await this.runPrecheck(executor, pref.executor, pref.executor_model, env);
 
-        if (!precheckResult.ok) {
-          // Precheck failures intentionally reuse the normal executor-failure path
-          // so fallback ordering and final result reporting stay identical.
-          lastResult = {
+          if (!precheckResult.ok) {
+            // Precheck failures intentionally reuse the normal executor-failure path
+            // so fallback ordering and final result reporting stay identical.
+            lastResult = {
+              job_id: job.job_id,
+              task_id: job.task_id,
+              task_type: job.task_type,
+              session_id: job.session_id,
+              status: 'failure',
+              exit_code: null,
+              stdout: '',
+              stderr: precheckResult.stderr,
+              executor: pref.executor,
+              executor_model: pref.executor_model,
+            };
+
+            if (!isLast) {
+              logger.warn(
+                { job_id: job.job_id, executor: pref.executor, model: pref.executor_model, attempt: i + 1 },
+                'Executor failed, trying next preference',
+              );
+            }
+
+            continue;
+          }
+
+          const attempt: JobAttempt = {
             job_id: job.job_id,
             task_id: job.task_id,
-            task_type: job.task_type,
             session_id: job.session_id,
-            status: 'failure',
-            exit_code: null,
-            stdout: '',
-            stderr: precheckResult.stderr,
+            task_type: job.task_type,
+            payload: job.payload,
+            history: job.history,
+            executor: pref.executor,
+            executor_model: pref.executor_model,
+            submitted_at: job.submitted_at,
+            enriched_at: job.enriched_at,
+            system_prompt: job.system_prompt,
+            marketplaces: job.marketplaces,
+            skipContinue: job.skipContinue,
+          };
+
+          const executorResult = await executor.execute(attempt, env, { runningJob });
+          if (runningJob.isCancellationRequested()) {
+            return this.createCancelledResult(job, pref.executor, pref.executor_model, executorResult.stdout, executorResult.stderr);
+          }
+
+          lastResult = {
+            ...executorResult,
             executor: pref.executor,
             executor_model: pref.executor_model,
           };
+
+          if (lastResult.status === 'success') {
+            return lastResult;
+          }
 
           if (!isLast) {
             logger.warn(
@@ -148,67 +203,57 @@ export class TaskOrchestrator {
               'Executor failed, trying next preference',
             );
           }
+        } catch (error) {
+          if (runningJob.isCancellationRequested()) {
+            return this.createCancelledResult(job, pref.executor, pref.executor_model);
+          }
 
-          continue;
-        }
+          logger.error({ job_id: job.job_id, err: error }, 'Job execution failed');
+          lastResult = {
+            job_id: job.job_id,
+            task_id: job.task_id,
+            task_type: job.task_type,
+            status: 'failure',
+            exit_code: null,
+            stdout: '',
+            stderr: `Job execution failed: ${error instanceof Error ? error.message : String(error)}`,
+            executor: pref.executor,
+            executor_model: pref.executor_model,
+          };
 
-        const attempt: JobAttempt = {
-          job_id: job.job_id,
-          task_id: job.task_id,
-          session_id: job.session_id,
-          task_type: job.task_type,
-          payload: job.payload,
-          history: job.history,
-          executor: pref.executor,
-          executor_model: pref.executor_model,
-          submitted_at: job.submitted_at,
-          enriched_at: job.enriched_at,
-          system_prompt: job.system_prompt,
-          marketplaces: job.marketplaces,
-          skipContinue: job.skipContinue,
-        };
-
-        const executorResult = await executor.execute(attempt, env);
-        lastResult = {
-          ...executorResult,
-          executor: pref.executor,
-          executor_model: pref.executor_model,
-        };
-
-        if (lastResult.status === 'success') {
-          return lastResult;
-        }
-
-        if (!isLast) {
-          logger.warn(
-            { job_id: job.job_id, executor: pref.executor, model: pref.executor_model, attempt: i + 1 },
-            'Executor failed, trying next preference',
-          );
-        }
-      } catch (error) {
-        logger.error({ job_id: job.job_id, err: error }, 'Job execution failed');
-        lastResult = {
-          job_id: job.job_id,
-          task_id: job.task_id,
-          task_type: job.task_type,
-          status: 'failure',
-          exit_code: null,
-          stdout: '',
-          stderr: `Job execution failed: ${error instanceof Error ? error.message : String(error)}`,
-          executor: pref.executor,
-          executor_model: pref.executor_model,
-        };
-
-        if (!isLast) {
-          logger.warn(
-            { job_id: job.job_id, executor: pref.executor, model: pref.executor_model, attempt: i + 1 },
-            'Executor threw, trying next preference',
-          );
+          if (!isLast) {
+            logger.warn(
+              { job_id: job.job_id, executor: pref.executor, model: pref.executor_model, attempt: i + 1 },
+              'Executor threw, trying next preference',
+            );
+          }
         }
       }
-    }
 
-    return lastResult!;
+      return lastResult!;
+    } finally {
+      runningJob.clear();
+    }
+  }
+
+  private createCancelledResult(
+    job: Job,
+    executor: TaskExecutorType,
+    executorModel: string,
+    stdout = '',
+    stderr = '',
+  ): TaskResultSubmission {
+    return {
+      job_id: job.job_id,
+      task_id: job.task_id,
+      task_type: job.task_type,
+      status: 'failure',
+      exit_code: null,
+      stdout,
+      stderr: stderr ? `${stderr}\n${CANCELLED_BY_KILL_MESSAGE}` : CANCELLED_BY_KILL_MESSAGE,
+      executor,
+      executor_model: executorModel,
+    };
   }
 
   private async runPrecheck(
