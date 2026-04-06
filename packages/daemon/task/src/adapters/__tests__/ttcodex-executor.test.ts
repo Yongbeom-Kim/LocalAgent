@@ -6,12 +6,14 @@ import { ExecutionEnvironment } from '../../services/job-environment';
 
 vi.mock('node:child_process', () => ({
   spawn: vi.fn(),
+  spawnSync: vi.fn(),
 }));
 
 import { TTCodexExecutor } from '../ttcodex-executor';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 
 const mockSpawn = vi.mocked(spawn);
+const mockSpawnSync = vi.mocked(spawnSync);
 
 function createJobAttempt(overrides?: Partial<JobAttempt>): JobAttempt {
   return {
@@ -81,7 +83,28 @@ describe('TTCodexExecutor', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockSpawnSync.mockReturnValue({ status: 0 } as any);
     executor = new TTCodexExecutor();
+  });
+
+  it('returns success when the ttadk binary is available in PATH', async () => {
+    mockSpawnSync.mockReturnValueOnce({ status: 0 } as any);
+
+    await expect(executor.precheck(createEnv())).resolves.toEqual({ ok: true });
+    expect(mockSpawnSync).toHaveBeenCalledWith(
+      'sh',
+      ['-lc', 'command -v ttadk >/dev/null 2>&1'],
+      { stdio: 'ignore' },
+    );
+  });
+
+  it('returns failure when the ttadk binary is missing from PATH', async () => {
+    mockSpawnSync.mockReturnValueOnce({ status: 1 } as any);
+
+    await expect(executor.precheck(createEnv())).resolves.toEqual({
+      ok: false,
+      stderr: 'Executor "ttcodex" unavailable: missing required binaries in PATH: ttadk',
+    });
   });
 
   it('spawns ttadk with fresh exec command', async () => {

@@ -59,38 +59,48 @@ const mockGcResultSubmission: TaskResultSubmission = {
   stderr: '',
 };
 
+const mockClaudePrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockClaudeExecute = vi.fn().mockResolvedValue(mockResultSubmission);
 const mockGcExecute = vi.fn().mockReturnValue(mockGcResultSubmission);
+const mockClaudeWPrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockClaudeWExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockCursorPrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockCursorExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockTTCodexPrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockTTCodexExecute = vi.fn().mockResolvedValue(mockResultSubmission);
+const mockCleanupPrecheck = vi.fn().mockResolvedValue({ ok: true });
 const mockCleanupExecute = vi.fn().mockResolvedValue(mockCleanupResultSubmission);
 vi.mock('../../adapters/claude-executor', () => ({
-  ClaudeExecutor: vi.fn(function (this: { execute: typeof mockClaudeExecute }) {
+  ClaudeExecutor: vi.fn(function (this: { precheck: typeof mockClaudePrecheck; execute: typeof mockClaudeExecute }) {
+    this.precheck = mockClaudePrecheck;
     this.execute = mockClaudeExecute;
   }),
 }));
 
 vi.mock('../../adapters/claude-w-executor', () => ({
-  ClaudeWExecutor: vi.fn(function (this: { execute: typeof mockClaudeWExecute }) {
+  ClaudeWExecutor: vi.fn(function (this: { precheck: typeof mockClaudeWPrecheck; execute: typeof mockClaudeWExecute }) {
+    this.precheck = mockClaudeWPrecheck;
     this.execute = mockClaudeWExecute;
   }),
 }));
 
 vi.mock('../../adapters/cleanup-executor', () => ({
-  CleanupExecutor: vi.fn(function (this: { execute: typeof mockCleanupExecute }) {
+  CleanupExecutor: vi.fn(function (this: { precheck: typeof mockCleanupPrecheck; execute: typeof mockCleanupExecute }) {
+    this.precheck = mockCleanupPrecheck;
     this.execute = mockCleanupExecute;
   }),
 }));
 
 vi.mock('../../adapters/cursor-executor', () => ({
-  CursorExecutor: vi.fn(function (this: { execute: typeof mockCursorExecute }) {
+  CursorExecutor: vi.fn(function (this: { precheck: typeof mockCursorPrecheck; execute: typeof mockCursorExecute }) {
+    this.precheck = mockCursorPrecheck;
     this.execute = mockCursorExecute;
   }),
 }));
 
 vi.mock('../../adapters/ttcodex-executor', () => ({
-  TTCodexExecutor: vi.fn(function (this: { execute: typeof mockTTCodexExecute }) {
+  TTCodexExecutor: vi.fn(function (this: { precheck: typeof mockTTCodexPrecheck; execute: typeof mockTTCodexExecute }) {
+    this.precheck = mockTTCodexPrecheck;
     this.execute = mockTTCodexExecute;
   }),
 }));
@@ -130,10 +140,15 @@ describe('TaskOrchestrator', () => {
   let jobEnv: JobEnvironment;
 
   beforeEach(() => {
+    mockClaudePrecheck.mockClear().mockResolvedValue({ ok: true });
     mockClaudeExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockClaudeWPrecheck.mockClear().mockResolvedValue({ ok: true });
     mockClaudeWExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockCursorPrecheck.mockClear().mockResolvedValue({ ok: true });
     mockCursorExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockTTCodexPrecheck.mockClear().mockResolvedValue({ ok: true });
     mockTTCodexExecute.mockClear().mockResolvedValue(mockResultSubmission);
+    mockCleanupPrecheck.mockClear().mockResolvedValue({ ok: true });
     mockCleanupExecute.mockClear().mockResolvedValue(mockCleanupResultSubmission);
     mockGcExecute.mockClear().mockReturnValue(mockGcResultSubmission);
     mockSetup.mockClear().mockResolvedValue(mockEnv);
@@ -166,8 +181,74 @@ describe('TaskOrchestrator', () => {
 
     expect(mockSetup).toHaveBeenCalledTimes(1);
     expect(mockSetup).toHaveBeenCalledWith(job);
+    expect(mockClaudePrecheck).toHaveBeenCalledWith(mockEnv);
     expect(mockClaudeExecute).toHaveBeenCalledWith(expectedAttempt, mockEnv);
     expect(mockTeardown).not.toHaveBeenCalled();
+  });
+
+  it('calls precheck before execute for the selected executor', async () => {
+    await orchestrator.handle(createJob());
+
+    expect(mockClaudePrecheck).toHaveBeenCalledWith(mockEnv);
+    expect(mockClaudeExecute).toHaveBeenCalled();
+    expect(mockClaudePrecheck.mock.invocationCallOrder[0]).toBeLessThan(
+      mockClaudeExecute.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('skips execute and falls through to the next executor when precheck fails', async () => {
+    mockClaudePrecheck.mockResolvedValueOnce({
+      ok: false,
+      stderr: 'Executor "claude" unavailable: missing required binaries in PATH: claude',
+    });
+    mockClaudeWPrecheck.mockResolvedValueOnce({ ok: true });
+
+    await orchestrator.handle(createJob({
+      executors: [
+        { executor: 'claude', executor_model: 'opus' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
+      ],
+    }));
+
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
+    expect(mockClaudeWExecute).toHaveBeenCalled();
+  });
+
+  it('returns a standard failure result when the last executor precheck fails', async () => {
+    mockClaudePrecheck.mockResolvedValueOnce({
+      ok: false,
+      stderr: 'Executor "claude" unavailable: missing required binaries in PATH: claude',
+    });
+
+    const result = await orchestrator.handle(createJob());
+
+    expect(result).toEqual({
+      job_id: 'job-456',
+      task_id: 'test-123',
+      session_id: 'session-789',
+      task_type: 'generic',
+      status: 'failure',
+      exit_code: null,
+      stdout: '',
+      stderr: 'Executor "claude" unavailable: missing required binaries in PATH: claude',
+      executor: 'claude',
+      executor_model: 'opus',
+    });
+  });
+
+  it('treats a thrown precheck error as a failed precheck and falls back', async () => {
+    mockClaudePrecheck.mockRejectedValueOnce(new Error('boom'));
+    mockClaudeWPrecheck.mockResolvedValueOnce({ ok: true });
+
+    await orchestrator.handle(createJob({
+      executors: [
+        { executor: 'claude', executor_model: 'opus' },
+        { executor: 'claude-w', executor_model: 'gpt-5.4' },
+      ],
+    }));
+
+    expect(mockClaudeExecute).not.toHaveBeenCalled();
+    expect(mockClaudeWExecute).toHaveBeenCalled();
   });
 
   it('returns TaskResultSubmission from Claude executor for claude jobs', async () => {

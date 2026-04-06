@@ -73,6 +73,12 @@ describe('CleanupExecutor', () => {
     expect(existsSync(sessionDir)).toBe(false);
   });
 
+  it('returns success from precheck without inspecting PATH', async () => {
+    const executor = new CleanupExecutor(tempBaseDir);
+
+    await expect(executor.precheck(createEnv())).resolves.toEqual({ ok: true });
+  });
+
   it('returns success with a not-found note when the session directory is missing', async () => {
     const job = createJobAttempt({ session_id: 'session-missing-001' });
     const sessionDir = join(tempBaseDir, job.session_id);
