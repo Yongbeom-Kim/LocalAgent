@@ -2,7 +2,7 @@
 
 **Goal:** Add a port-level executor precheck so the task orchestrator fails fast when an executor's required binaries are missing from `PATH`, while preserving the existing executor fallback behavior.
 
-**Architecture:** Extend the task executor port with a structured `precheck(env)` method, implement executor-owned `command -v` checks inside each adapter, and have `TaskOrchestrator` call precheck before every executor preference attempt. Precheck failures are converted into the existing `TaskResultSubmission` failure shape and logged explicitly, but they follow the same fallback path as ordinary executor failures.
+**Architecture:** Extend the task executor port with a structured `precheck(env)` method, implement a small shared `command -v` helper used by each adapter, and have `TaskOrchestrator` call precheck before every executor preference attempt. Precheck failures are converted into the existing `TaskResultSubmission` failure shape and logged explicitly, but they follow the same fallback path as ordinary executor failures.
 
 **Tech Stack:** TypeScript, Node.js child-process APIs, Vitest, existing LocalAgent task-daemon packages.
 
@@ -15,10 +15,11 @@
 | `packages/daemon/task/src/ports/task-executor.ts` | Extend the executor port with the structured precheck contract |
 | `packages/daemon/task/src/core/task-orchestrator.ts` | Run precheck before execute and translate failed prechecks into standard failure results |
 | `packages/daemon/task/src/core/__tests__/task-orchestrator.test.ts` | Verify precheck ordering, fallback, and no-execute-on-precheck-failure behavior |
-| `packages/daemon/task/src/adapters/claude-executor.ts` | Add executor-owned `command -v` precheck for `claude` |
-| `packages/daemon/task/src/adapters/claude-w-executor.ts` | Add executor-owned `command -v` precheck for `claude-w` |
-| `packages/daemon/task/src/adapters/cursor-executor.ts` | Add executor-owned `command -v` precheck for `agent` |
-| `packages/daemon/task/src/adapters/ttcodex-executor.ts` | Add executor-owned `command -v` precheck for `ttadk` |
+| `packages/daemon/task/src/adapters/executor-precheck.ts` | Shared helper for binary presence checks |
+| `packages/daemon/task/src/adapters/claude-executor.ts` | Add executor precheck for `claude` |
+| `packages/daemon/task/src/adapters/claude-w-executor.ts` | Add executor precheck for `claude-w` |
+| `packages/daemon/task/src/adapters/cursor-executor.ts` | Add executor precheck for `agent` |
+| `packages/daemon/task/src/adapters/ttcodex-executor.ts` | Add executor precheck for `ttadk` and `codex` |
 | `packages/daemon/task/src/adapters/cleanup-executor.ts` | Add no-op success precheck |
 | `packages/daemon/task/src/adapters/__tests__/claude-executor.test.ts` | Cover `ClaudeExecutor.precheck()` success/failure |
 | `packages/daemon/task/src/adapters/__tests__/claude-w-executor.test.ts` | Cover `ClaudeWExecutor.precheck()` success/failure |
@@ -51,7 +52,7 @@ export interface TaskExecutor {
 }
 ```
 
-Keep the type in this port file. Do not create a shared helper module or a separate precheck utility file.
+Keep the type in this port file.
 
 - [ ] **Step 2: Implement a temporary no-op `precheck(...)` on every `TaskExecutor` implementation**
 
@@ -202,9 +203,10 @@ git add packages/daemon/task/src/core/task-orchestrator.ts packages/daemon/task/
 git commit -m "feat(task-daemon): fail fast on executor precheck"
 ```
 
-### Task 3: Implement `ClaudeExecutor.precheck()`
+### Task 3: Add the shared binary-check helper and wire `ClaudeExecutor.precheck()`
 
 **Files:**
+- Add: `packages/daemon/task/src/adapters/executor-precheck.ts`
 - Modify: `packages/daemon/task/src/adapters/claude-executor.ts`
 - Modify: `packages/daemon/task/src/adapters/__tests__/claude-executor.test.ts`
 
@@ -355,7 +357,7 @@ git commit -m "feat(task-daemon): add cursor executor precheck"
 
 Add tests that assert `TTCodexExecutor.precheck()`:
 
-1. succeeds when `ttadk` is found;
+1. succeeds when both `ttadk` and `codex` are found;
 2. fails with:
 
 ```ts
@@ -364,14 +366,28 @@ Add tests that assert `TTCodexExecutor.precheck()`:
 
 when `ttadk` is not found.
 
+Also add coverage for:
+
+```ts
+'Executor "ttcodex" unavailable: missing required binaries in PATH: codex'
+```
+
+when only `codex` is missing, and:
+
+```ts
+'Executor "ttcodex" unavailable: missing required binaries in PATH: ttadk, codex'
+```
+
+when both are missing.
+
 - [ ] **Step 2: Run the TTCodex adapter tests to verify failure**
 
 Run: `pnpm --filter @local-agent/task-daemon vitest run src/adapters/__tests__/ttcodex-executor.test.ts`
 Expected: FAIL because `precheck()` is not implemented.
 
-- [ ] **Step 3: Implement the executor-owned `ttadk` precheck**
+- [ ] **Step 3: Implement the shared-helper-backed TTCodex precheck**
 
-Use the same local `command -v` pattern, with required binaries `['ttadk']` and executor name `ttcodex`.
+Use the shared `command -v` helper, with required binaries `['ttadk', 'codex']` and executor name `ttcodex`.
 
 - [ ] **Step 4: Run the TTCodex adapter tests to verify they pass**
 

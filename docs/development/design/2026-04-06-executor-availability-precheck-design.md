@@ -45,8 +45,8 @@ Precheck is explicitly:
 - All executors must implement the new executor-port method.
 - A failed precheck is treated as a normal executor failure, so later executor preferences still run.
 - The precheck result should be structured, not exception-based.
-- Required binaries and precheck logic stay inside each executor implementation.
-- No shared precheck utility is needed; duplicated tiny helper logic inside executors is acceptable.
+- Required binary lists stay inside each executor implementation.
+- Use a small shared utility for the repeated `command -v` binary check logic.
 - The design should leave room for future non-binary quick checks.
 - Executors may choose whether to fail on first missing dependency or report all missing dependencies.
 - For the current executors, all missing binaries should be reported.
@@ -59,7 +59,7 @@ Precheck is explicitly:
 - No daemon-startup-wide executor scan.
 - No new task result status, precheck status, or retry class.
 - No config-driven executor dependency registry.
-- No shared helper module for dependency checks.
+- No config-driven dependency registry or heavyweight shared precheck framework.
 - No install guidance or long remediation text in failure messages.
 - No change to executor preference ordering.
 - No change to the executor-internal continue-vs-fresh execution flow.
@@ -97,7 +97,7 @@ Current external executors ultimately spawn these binaries:
 - `ClaudeExecutor` -> `claude`
 - `ClaudeWExecutor` -> `claude-w`
 - `CursorExecutor` -> `agent`
-- `TTCodexExecutor` -> `ttadk`
+- `TTCodexExecutor` -> `ttadk`, `codex`
 
 `CleanupExecutor` performs local filesystem and SQLite cleanup and does not currently depend on a command in `PATH`.
 
@@ -117,7 +117,7 @@ Add `precheck(...)` to the `TaskExecutor` port. The orchestrator calls it before
 **Cons**
 
 - Requires touching every executor implementation and its tests.
-- Introduces some duplicated tiny helper code across executors.
+- Adds one more small utility module that every executor imports.
 
 ### Approach 2: Orchestrator-side executor dependency registry
 
@@ -242,17 +242,15 @@ For current executors:
 | `claude` | `claude` | report all missing binaries in a simple message |
 | `claude-w` | `claude-w` | report all missing binaries in a simple message |
 | `cursor` | `agent` | report all missing binaries in a simple message |
-| `ttcodex` | `ttadk` | report all missing binaries in a simple message |
+| `ttcodex` | `ttadk`, `codex` | report all missing binaries in a simple message |
 | `builtin` | none | return success with no checks |
 
-The executor-local implementation pattern should be intentionally simple:
+The executor implementation pattern should be intentionally simple:
 
 1. define a tiny local array of required binary names;
-2. run `command -v` for each required binary against the current process `PATH`;
+2. call a tiny shared helper that runs `command -v` for each required binary against the current process `PATH`;
 3. gather missing names;
 4. return `{ ok: false, stderr: ... }` if any are missing, otherwise `{ ok: true }`.
-
-No common utility module is introduced.
 
 ### 4. `command -v` contract
 
