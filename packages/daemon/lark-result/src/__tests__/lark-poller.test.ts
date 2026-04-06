@@ -150,6 +150,52 @@ describe('LarkPoller', () => {
       });
     });
 
+    it('accepts cancelled as a forward terminal phase after executing', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({
+            event_kind: 'phase',
+            event: {
+              event_id: 'evt-exec',
+              task_id: 'task-123',
+              phase: 'executing',
+              task_source: { source: 'lark', message_id: 'om_1' },
+            },
+          }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({
+            event_kind: 'phase',
+            event: {
+              event_id: 'evt-cancelled',
+              task_id: 'task-123',
+              phase: 'cancelled',
+              task_source: { source: 'lark', message_id: 'om_1' },
+            },
+          }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+      await poller.pollOnce();
+      await poller.pollOnce();
+
+      expect(mockPhaseNotify).toHaveBeenNthCalledWith(1, expect.objectContaining({
+        event_id: 'evt-exec',
+        phase: 'executing',
+      }));
+      expect(mockPhaseNotify).toHaveBeenNthCalledWith(2, expect.objectContaining({
+        event_id: 'evt-cancelled',
+        phase: 'cancelled',
+      }));
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results/lark-messages/evt-cancelled/ack', {
+        method: 'POST',
+        headers: authHeaders,
+      });
+    });
+
     it('logs and stops normal processing when the api returns 401', async () => {
       mockFetch.mockResolvedValueOnce({ status: 401 });
 

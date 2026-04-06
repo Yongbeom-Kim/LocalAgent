@@ -3,6 +3,7 @@ export const PHASE_REACTION_BY_PHASE = {
   enriching: 'Eye',
   queued: 'Hourglass',
   executing: 'Runner',
+  cancelled: null,
   completed: null,
 } as const;
 
@@ -34,7 +35,8 @@ const PHASE_ORDER: Readonly<Record<LarkTaskPhase, number>> = {
   enriching: 1,
   queued: 2,
   executing: 3,
-  completed: 4,
+  cancelled: 4,
+  completed: 5,
 };
 
 export function compareLarkTaskPhases(a: LarkTaskPhase, b: LarkTaskPhase): number {

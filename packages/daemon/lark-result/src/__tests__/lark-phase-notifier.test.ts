@@ -139,6 +139,46 @@ describe('LarkPhaseNotifier', () => {
     }));
   });
 
+  it('clears bot-owned phase reactions on cancelled without adding a replacement', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          code: 0,
+          data: {
+            open_id: 'ou_bot',
+            items: [
+              {
+                reaction_id: 'react-1',
+                reaction_type: { emoji_type: 'Runner' },
+                operator: { open_id: 'ou_bot' },
+              },
+            ],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0 }) });
+
+    await notifier.notify({
+      event_id: 'evt-cancelled',
+      task_id: 'task-1',
+      phase: 'cancelled',
+      task_source: { source: 'lark', message_id: 'om_1' },
+    });
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions/react-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+    expect(repository.appendLarkPhaseReactionAttempt).toHaveBeenCalledWith('om_1', expect.objectContaining({
+      phase: 'cancelled',
+      action: 'clear',
+      ok: true,
+      event_id: 'evt-cancelled',
+    }));
+  });
+
   it('ignores non-lark task sources', async () => {
     await notifier.notify({
       event_id: 'evt-4',
@@ -269,4 +309,3 @@ describe('clearBotOwnedPhaseReactions', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });
-
