@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { isValidTaskSource } from '../types';
+import {
+  isValidTaskSource,
+  isValidTelegramChatTaskSource,
+  isValidTelegramTopicTaskSource,
+} from '../types';
 
 describe('isValidTaskSource', () => {
   it('returns true for valid lark source', () => {
@@ -32,5 +36,62 @@ describe('isValidTaskSource', () => {
 
   it('returns false for lark source with non-string message_id', () => {
     expect(isValidTaskSource({ source: 'lark', message_id: 123 })).toBe(false);
+  });
+
+  it('returns true for telegram topic sources', () => {
+    expect(
+      isValidTaskSource({
+        source: 'telegram',
+        chat_id: '-100123',
+        topic_id: '42',
+        message_id: '99',
+      }),
+    ).toBe(true);
+    expect(
+      isValidTelegramTopicTaskSource({
+        source: 'telegram',
+        chat_id: '-100123',
+        topic_id: '42',
+        message_id: '99',
+      }),
+    ).toBe(true);
+  });
+
+  it('returns true for telegram chat sources without topic_id', () => {
+    expect(
+      isValidTaskSource({
+        source: 'telegram',
+        chat_id: '-100123',
+        message_id: '99',
+      }),
+    ).toBe(true);
+    expect(
+      isValidTelegramChatTaskSource({
+        source: 'telegram',
+        chat_id: '-100123',
+        message_id: '99',
+      }),
+    ).toBe(true);
+  });
+
+  it('returns false for telegram source with empty chat_id', () => {
+    expect(
+      isValidTaskSource({
+        source: 'telegram',
+        chat_id: '',
+        topic_id: '42',
+        message_id: '99',
+      }),
+    ).toBe(false);
+  });
+
+  it('returns false for telegram topic source with missing topic_id in strict validator', () => {
+    expect(
+      isValidTelegramTopicTaskSource({
+        source: 'telegram',
+        chat_id: '-100123',
+        message_id: '99',
+      }),
+    ).toBe(false);
   });
 });

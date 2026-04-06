@@ -111,6 +111,22 @@ describe('POST /jobs', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts telegram task_source on POST /jobs', async () => {
+    const app = buildApp();
+    const taskSource = {
+      source: 'telegram',
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+    };
+    const res = await request(app)
+      .post('/jobs')
+      .send({ ...validJobSubmission(), task_source: taskSource });
+
+    expect(res.status).toBe(201);
+    expect(res.body.task_source).toEqual(taskSource);
+  });
+
   it('returns 201 with setup_hook and setup_hook_timeout_ms when provided', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/jobs'))

@@ -80,6 +80,25 @@ function validPhaseSubmission() {
   };
 }
 
+function validMirrorSubmission() {
+  return {
+    event_kind: 'mirror',
+    task_id: 'task-123',
+    session_id: 'session-123',
+    task_type: 'generic',
+    task_source: {
+      source: 'telegram',
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+    },
+    mirror_id: 'mirror-123',
+    author_type: 'user',
+    text: 'hello',
+    origin_message_id: '99',
+  };
+}
+
 describe('POST /results', () => {
   beforeEach(() => vi.clearAllMocks());
 
@@ -219,6 +238,22 @@ describe('POST /results', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts telegram task_source on result POST /results', async () => {
+    const app = buildApp();
+    const taskSource = {
+      source: 'telegram',
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+    };
+    const res = await request(app)
+      .post('/results')
+      .send({ ...validSubmission(), task_source: taskSource });
+
+    expect(res.status).toBe(201);
+    expect(res.body.task_source).toEqual(taskSource);
+  });
+
   it('returns 201 with executor metadata when a valid pair is provided', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/results'))
@@ -303,6 +338,40 @@ describe('POST /results', () => {
         metadata: { emitted_by: 'unknown-emitter' },
       });
     expect(res.status).toBe(400);
+  });
+
+  it('accepts telegram-listener as a valid received-phase emitter', async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post('/results')
+      .send({
+        ...validPhaseSubmission(),
+        phase: 'received',
+        metadata: { emitted_by: 'telegram-listener' },
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.metadata).toEqual({ emitted_by: 'telegram-listener' });
+  });
+
+  it('accepts mirror POST /results', async () => {
+    const app = buildApp();
+    const payload = validMirrorSubmission();
+
+    const res = await request(app).post('/results').send(payload);
+
+    expect(res.status).toBe(201);
+    expect(res.body.event_kind).toBe('mirror');
+    expect(res.body.mirror_id).toBe('mirror-123');
+    expect(res.body.emitted_at).toEqual(expect.any(String));
+    expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
+      'results',
+      expect.objectContaining({
+        event_kind: 'mirror',
+        mirror_id: 'mirror-123',
+        session_id: 'session-123',
+      }),
+    );
   });
 
   it('returns 400 when event_kind is unknown', async () => {

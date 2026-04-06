@@ -1,5 +1,6 @@
 import {
   createLogger,
+  type LarkHistoryRepository,
   type TaskSource,
   LARK_INBOUND_SCHEMA_VERSION_V1,
   type LarkInboundEnvelope,
@@ -39,6 +40,7 @@ export class MessageHandler {
     private readonly replier: LarkReplier,
     private readonly dedup: DedupMap,
     private readonly metadataResolver: LarkMessageMetadataResolver,
+    private readonly larkHistoryRepository?: Pick<LarkHistoryRepository, 'getLarkMessageByMessageId'>,
   ) {}
 
   async handle(event: LarkMessageEvent): Promise<void> {
@@ -69,6 +71,11 @@ export class MessageHandler {
     }
 
     this.dedup.add(messageId);
+
+    if (await this.shouldSkipMirroredOrBotMessage(messageId)) {
+      logger.info({ message_id: messageId }, 'Skipping mirrored or bot-authored outbound lark message');
+      return;
+    }
 
     logger.info(
       { message_id: messageId, message_type: messageType, chat_type: message.chat_type, sender: event.sender.sender_id.open_id },
@@ -145,5 +152,30 @@ export class MessageHandler {
       return n < 10_000_000_000 ? n * 1000 : n;
     }
     return null;
+  }
+
+  private async shouldSkipMirroredOrBotMessage(messageId: string): Promise<boolean> {
+    if (!this.larkHistoryRepository) {
+      return false;
+    }
+
+    const message = await this.larkHistoryRepository.getLarkMessageByMessageId(messageId);
+    if (!message || message.direction !== 'outbound' || message.senderType !== 'bot') {
+      return false;
+    }
+
+    if (!message.metadataJson) {
+      return true;
+    }
+
+    try {
+      const metadata = JSON.parse(message.metadataJson) as {
+        mirror_origin?: string;
+        mirrored_by?: string;
+      };
+      return metadata.mirrored_by === 'local-agent' || typeof metadata.mirror_origin === 'string';
+    } catch {
+      return true;
+    }
   }
 }

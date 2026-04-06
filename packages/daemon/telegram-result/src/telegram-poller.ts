@@ -1,12 +1,9 @@
-import { TaskResult, buildApiAuthHeaders, createLogger } from '@local-agent/shared';
+import { type MirrorTaskEvent, TaskResult, createLogger } from '@local-agent/shared';
 import { TelegramNotifier } from './adapters/telegram-notifier';
 
 const logger = createLogger('telegram-daemon:poller');
-const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED';
 
-class ApiAuthConfigurationError extends Error {}
-
-type TaskEventKind = 'result' | 'phase';
+type TaskEventKind = 'result' | 'phase' | 'mirror';
 
 interface TaskEventEnvelope {
   event_kind: TaskEventKind;
@@ -25,51 +22,16 @@ export class TelegramPoller {
     private readonly apiUrl: string,
     private readonly queueName: string,
     private readonly notifier: TelegramNotifier,
-    private readonly apiAuthToken?: string,
   ) {}
-
-  private buildApiHeaders(): Record<string, string> {
-    return {
-      ...buildApiAuthHeaders(this.apiAuthToken),
-    };
-  }
-
-  private isAuthFailureStatus(status: number): boolean {
-    return status === 401 || status === 403;
-  }
-
-  private logAuthFailure(context: string, status: number, details?: Record<string, unknown>): void {
-    logger.warn(
-      {
-        ...details,
-        status,
-        context,
-      },
-      API_AUTH_FAILURE_LOG,
-    );
-  }
-
-  private throwIfAuthFailureStatus(status: number, context: string, details?: Record<string, unknown>): void {
-    if (!this.isAuthFailureStatus(status)) {
-      return;
-    }
-
-    this.logAuthFailure(context, status, details);
-    throw new ApiAuthConfigurationError(`${context} failed with auth status ${status}`);
-  }
 
   async pollOnce(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`, {
-        headers: this.buildApiHeaders(),
-      });
+      const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`);
 
       if (res.status === 204) {
         logger.debug('No results available');
         return;
       }
-
-      this.throwIfAuthFailureStatus(res.status, 'GET /results/next/:queue_name', { queue_name: this.queueName });
 
       if (res.status !== 200) {
         logger.warn({ status: res.status }, 'Unexpected response from API');
@@ -80,11 +42,37 @@ export class TelegramPoller {
       const event = this.normalizeEvent(payload);
 
       if (event.event_kind === 'phase') {
-        const phaseEvent = event.event as { event_id?: string; task_id?: string; phase?: string };
-        logger.debug(
-          { event_id: phaseEvent.event_id, task_id: phaseEvent.task_id, phase: phaseEvent.phase },
-          'Ignoring task phase event for telegram delivery',
-        );
+        const phaseEvent = event.event as {
+          event_id?: string;
+          task_id?: string;
+          session_id?: string;
+          phase?: string;
+          task_source?: { source?: string; chat_id?: string; topic_id?: string };
+        };
+
+        if (phaseEvent.task_source?.source === 'telegram' && phaseEvent.task_source.chat_id) {
+          await this.notifier.notifyStatus({
+            chatId: phaseEvent.task_source.chat_id,
+            topicId: phaseEvent.task_source.topic_id,
+            sessionId: phaseEvent.session_id,
+            text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
+          });
+        } else if (phaseEvent.session_id) {
+          await this.notifier.notifyStatus({
+            sessionId: phaseEvent.session_id,
+            text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
+          });
+        }
+
+        await this.ackDelivery(event.id, 'Task event');
+        return;
+      }
+
+      if (event.event_kind === 'mirror') {
+        const mirrorEvent = event.event as MirrorTaskEvent;
+        if (mirrorEvent.task_source.source !== 'telegram') {
+          await this.notifier.notifyMirror(mirrorEvent);
+        }
         await this.ackDelivery(event.id, 'Task event');
         return;
       }
@@ -92,15 +80,19 @@ export class TelegramPoller {
       const result = event.event as TaskResult;
       logger.info({ result_id: result.result_id, job_id: result.job_id, task_id: result.task_id }, 'Received result');
 
-      await this.notifier.notify(result);
+      if (result.task_source?.source === 'telegram') {
+        await this.notifier.notifyResult({
+          chatId: result.task_source.chat_id,
+          topicId: 'topic_id' in result.task_source ? result.task_source.topic_id : undefined,
+          result,
+        });
+      } else if (result.session_id) {
+        await this.notifier.notifyResult({ result });
+      } else {
+        await this.notifier.notify(result);
+      }
       await this.ackDelivery(event.id, 'Result');
     } catch (err) {
-      if (err instanceof ApiAuthConfigurationError) {
-        logger.error({ err }, 'Stopping telegram poll due to API auth configuration error');
-        this.stop();
-        return;
-      }
-
       logger.error({ err }, 'Telegram poll error');
     }
   }
@@ -141,6 +133,14 @@ export class TelegramPoller {
       return value.event_id ?? `phase-${Date.now()}`;
     }
 
+    if (eventKind === 'mirror') {
+      const value = event as { event?: { mirror_id?: string }; mirror_id?: string };
+      if (value.event?.mirror_id) {
+        return value.event.mirror_id;
+      }
+      return value.mirror_id ?? `mirror-${Date.now()}`;
+    }
+
     const value = event as { event?: { result_id?: string }; result_id?: string };
     if (value.event?.result_id) {
       return value.event.result_id;
@@ -155,7 +155,7 @@ export class TelegramPoller {
 
     const candidate = payload as Record<string, unknown>;
     return (
-      (candidate.event_kind === 'phase' || candidate.event_kind === 'result') &&
+      (candidate.event_kind === 'phase' || candidate.event_kind === 'result' || candidate.event_kind === 'mirror') &&
       'event' in candidate
     );
   }
@@ -166,7 +166,7 @@ export class TelegramPoller {
     }
 
     const candidate = payload as Record<string, unknown>;
-    if (candidate.event_kind !== 'phase' && candidate.event_kind !== 'result') {
+    if (candidate.event_kind !== 'phase' && candidate.event_kind !== 'result' && candidate.event_kind !== 'mirror') {
       return false;
     }
 
@@ -177,11 +177,6 @@ export class TelegramPoller {
     try {
       const ackRes = await fetch(`${this.apiUrl}/results/${this.queueName}/${id}/ack`, {
         method: 'POST',
-        headers: this.buildApiHeaders(),
-      });
-      this.throwIfAuthFailureStatus(ackRes.status, 'POST /results/:queue_name/:id/ack', {
-        queue_name: this.queueName,
-        id,
       });
       if (ackRes.status !== 200) {
         logger.warn({ id, status: ackRes.status }, `${label} ACK failed`);
@@ -189,12 +184,7 @@ export class TelegramPoller {
         logger.info({ id }, `${label} acknowledged`);
       }
     } catch (ackErr) {
-      if (ackErr instanceof ApiAuthConfigurationError) {
-        throw ackErr;
-      }
-
       logger.error({ id, err: ackErr }, `${label} ACK request failed`);
-      throw ackErr;
     }
   }
 

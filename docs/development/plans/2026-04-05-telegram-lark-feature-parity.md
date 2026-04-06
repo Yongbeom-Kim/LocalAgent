@@ -2,7 +2,7 @@
 
 **Goal:** Build full Telegram and Lark parity by bridging one Lark thread and one Telegram forum topic to the same `session_id`, with bidirectional mirroring, Telegram inbound task handling, and Telegram persistence.
 
-**Architecture:** Extend the current Lark-first session model by adding Telegram-specific persistence tables plus a narrow `session_bridges` mapping keyed by `session_id`. Telegram becomes a first-class inbound and outbound channel through widened shared contracts, a Telegram topic-aware listener/bridge flow, and bridge-aware result delivery while reusing the existing task, enrichment, and result-event pipeline.
+**Architecture:** Extend the current Lark-first session model by adding Telegram-specific persistence tables plus a narrow `session_bridges` mapping keyed by `session_id`. Telegram becomes a first-class inbound and outbound channel through widened shared contracts, a Telegram topic-aware listener/bridge flow, and result-daemon mirror consumption while reusing the existing task, enrichment, and result-event pipeline.
 
 **Tech Stack:** TypeScript, Express, amqplib, Telegram Bot HTTP API, Lark Open API, Vitest, Drizzle/SQLite, existing LocalAgent daemon packages.
 
@@ -10,21 +10,28 @@
 
 ## Cross-Channel Mirroring Policy (V1)
 
-To avoid duplicate bot replies and mirror loops, mirroring is **origin-based**:
+Treat the existing task-event/results exchange as the cross-channel delivery bus.
 
-- **Lark-originated messages** (user inbound + bot outbound) are mirrored into the bridged Telegram topic.
-- **Telegram-originated messages** (user inbound + bot outbound) are mirrored into the bridged Lark thread.
-- Phase/result events are considered **bot outbound on the task source channel**:
-  - for `task_source.source === 'lark'`: `lark-result` remains canonical on Lark and mirrors to Telegram.
-  - for `task_source.source === 'telegram'`: `telegram-result` is canonical on Telegram and mirrors to Lark.
+- Cross-channel copies are carried by a new `mirror` task-event kind.
+- `mirror` is only for accepted user-originated messages.
+- `phase` and `result` remain the only bot-originated delivery path.
+- Source-side enrichment emits `mirror` only after the inbound user message has been accepted, persisted, and bridged.
+- Destination-side result daemons consume `mirror` events, dedup by persisted origin metadata plus stable `mirror_id`, deliver to their own platform, and persist the mirrored outbound message.
+- No listener, enrichment path, or notifier should call the peer platform directly for mirrored delivery.
 
-Mirroring always happens only after the authoritative send/persist on the origin channel succeeds.
+Ownership rules:
+
+- `task-enrichment` emits `mirror` events for accepted inbound user messages after session materialization and bridge bootstrap succeed.
+- `lark-result` consumes `mirror` events whose `task_source.source !== 'lark'` and also handles normal Lark bot-visible `phase`/`result` fanout.
+- `telegram-result` consumes `mirror` events whose `task_source.source !== 'telegram'` and also handles normal Telegram bot-visible `phase`/`result` fanout.
+
+This keeps user-message mirroring downstream of the canonical accept path, keeps bot delivery on the existing fanout path, and centralizes retry-safe dedup in `lark-result` and `telegram-result`.
 
 ## File Structure
 
 | File | Responsibility |
 |------|----------------|
-| `packages/shared/src/types.ts` | Widen `TaskSource`; add Telegram inbound envelope/types (topic + chat variants for synthetic failures) |
+| `packages/shared/src/types.ts` | Widen `TaskSource`; add `mirror` task-event kind/contracts and Telegram inbound envelope/types |
 | `packages/shared/src/index.ts` | Export new Telegram shared contracts and repositories |
 | `packages/shared/src/db/schema.ts` | Add `telegram_threads`, `telegram_messages`, and `session_bridges` tables with composite Telegram keys |
 | `packages/shared/src/db/telegram-history-repository.ts` | Persist and query Telegram thread/message state |
@@ -38,14 +45,16 @@ Mirroring always happens only after the authoritative send/persist on the origin
 | `packages/migrator/src/migrations/meta/_journal.json` | Register new migration |
 | `packages/migrator/src/__tests__/migrate.test.ts` | Migration coverage for new tables |
 | `packages/api/src/routes/tasks.ts` | Accept Telegram task sources |
-| `packages/api/src/routes/results.ts` | Accept Telegram task sources for result/phase payloads |
+| `packages/api/src/routes/jobs.ts` | Accept Telegram task sources |
+| `packages/api/src/routes/results.ts` | Accept Telegram task sources, `mirror` events, and Telegram phase emitters |
 | `packages/api/src/__tests__/routes/tasks.test.ts` | Validate Telegram task source acceptance |
+| `packages/api/src/__tests__/routes/jobs.test.ts` | Validate Telegram task source acceptance on jobs |
 | `packages/api/src/__tests__/routes/results.test.ts` | Validate Telegram task source acceptance |
 | `packages/daemon/telegram-result/src/config.ts` | Replace chat-id config with hardcoded forum group config |
 | `packages/daemon/telegram-result/src/index.ts` | Start outbound poller plus inbound Telegram update loop and startup validation |
-| `packages/daemon/telegram-result/src/telegram-poller.ts` | Route phase/result events into Telegram topics via bridge state |
+| `packages/daemon/telegram-result/src/telegram-poller.ts` | Route phase/result fanout and non-Telegram-source mirror events into Telegram topics via bridge state |
 | `packages/daemon/telegram-result/src/telegram-update-poller.ts` | Poll Telegram `getUpdates`, filter inbound messages, and dispatch accepted updates |
-| `packages/daemon/telegram-result/src/telegram-bridge-service.ts` | Coordinate topic creation, bridge bootstrap, mirroring, and synthetic failures |
+| `packages/daemon/telegram-result/src/telegram-bridge-service.ts` | Coordinate topic creation, bridge bootstrap, and synthetic failures |
 | `packages/daemon/telegram-result/src/adapters/telegram-notifier.ts` | Topic-aware send/reply/edit/create-topic Telegram API calls |
 | `packages/daemon/telegram-result/src/adapters/telegram-task-submitter.ts` | Submit Telegram inbound tasks to `/tasks` |
 | `packages/daemon/telegram-result/src/adapters/telegram-phase-publisher.ts` | Publish `received` phase for Telegram inbound tasks |
@@ -53,13 +62,14 @@ Mirroring always happens only after the authoritative send/persist on the origin
 | `packages/daemon/telegram-result/src/__tests__/*.test.ts` | Telegram daemon flow coverage |
 | `packages/daemon/lark-listener/src/message-handler.ts` | Tighten loop prevention for mirrored Telegram-originated Lark messages |
 | `packages/daemon/lark-listener/src/__tests__/message-handler.test.ts` | Verify mirrored Lark messages are not resubmitted |
-| `packages/daemon/task-enrichment/src/enrichment-poller.ts` | Dispatch Lark vs Telegram inbound classification and materialize bridges |
+| `packages/daemon/task-enrichment/src/enrichment-poller.ts` | Dispatch Lark vs Telegram inbound classification, materialize bridges, and emit mirror events for accepted user messages |
 | `packages/daemon/task-enrichment/src/adapters/thread-context-fetcher.ts` | Keep Lark thread context fetcher unchanged except interface alignment if needed |
 | `packages/daemon/task-enrichment/src/adapters/telegram-thread-context-fetcher.ts` | Read Telegram topic context/history from SQLite |
 | `packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts` | Telegram root/topic flow coverage |
-| `packages/daemon/lark-result/src/adapters/lark-notifier.ts` | Mirror Lark replies into Telegram when a bridge exists |
-| `packages/daemon/lark-result/src/lark-poller.ts` | Remain bridge-aware for cleanup/result behavior if needed |
-| `packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts` | Verify Telegram mirroring hook behavior |
+| `packages/daemon/lark-result/src/adapters/lark-notifier.ts` | Keep canonical Lark send/reply behavior for bridged sessions |
+| `packages/daemon/lark-result/src/lark-poller.ts` | Consume non-Lark-source mirror events and keep bridged-session result delivery/cleanup behavior intact |
+| `packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts` | Verify canonical Lark send behavior for bridged sessions |
+| `packages/daemon/lark-result/src/__tests__/lark-poller.test.ts` | Verify non-Lark-source mirror consumption and dedup |
 | `packages/daemon/task/src/adapters/cleanup-executor.ts` | Delete Telegram rows and bridge rows during cleanup |
 | `packages/daemon/task/src/services/gc-executor.ts` | GC ended Telegram sessions and bridges |
 | `packages/daemon/task/src/adapters/__tests__/cleanup-executor.test.ts` | Verify cross-channel cleanup |
@@ -141,6 +151,70 @@ Expected: PASS.
 ```bash
 git add packages/shared/src/types.ts packages/shared/src/index.ts packages/shared/src/__tests__/types.test.ts
 git commit -m "feat(shared): add telegram task source contract"
+```
+
+### Task 1A: Add shared task-event mirror contracts
+
+**Files:**
+- Modify: `packages/shared/src/types.ts`
+- Modify: `packages/shared/src/index.ts`
+- Modify: `packages/shared/src/__tests__/types.test.ts`
+
+- [ ] **Step 1: Write failing shared task-event tests**
+
+Add tests for:
+
+```ts
+it('accepts mirror as a valid task event kind', () => {
+  expect(TASK_EVENT_KINDS).toContain('mirror');
+});
+
+it('accepts a mirror event payload with mirror_id and no destination', () => {
+  expect(isValidTaskEvent({
+    kind: 'mirror',
+    task_id: 'task-123',
+    session_id: 'session-123',
+    task_type: 'coding',
+    task_source: {
+      source: 'telegram',
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+    },
+    mirror_id: 'mirror-123',
+    author_type: 'user',
+    text: 'hello',
+    origin_message_id: '99',
+    emitted_at: '2026-04-06T10:00:00.000Z',
+  })).toBe(true);
+});
+```
+
+- [ ] **Step 2: Run the shared tests to verify failure**
+
+Run: `npm test --prefix packages/shared -- src/__tests__/types.test.ts`
+Expected: FAIL because `mirror` is not yet part of the shared task-event contract.
+
+- [ ] **Step 3: Implement the shared mirror-event contract**
+
+In `packages/shared/src/types.ts`:
+
+- add `mirror` to the task-event kind union / `TASK_EVENT_KINDS`
+- define the `MirrorTaskEvent` shape with `task_type`, `mirror_id`, `author_type`, `text`, `origin_message_id`, and `emitted_at`
+- widen shared event validators so `mirror` payloads are accepted
+
+Export the new task-event helpers from `packages/shared/src/index.ts`.
+
+- [ ] **Step 4: Run the shared tests to verify they pass**
+
+Run: `npm test --prefix packages/shared -- src/__tests__/types.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add packages/shared/src/types.ts packages/shared/src/index.ts packages/shared/src/__tests__/types.test.ts
+git commit -m "feat(shared): add mirror task event contract"
 ```
 
 ### Task 2: Add Telegram persistence schema and repositories
@@ -320,12 +394,14 @@ git add packages/shared/src/telegram-content.ts packages/shared/src/telegram-inb
 git commit -m "feat(shared): add telegram inbound routing"
 ```
 
-### Task 5: Teach the API to accept Telegram task sources
+### Task 5: Teach the API to accept Telegram task sources and mirror events
 
 **Files:**
 - Modify: `packages/api/src/routes/tasks.ts`
+- Modify: `packages/api/src/routes/jobs.ts`
 - Modify: `packages/api/src/routes/results.ts`
 - Modify: `packages/api/src/__tests__/routes/tasks.test.ts`
+- Modify: `packages/api/src/__tests__/routes/jobs.test.ts`
 - Modify: `packages/api/src/__tests__/routes/results.test.ts`
 
 - [ ] **Step 1: Write failing API tests**
@@ -337,32 +413,45 @@ it('accepts telegram task_source on POST /tasks', async () => {
   // source: telegram, chat_id, topic_id, message_id
 });
 
-it('accepts telegram task_source on phase and result POST /results', async () => {
-  // both event kinds should validate
+it('accepts telegram task_source on POST /jobs', async () => {
+  // telegram-enriched job payload reaches jobs route without 400
+});
+
+it('accepts telegram task_source on phase, result, and mirror POST /results', async () => {
+  // all three event kinds should validate
+});
+
+it('accepts telegram-listener as a valid received-phase emitter', async () => {
+  // received phase posted by telegram listener should validate
 });
 ```
 
 - [ ] **Step 2: Run API tests to verify failure**
 
-Run: `npm test --prefix packages/api -- src/__tests__/routes/tasks.test.ts src/__tests__/routes/results.test.ts`
-Expected: FAIL because current validation only accepts Lark task sources.
+Run: `npm test --prefix packages/api -- src/__tests__/routes/tasks.test.ts src/__tests__/routes/jobs.test.ts src/__tests__/routes/results.test.ts`
+Expected: FAIL because current validation only accepts Lark task sources, `/jobs` is not updated, `mirror` is not a valid result event kind, and `telegram-listener` is not yet an allowed phase emitter.
 
 - [ ] **Step 3: Implement minimal API compatibility changes**
 
-Update route validation only as needed so the widened shared `isValidTaskSource` contract is accepted everywhere.
+Update route validation only as needed so the widened shared `isValidTaskSource` contract is accepted everywhere, including `/jobs`.
+
+Also update `/results` validation so it accepts:
+
+- `mirror` as a valid task-event kind
+- `telegram-listener` as a valid received-phase emitter
 
 Do not add Telegram-specific API branching here; keep the API generic.
 
 - [ ] **Step 4: Run API tests to verify they pass**
 
-Run: `npm test --prefix packages/api -- src/__tests__/routes/tasks.test.ts src/__tests__/routes/results.test.ts`
+Run: `npm test --prefix packages/api -- src/__tests__/routes/tasks.test.ts src/__tests__/routes/jobs.test.ts src/__tests__/routes/results.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/api/src/routes/tasks.ts packages/api/src/routes/results.ts packages/api/src/__tests__/routes/tasks.test.ts packages/api/src/__tests__/routes/results.test.ts
-git commit -m "feat(api): accept telegram task sources"
+git add packages/api/src/routes/tasks.ts packages/api/src/routes/jobs.ts packages/api/src/routes/results.ts packages/api/src/__tests__/routes/tasks.test.ts packages/api/src/__tests__/routes/jobs.test.ts packages/api/src/__tests__/routes/results.test.ts
+git commit -m "feat(api): accept telegram task sources and mirror events"
 ```
 
 ### Task 6: Add Telegram topic-context fetching for enrichment
@@ -484,6 +573,8 @@ Create `telegram-update-poller.ts` and minimal adapters to:
 
 Keep this layer thin. It should hand off classification/materialization decisions to enrichment rather than duplicating business logic.
 
+Do not let the Telegram listener emit cross-channel mirror messages directly. Accepted user-message mirroring must happen downstream through enrichment-emitted `mirror` events.
+
 - [ ] **Step 5: Run the Telegram daemon tests to verify they pass**
 
 Run: `npm test --prefix packages/daemon/telegram-result -- src/__tests__/config.test.ts src/__tests__/telegram-update-poller.test.ts`
@@ -496,7 +587,7 @@ git add packages/daemon/telegram-result/src/config.ts packages/daemon/telegram-r
 git commit -m "feat(telegram): add inbound forum-topic listener"
 ```
 
-### Task 8: Make enrichment classify Telegram roots/topics and materialize bridge state
+### Task 8: Make enrichment classify Telegram roots/topics, materialize bridge state, and emit user-message mirror events
 
 **Files:**
 - Modify: `packages/daemon/task-enrichment/src/enrichment-poller.ts`
@@ -522,6 +613,14 @@ it('rejects /task inside an existing telegram topic', async () => {
 it('handles /status, /new, and /end in a mapped telegram topic using the same semantics as lark', async () => {
   // /status uses inherited session_id, /new updates executor/model, /end terminates + triggers cleanup
 });
+
+it('emits a mirror event after accepting and persisting a lark user message', async () => {
+  // accepted lark inbound user message -> bridge exists -> POST /results mirror event
+});
+
+it('emits a mirror event for an accepted telegram user message after persistence and bridge bootstrap', async () => {
+  // accepted telegram inbound user message -> bridge exists -> POST /results mirror event
+});
 ```
 
 - [ ] **Step 2: Run the enrichment tests to verify failure**
@@ -540,6 +639,7 @@ Update `enrichment-poller.ts` so it can:
 - upsert Telegram thread state
 - create/update bridge rows
 - use the Telegram topic context fetcher for Telegram-sourced continuations
+- publish `mirror` events for accepted inbound user messages after persistence and bridge bootstrap succeed
 
 Also ensure Telegram `/status`, `/new`, and `/end` paths:
 
@@ -565,9 +665,8 @@ git commit -m "feat(task-enrichment): materialize telegram sessions and bridges"
 
 **Files:**
 - Create or Modify: `packages/daemon/telegram-result/src/telegram-bridge-service.ts`
-- Modify: `packages/daemon/lark-result/src/adapters/lark-notifier.ts`
-- Modify: `packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts`
-- Modify: `packages/daemon/telegram-result/src/__tests__/telegram-poller.test.ts`
+- Modify: `packages/daemon/task-enrichment/src/enrichment-poller.ts`
+- Modify: `packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts`
 
 - [ ] **Step 1: Write the failing bridge bootstrap tests**
 
@@ -577,21 +676,12 @@ Add tests for:
 it('creates a telegram topic when the first bridged lark session is materialized', async () => {
   // lark-root session -> createForumTopic -> persist topic/bridge
 });
-
-it('mirrors a lark reply into the mapped telegram topic after successful lark send', async () => {
-  // outbound lark reply mirrored to telegram
-});
-
-it('mirrors an inbound lark user message into the mapped telegram topic after it is persisted', async () => {
-  // inbound lark root/reply -> persisted -> mirror to telegram topic
-});
 ```
 
 - [ ] **Step 2: Run the bridge/bootstrap tests to verify failure**
 
-Run: `npm test --prefix packages/daemon/lark-result -- src/__tests__/lark-notifier.test.ts`
-Run: `npm test --prefix packages/daemon/telegram-result -- src/__tests__/telegram-poller.test.ts`
-Expected: FAIL because topic creation and bridge-aware mirroring do not exist.
+Run: `npm test --prefix packages/daemon/task-enrichment -- src/__tests__/enrichment-poller.test.ts`
+Expected: FAIL because topic creation and bridge bootstrap for Lark-originated sessions do not exist.
 
 - [ ] **Step 3: Implement Lark-originated Telegram topic creation and persistence**
 
@@ -604,43 +694,24 @@ Build a Telegram bridge service that can:
 
 Invoke it from the first point where an accepted Lark root session has a real `session_id` and bridge creation is safe.
 
-- [ ] **Step 4: Implement bridge-aware Lark reply mirroring**
 
-After `lark-result` successfully sends/persists a Lark reply, if a bridge exists for the session:
+- [ ] **Step 4: Run the bridge/bootstrap tests to verify they pass**
 
-- send the same text into the Telegram topic
-- persist the mirrored Telegram outbound message with mirror metadata
-
-Do this only after the authoritative Lark send succeeds.
-
-- [ ] **Step 4b: Implement bridge-aware mirroring for inbound Lark user messages**
-
-After an inbound Lark root/reply is accepted and persisted (in the same step where `session_id` is known and bridge creation is safe), if a bridge exists for the session:
-
-- send the user text into the mapped Telegram topic
-- persist the mirrored Telegram outbound message with mirror metadata (`mirror_origin: 'lark'`)
-
-This must not require the Lark listener to call Telegram directly; trigger it from enrichment/materialization or another downstream point after persistence.
-
-- [ ] **Step 5: Run the bridge/bootstrap tests to verify they pass**
-
-Run: `npm test --prefix packages/daemon/lark-result -- src/__tests__/lark-notifier.test.ts`
-Run: `npm test --prefix packages/daemon/telegram-result -- src/__tests__/telegram-poller.test.ts`
+Run: `npm test --prefix packages/daemon/task-enrichment -- src/__tests__/enrichment-poller.test.ts`
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add packages/daemon/telegram-result/src/telegram-bridge-service.ts packages/daemon/lark-result/src/adapters/lark-notifier.ts packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts packages/daemon/telegram-result/src/__tests__/telegram-poller.test.ts
+git add packages/daemon/telegram-result/src/telegram-bridge-service.ts packages/daemon/task-enrichment/src/enrichment-poller.ts packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts
 git commit -m "feat(bridge): create telegram topics for lark sessions"
 ```
 
 ### Task 10: Implement Lark anchor creation for Telegram-originated sessions
 
 **Files:**
-- Modify: `packages/daemon/lark-result/src/adapters/lark-notifier.ts` or add a focused Lark bridge helper
 - Modify: `packages/daemon/task-enrichment/src/enrichment-poller.ts`
-- Modify: `packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts`
+- Modify: `packages/daemon/telegram-result/src/telegram-bridge-service.ts` or add a focused Lark bridge helper in the owning package
 - Modify: `packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts`
 
 - [ ] **Step 1: Write the failing Telegram-originated anchor tests**
@@ -655,16 +726,11 @@ it('creates a lark root anchor when a session starts from telegram', async () =>
 it('persists the lark anchor before accepting subsequent mirrored telegram traffic', async () => {
   // continuation depends on bridge root
 });
-
-it('mirrors an accepted telegram user message into the mapped lark thread after it is persisted', async () => {
-  // inbound telegram continuation -> persist -> mirror to lark thread as outbound mirrored content
-});
 ```
 
 - [ ] **Step 2: Run the tests to verify failure**
 
 Run: `npm test --prefix packages/daemon/task-enrichment -- src/__tests__/enrichment-poller.test.ts`
-Run: `npm test --prefix packages/daemon/lark-result -- src/__tests__/lark-notifier.test.ts`
 Expected: FAIL because no Telegram-originated Lark anchor bootstrap exists.
 
 - [ ] **Step 3: Implement Telegram-originated Lark anchor creation**
@@ -678,25 +744,15 @@ Add a focused helper that can:
 
 Wire this into Telegram root-session materialization before the first job is posted.
 
-- [ ] **Step 3b: Implement Telegram-to-Lark mirroring for accepted inbound Telegram messages**
-
-After an accepted Telegram message is persisted to `telegram_messages`, if a bridge exists:
-
-- reply into the mapped Lark thread using the existing Lark notifier path
-- persist the outbound mirrored Lark message with mirror metadata (`mirror_origin: 'telegram'`)
-
-This is required for parity so a Telegram-started session is fully visible in the peer Lark thread.
-
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `npm test --prefix packages/daemon/task-enrichment -- src/__tests__/enrichment-poller.test.ts`
-Run: `npm test --prefix packages/daemon/lark-result -- src/__tests__/lark-notifier.test.ts`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add packages/daemon/task-enrichment/src/enrichment-poller.ts packages/daemon/lark-result/src/adapters/lark-notifier.ts packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts
+git add packages/daemon/task-enrichment/src/enrichment-poller.ts packages/daemon/telegram-result/src/telegram-bridge-service.ts packages/daemon/task-enrichment/src/__tests__/enrichment-poller.test.ts
 git commit -m "feat(bridge): create lark anchors for telegram sessions"
 ```
 
@@ -780,10 +836,6 @@ it('posts or updates one topic status message for received/enriching/queued/exec
 it('delivers synthetic non-topic failures back through the same telegram chat context', async () => {
   // visible error path
 });
-
-it('mirrors telegram-sourced phase/result bot messages into the bridged lark thread after successful telegram send', async () => {
-  // task_source.source === 'telegram' -> telegram bot message sent -> mirrored into lark
-});
 ```
 
 - [ ] **Step 2: Run Telegram outbound tests to verify failure**
@@ -801,12 +853,7 @@ Update `telegram-poller.ts` and `telegram-notifier.ts` so they:
 - clear/replace the status message when terminal results arrive
 - support synthetic error result delivery for non-topic messages (missing topic/thread id)
 
-When `task_source.source === 'telegram'` and a bridge exists, after successfully sending a phase/result message into Telegram:
-
-- mirror the same bot text into the mapped Lark thread
-- persist the outbound mirrored Lark message with `mirror_origin: 'telegram'`
-
-Do not mirror Telegram bot messages back into Lark for `task_source.source === 'lark'` to avoid duplicating canonical Lark bot replies.
+Do not emit any additional cross-channel copy for bot-authored phase/result deliveries here. Bot-visible delivery already fans out through the existing exchange to every attached platform consumer.
 
 - [ ] **Step 4: Run Telegram outbound tests to verify they pass**
 

@@ -1,11 +1,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { TaskResult } from '@local-agent/shared';
+import { type MirrorTaskEvent, TaskResult } from '@local-agent/shared';
 
 const mockNotify = vi.fn().mockResolvedValue(undefined);
+const mockNotifyStatus = vi.fn().mockResolvedValue(undefined);
+const mockNotifyResult = vi.fn().mockResolvedValue(undefined);
+const mockNotifyMirror = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../adapters/telegram-notifier', () => ({
   TelegramNotifier: vi.fn().mockImplementation(() => ({
     notify: mockNotify,
+    notifyStatus: mockNotifyStatus,
+    notifyResult: mockNotifyResult,
+    notifyMirror: mockNotifyMirror,
   })),
 }));
 
@@ -27,15 +33,29 @@ const sampleResult: TaskResult = {
   completed_at: '2026-03-29T00:00:00.000Z',
 };
 
+const sampleMirror: MirrorTaskEvent = {
+  event_kind: 'mirror',
+  task_id: 'task-123',
+  session_id: 'session-123',
+  task_type: 'generic',
+  task_source: {
+    source: 'lark',
+    message_id: 'om_1',
+  },
+  mirror_id: 'mirror-1',
+  author_type: 'user',
+  text: 'hello',
+  origin_message_id: 'om_1',
+  emitted_at: '2026-04-06T00:00:00.000Z',
+};
+
 describe('TelegramPoller', () => {
   let poller: TelegramPoller;
-  const authHeaders = { Authorization: 'Bearer telegram-result-token' };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockNotify.mockResolvedValue(undefined);
-    const notifier = new TelegramNotifier('bot123:ABC', '456789');
-    poller = new TelegramPoller('http://localhost:3000', 'telegram-messages', notifier, 'telegram-result-token');
+    const notifier = new TelegramNotifier('bot123:ABC', '-100456789');
+    poller = new TelegramPoller('http://localhost:3000', 'telegram-messages', notifier);
   });
 
   afterEach(() => {
@@ -56,17 +76,14 @@ describe('TelegramPoller', () => {
 
       await poller.pollOnce();
 
-      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages', {
-        headers: authHeaders,
-      });
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages');
       expect(mockNotify).toHaveBeenCalledWith(sampleResult);
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/res-1/ack', {
         method: 'POST',
-        headers: authHeaders,
       });
     });
 
-    it('ignores phase events and acks by event_id', async () => {
+    it('routes telegram phase events to status notifier and acks by event_id', async () => {
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
@@ -76,6 +93,7 @@ describe('TelegramPoller', () => {
               event_id: 'evt-1',
               task_id: 'task-123',
               phase: 'queued',
+              task_source: { source: 'telegram', chat_id: '-100123', topic_id: '42', message_id: '99' },
             },
           }),
         })
@@ -86,29 +104,87 @@ describe('TelegramPoller', () => {
 
       await poller.pollOnce();
 
-      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockNotifyStatus).toHaveBeenCalledWith({
+        chatId: '-100123',
+        topicId: '42',
+        sessionId: undefined,
+        text: '*Status:* queued',
+      });
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/evt-1/ack', {
         method: 'POST',
-        headers: authHeaders,
       });
     });
 
-    it('logs and stops normal processing when the api returns 401', async () => {
-      mockFetch.mockResolvedValueOnce({ status: 401 });
+    it('routes mirror events to telegram delivery and acks by mirror_id', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'mirror', event: sampleMirror }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
 
       await poller.pollOnce();
 
-      expect(mockNotify).not.toHaveBeenCalled();
-      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockNotifyMirror).toHaveBeenCalledWith(sampleMirror);
+      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/mirror-1/ack', {
+        method: 'POST',
+      });
     });
 
-    it('logs and stops normal processing when the api returns 403', async () => {
-      mockFetch.mockResolvedValueOnce({ status: 403 });
+    it('routes telegram-sourced results into topic-aware result delivery', async () => {
+      const telegramResult: TaskResult = {
+        ...sampleResult,
+        task_source: {
+          source: 'telegram',
+          chat_id: '-100123',
+          topic_id: '42',
+          message_id: '99',
+        },
+      };
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: telegramResult }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
 
       await poller.pollOnce();
 
+      expect(mockNotifyResult).toHaveBeenCalledWith({
+        chatId: '-100123',
+        topicId: '42',
+        result: telegramResult,
+      });
+    });
+
+    it('routes non-telegram bridged results through session-aware telegram delivery', async () => {
+      const bridgedResult: TaskResult = {
+        ...sampleResult,
+        session_id: 'session-123',
+        task_source: { source: 'lark', message_id: 'om_1' },
+      };
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: bridgedResult }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      expect(mockNotifyResult).toHaveBeenCalledWith({ result: bridgedResult });
       expect(mockNotify).not.toHaveBeenCalled();
-      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     it('does nothing when queue is empty (204)', async () => {

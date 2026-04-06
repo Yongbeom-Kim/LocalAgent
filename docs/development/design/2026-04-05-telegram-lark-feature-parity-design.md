@@ -28,8 +28,8 @@ After this feature:
 3. inbound Telegram messages can submit tasks and continue existing sessions, just like Lark replies do today;
 4. `/status`, `/new`, and `/end` work from Telegram with semantics matching Lark;
 5. task phase updates and final results route back to Telegram topics as first-class thread replies;
-6. both user and bot Lark messages are echoed into the mapped Telegram topic;
-7. Telegram-originated user and bot messages are echoed back into the mapped Lark thread;
+6. accepted user messages are echoed cross-channel between the mapped Lark thread and Telegram topic;
+7. bot-visible phase updates and final results fan out to every attached channel through the existing result exchange;
 8. loop prevention ensures mirrored messages do not recursively resubmit themselves;
 9. Telegram thread and message state is persisted in SQLite and correlated to `session_id`.
 
@@ -197,7 +197,7 @@ Lark user message ───────┐
               │                     │
      reply into Lark thread   reply into Telegram topic
               │                     │
-              └──── mirrored bot messages ────┐
+              └──── user-message mirrors ─────┐
                                                │
 Telegram user message ──> telegram listener ───┘
 
@@ -487,68 +487,92 @@ Topic titles should be deterministic and concise, for example:
 
 No configurable title templates in V1.
 
-## 14. Lark-to-Telegram Mirroring
+## 14. Cross-Channel Mirror Delivery Bus
 
-### 14.1 What must be mirrored
+### 14.1 Principle
 
-Mirror all Lark traffic tied to a bridged session into the mapped Telegram topic:
+All cross-channel copies must flow through the existing task-event/results exchange. Treat it as the delivery bus for mirrored traffic in the same way it already acts as the delivery path for reactions, phases, and final results.
 
-- inbound user Lark root messages
-- inbound user Lark thread replies
-- outbound bot Lark replies
-- Lark enqueue failure replies and usage/help replies when they are part of a bridged session
+That means:
 
-### 14.2 How mirrored Lark messages are stored
+- no listener or enrichment path calls the peer platform directly to deliver a mirrored message;
+- a new `mirror` task-event kind carries cross-channel copies;
+- the source-side owner emits the `mirror` event only after the authoritative message has been accepted or sent and persisted;
+- destination result daemons consume the `mirror` event, perform destination-side dedup, deliver to their own platform when applicable, and persist the mirrored outbound message.
 
-When a Lark message is mirrored into Telegram:
+### 14.2 What must be mirrored
 
-- send Telegram text into the mapped topic;
-- store it in `telegram_messages` as `direction = 'outbound'` and `sender_type = 'user'` or `'bot'` depending on original authorship;
-- mark `metadata_json` with enough mirror metadata to identify origin, e.g.
+Mirror only accepted user-originated bridged-session traffic across channels:
+
+- inbound user Lark root messages and thread replies into Telegram;
+- inbound user Telegram root messages and topic continuations into Lark.
+
+Bot-originated traffic does not use `mirror`. It already rides the fanout result exchange through `phase` and `result` events.
+
+### 14.3 Mirror event contract
+
+Add a new shared task-event kind:
+
+```ts
+type TaskEventKind = 'phase' | 'result' | 'mirror';
+```
+
+Recommended `mirror` payload shape:
+
+```ts
+interface MirrorTaskEvent {
+  kind: 'mirror';
+  task_id: string;
+  session_id: string;
+  task_type: string;
+  task_source: TaskSource;
+  mirror_id: string;
+  author_type: 'user';
+  text: string;
+  origin_message_id: string;
+  emitted_at: string;
+}
+```
+
+`mirror_id` must be stable across retries so consumers can do idempotent destination-side delivery. A good V1 key is derived from the origin platform identity, e.g. `lark:<message_id>` or `telegram:<chat_id>:<message_id>`.
+
+### 14.4 Source-side emission rules
+
+Emit `mirror` events only for accepted user messages, at the point where the source-side canonical record is known to exist:
+
+- `task-enrichment` emits the `mirror` event after persistence/materialization and after any required bridge bootstrap completes.
+
+This keeps user-message mirroring downstream of the canonical accept path and avoids mirrored ghost messages for rejected or failed inbound handling.
+
+### 14.5 Destination-side delivery and persistence
+
+Destination result daemons own mirror delivery, but selection is implicit rather than encoded in the payload:
+
+- every attached platform consumer receives the same `mirror` event from fanout;
+- a consumer ignores the event if `task_source.source` is its own platform;
+- a consumer ignores the event if the session is not bridged to that platform;
+- otherwise it dedups by `mirror_id` and persisted origin metadata, delivers locally, and stores the outbound mirror in platform-local history.
+
+Mirrored outbound rows should still record origin metadata, for example:
 
 ```json
 {
   "mirror_origin": "lark",
   "origin_message_id": "om_xxx",
+  "mirror_id": "mirror_xxx",
   "mirrored_by": "local-agent"
 }
 ```
 
-This metadata is part of loop prevention.
+Persisted metadata remains part of loop prevention.
 
-### 14.3 Trigger point
+## 15. Lark Anchor and Topic Bootstrap
 
-Do not make the Lark listener call Telegram directly.
+### 15.1 Telegram topic bootstrap for Lark-originated sessions
 
-Instead, mirroring should happen on the persistence or result side after the authoritative Lark message has been accepted/sent and persisted. Concretely:
+When a session is first accepted on Lark, enrichment must create the peer Telegram topic in the configured forum group, persist `telegram_threads`, and create the `session_bridges` row before emitting the `mirror` event for the accepted user message.
 
-- inbound Lark root/reply messages: mirror after successful classification/materialization in enrichment, once the session/topic mapping is known;
-- outbound bot Lark replies: mirror from `lark-result` after successful send and persistence;
-- failure/help replies emitted directly by Lark listener or enrichment should mirror after the reply send succeeds.
-
-This keeps mirroring downstream of the canonical event and avoids creating mirrored ghost messages for failed sends.
-
-## 15. Telegram-to-Lark Mirroring
-
-### 15.1 What must be mirrored
-
-Mirror all accepted Telegram user/bot traffic tied to a bridged session into the mapped Lark thread:
-
-- inbound Telegram root message that starts a session
-- inbound Telegram topic continuations
-- outbound bot Telegram replies/results/status responses
-- Telegram-side usage/help/failure replies tied to the session
-
-### 15.2 Lark delivery method
-
-Use the existing Lark reply path for bridged sessions:
-
-- if a bridge row exists, reply into the mapped Lark thread using `root_message_id`/source message context;
-- persist mirrored Telegram-originated content as outbound Lark messages with mirror metadata.
-
-For Telegram-originated new sessions, the bridge bootstrap must create a Lark-visible root/reply anchor so future replies have a real thread container.
-
-### 15.3 Lark anchor creation for Telegram-originated sessions
+### 15.2 Lark anchor creation for Telegram-originated sessions
 
 When a session starts on Telegram, there is no existing Lark root message yet. V1 should create one by sending a seed message to the hardcoded Lark recipient and then replying in-thread as needed.
 
@@ -557,7 +581,7 @@ Recommended behavior:
 1. send a root Lark message containing the initial task header and user text;
 2. persist that sent root message as the `lark_threads.root_message_id` anchor;
 3. create the bridge row linking it to the Telegram topic;
-4. continue normal mirrored traffic via thread replies.
+4. only then emit the `mirror` event for the accepted Telegram user message.
 
 This keeps the Lark side consistent with the existing 1-thread-to-1-session model.
 
@@ -565,7 +589,7 @@ This keeps the Lark side consistent with the existing 1-thread-to-1-session mode
 
 ### 16.1 Principle
 
-A mirrored message must not be mistaken for a fresh inbound user message on the destination platform.
+A mirrored user message must not be mistaken for a fresh inbound user message on the destination platform.
 
 ### 16.2 Telegram loop prevention
 
@@ -577,7 +601,7 @@ Telegram listener should skip messages when any of the following is true:
 
 ### 16.3 Lark loop prevention
 
-Lark listener already sees bot traffic. It should be tightened so mirrored Telegram-originated bot/user messages can be identified from local persistence and not resubmitted as inbound tasks.
+Lark listener already sees bot traffic. It should be tightened so mirrored Telegram-originated user messages and bot-authored outbound messages can be identified from local persistence and not resubmitted as inbound tasks.
 
 Recommended rule:
 
@@ -587,19 +611,19 @@ Recommended rule:
 
 ### 16.4 Why persistence-based loop prevention is necessary
 
-Transport-level dedup only handles duplicate deliveries from the same platform. It does not prevent the other platform's mirrored copy from looking like a brand new user message. Persisted mirror metadata is the durable source of truth for loop prevention.
+Transport-level dedup only handles duplicate deliveries from the same platform. It does not prevent the other platform's mirrored copy from looking like a brand new user message. Persisted mirror metadata remains the durable source of truth for loop prevention, while `mirror_id` makes fanout-based mirror delivery retry-safe.
 
 ## 17. Result and Phase Delivery Changes
 
 ### 17.1 Telegram result consumer becomes a first-class task-event consumer
 
-`packages/daemon/telegram-result/src/telegram-poller.ts` should stop ignoring phase events.
+`packages/daemon/telegram-result/src/telegram-poller.ts` should stop ignoring non-result task events and should consume `phase`, `result`, and `mirror` events from the delivery bus.
 
 Instead:
 
-- phase events for Telegram-sourced tasks update the Telegram topic with an intermediate status signal,
+- phase events for any bridged task update the Telegram topic with an intermediate status signal,
 - result events reply into the mapped topic rather than a fixed chat,
-- result events for Lark-sourced bridged sessions also mirror final replies into Telegram.
+- mirror events deliver accepted user-message copies into Telegram when the source platform is not Telegram.
 
 V1 does **not** need Telegram emoji/reaction parity. A lightweight textual status update policy is sufficient, but it must be explicit.
 
@@ -609,12 +633,14 @@ Recommended V1 status policy:
 - clear/replace it when the final result arrives;
 - record the status-message id in `telegram_threads.status_message_id`.
 
-### 17.2 Lark result consumer gains bridge-aware mirroring
+### 17.2 Lark result consumer gains delivery-bus mirror responsibilities
 
-`lark-result` keeps current reaction + reply behavior for Lark, but it also becomes bridge-aware:
+`lark-result` keeps current reaction + reply behavior for Lark, but it also becomes bridge-aware in two ways:
 
-- after a successful Lark send/persist, if a bridge exists for the session, mirror that text into Telegram;
-- cleanup on `/end` removes both Lark and Telegram persisted state and the bridge row.
+- phase/result fanout for bridged sessions means bot-visible Lark replies still land in the mapped thread through the normal task-event path;
+- consume `mirror` events whose source platform is not Lark and deliver them into the mapped Lark thread with destination-side dedup.
+
+Cleanup on `/end` still removes both Lark and Telegram persisted state and the bridge row.
 
 ### 17.3 Error delivery for Telegram non-forum groups
 
@@ -638,9 +664,10 @@ Current enrichment logic materializes Lark root thread state into SQLite once ro
 - create the peer Lark anchor thread;
 - create the bridge row;
 - persist the inbound Telegram root message;
+- emit a `mirror` event for the accepted inbound user message after persistence and bootstrap succeed;
 - proceed with normal enrichment.
 
-For Lark-originated roots, the same materialization step must also ensure a `session_bridges` row exists. If the bridge does not yet exist, enrichment should create the peer Telegram topic in the configured forum group, persist `telegram_threads`, then persist `session_bridges`.
+For Lark-originated roots, the same materialization step must also ensure a `session_bridges` row exists. If the bridge does not yet exist, enrichment should create the peer Telegram topic in the configured forum group, persist `telegram_threads`, then persist `session_bridges`. After the accepted inbound Lark user message is persisted, enrichment should emit a `mirror` event rather than sending to Telegram directly.
 
 ### 18.2 Telegram thread continuations need inherited metadata lookup
 
@@ -675,9 +702,12 @@ No new topological concept is required beyond what already exists for generalize
 Required updates:
 
 - keep the existing `telegram-messages` queue as the Telegram task-event consumer queue;
-- route both result and phase events there as today;
+- route `phase`, `result`, and `mirror` events there;
+- keep the existing Lark task-event consumer queue and route `phase`, `result`, and `mirror` events there as well;
 - no second Telegram queue is required in V1;
-- `/tasks` and `/results` validation must accept Telegram task sources.
+- `/tasks`, `/jobs`, and `/results` validation must accept Telegram task sources;
+- `/results` validation must accept `mirror` as a task-event kind;
+- shared/API phase-emitter validation must allow `telegram-listener` for the Telegram `received` phase.
 
 ## 20. Config Changes
 

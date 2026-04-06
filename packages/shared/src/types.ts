@@ -231,13 +231,51 @@ export interface LarkTaskSource {
   message_id: string;
 }
 
-export type TaskSource = LarkTaskSource;
+export interface TelegramTopicTaskSource {
+  source: 'telegram';
+  chat_id: string;
+  topic_id: string;
+  message_id: string;
+}
+
+export interface TelegramChatTaskSource {
+  source: 'telegram';
+  chat_id: string;
+  message_id: string;
+}
+
+export type TaskSource = LarkTaskSource | TelegramTopicTaskSource | TelegramChatTaskSource;
+
+export function isValidTelegramTopicTaskSource(value: unknown): value is TelegramTopicTaskSource {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    obj.source === 'telegram' &&
+    isNonEmptyString(obj.chat_id) &&
+    isNonEmptyString(obj.topic_id) &&
+    isNonEmptyString(obj.message_id)
+  );
+}
+
+export function isValidTelegramChatTaskSource(value: unknown): value is TelegramChatTaskSource {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+  return (
+    obj.source === 'telegram' &&
+    isNonEmptyString(obj.chat_id) &&
+    !('topic_id' in obj) &&
+    isNonEmptyString(obj.message_id)
+  );
+}
 
 export function isValidTaskSource(value: unknown): value is TaskSource {
   if (typeof value !== 'object' || value === null) return false;
   const obj = value as Record<string, unknown>;
   if (obj.source === 'lark') {
-    return typeof obj.message_id === 'string' && obj.message_id.length > 0;
+    return isNonEmptyString(obj.message_id);
+  }
+  if (obj.source === 'telegram') {
+    return isValidTelegramTopicTaskSource(value) || isValidTelegramChatTaskSource(value);
   }
   return false;
 }
@@ -253,7 +291,7 @@ export function compareTaskPhases(a: TaskPhase, b: TaskPhase): number {
   return TASK_PHASES.indexOf(a) - TASK_PHASES.indexOf(b);
 }
 
-export type TaskPhaseEmitter = 'lark-listener' | 'task-enrichment' | 'task-daemon';
+export type TaskPhaseEmitter = 'lark-listener' | 'telegram-listener' | 'task-enrichment' | 'task-daemon';
 
 export interface TaskPhaseEventMetadata {
   thread_id?: string;
@@ -287,6 +325,8 @@ export const MAX_RESULT_OUTPUT_BYTES = 100 * 1024; // 100KB
 
 export const LARK_INBOUND_SCHEMA_VERSION_V1 = 1 as const;
 export type LarkInboundSchemaVersion = typeof LARK_INBOUND_SCHEMA_VERSION_V1;
+export const TELEGRAM_INBOUND_SCHEMA_VERSION_V1 = 1 as const;
+export type TelegramInboundSchemaVersion = typeof TELEGRAM_INBOUND_SCHEMA_VERSION_V1;
 
 export interface LarkMention {
   key: string;
@@ -323,6 +363,36 @@ export type LarkInboundEnvelope =
       message_type: string;
       raw_content: string;
       mentions: LarkMention[];
+      is_normalizable: false;
+      normalized_text?: undefined;
+      occurred_at_ms: number;
+    };
+
+export type TelegramInboundEnvelope =
+  | {
+      platform: 'telegram';
+      schema_version: TelegramInboundSchemaVersion;
+      chat_id: string;
+      topic_id: string;
+      message_id: string;
+      sender_id: string;
+      sender_is_bot: boolean;
+      message_type: string;
+      raw_content: string;
+      is_normalizable: true;
+      normalized_text: string;
+      occurred_at_ms: number;
+    }
+  | {
+      platform: 'telegram';
+      schema_version: TelegramInboundSchemaVersion;
+      chat_id: string;
+      topic_id: string;
+      message_id: string;
+      sender_id: string;
+      sender_is_bot: boolean;
+      message_type: string;
+      raw_content: string;
       is_normalizable: false;
       normalized_text?: undefined;
       occurred_at_ms: number;
@@ -374,6 +444,33 @@ export function isValidLarkInboundEnvelope(value: unknown): value is LarkInbound
   return false;
 }
 
+export function isValidTelegramInboundEnvelope(value: unknown): value is TelegramInboundEnvelope {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+
+  if (obj.platform !== 'telegram') return false;
+  if (obj.schema_version !== TELEGRAM_INBOUND_SCHEMA_VERSION_V1) return false;
+
+  if (!isNonEmptyString(obj.chat_id)) return false;
+  if (!isNonEmptyString(obj.topic_id)) return false;
+  if (!isNonEmptyString(obj.message_id)) return false;
+  if (!isNonEmptyString(obj.sender_id)) return false;
+  if (typeof obj.sender_is_bot !== 'boolean') return false;
+  if (!isNonEmptyString(obj.message_type)) return false;
+  if (typeof obj.raw_content !== 'string') return false;
+  if (typeof obj.occurred_at_ms !== 'number' || !Number.isFinite(obj.occurred_at_ms)) return false;
+
+  if (obj.is_normalizable === true) {
+    return typeof obj.normalized_text === 'string';
+  }
+
+  if (obj.is_normalizable === false) {
+    return obj.normalized_text === undefined;
+  }
+
+  return false;
+}
+
 export interface TaskResultSubmission {
   job_id: string;
   task_id: string;
@@ -397,4 +494,67 @@ export interface TaskResultEvent extends TaskResult {
   event_kind: 'result';
 }
 
-export type TaskEvent = TaskResultEvent | TaskPhaseEvent;
+export interface MirrorTaskEventSubmission {
+  task_id: string;
+  session_id: string;
+  task_type: string;
+  task_source: TaskSource;
+  mirror_id: string;
+  author_type: 'user';
+  text: string;
+  origin_message_id: string;
+}
+
+export interface MirrorTaskEvent extends MirrorTaskEventSubmission {
+  event_kind: 'mirror';
+  emitted_at: string;
+}
+
+export type TaskEvent = TaskResultEvent | TaskPhaseEvent | MirrorTaskEvent;
+
+export function isValidTaskEvent(value: unknown): value is TaskEvent {
+  if (typeof value !== 'object' || value === null) return false;
+  const obj = value as Record<string, unknown>;
+
+  if (obj.event_kind === 'result') {
+    return (
+      isNonEmptyString(obj.result_id) &&
+      isNonEmptyString(obj.job_id) &&
+      isNonEmptyString(obj.task_id) &&
+      isNonEmptyString(obj.task_type) &&
+      RESULT_STATUSES.includes(obj.status as ResultStatus) &&
+      (obj.exit_code === null || typeof obj.exit_code === 'number') &&
+      typeof obj.stdout === 'string' &&
+      typeof obj.stderr === 'string' &&
+      isNonEmptyString(obj.completed_at) &&
+      (obj.task_source === undefined || isValidTaskSource(obj.task_source))
+    );
+  }
+
+  if (obj.event_kind === 'phase') {
+    return (
+      isNonEmptyString(obj.event_id) &&
+      isNonEmptyString(obj.task_id) &&
+      isNonEmptyString(obj.task_type) &&
+      isValidTaskPhase(obj.phase) &&
+      isNonEmptyString(obj.emitted_at) &&
+      (obj.task_source === undefined || isValidTaskSource(obj.task_source))
+    );
+  }
+
+  if (obj.event_kind === 'mirror') {
+    return (
+      isNonEmptyString(obj.task_id) &&
+      isNonEmptyString(obj.session_id) &&
+      isNonEmptyString(obj.task_type) &&
+      isValidTaskSource(obj.task_source) &&
+      isNonEmptyString(obj.mirror_id) &&
+      obj.author_type === 'user' &&
+      typeof obj.text === 'string' &&
+      isNonEmptyString(obj.origin_message_id) &&
+      isNonEmptyString(obj.emitted_at)
+    );
+  }
+
+  return false;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatLarkPromptHistory } from '../../db/history-format';
+import { formatLarkPromptHistory, formatTelegramPromptHistory } from '../../db/history-format';
 
 describe('formatLarkPromptHistory', () => {
   it('maps inbound user rows and outbound bot rows to user/assistant history lines', () => {
@@ -114,5 +114,38 @@ describe('formatLarkPromptHistory', () => {
     ]);
 
     expect(history).toBe('user: keep');
+  });
+
+  it('formats telegram rows into prompt history', () => {
+    const history = formatTelegramPromptHistory([
+      {
+        chatId: '-100123',
+        messageId: '10',
+        topicId: '42',
+        sessionId: 'session-1',
+        direction: 'inbound',
+        senderType: 'user',
+        messageType: 'text',
+        rawContent: 'telegram raw user',
+        normalizedText: 'telegram user',
+        metadataJson: null,
+        createdAtMs: 100,
+      },
+      {
+        chatId: '-100123',
+        messageId: '11',
+        topicId: '42',
+        sessionId: 'session-1',
+        direction: 'outbound',
+        senderType: 'bot',
+        messageType: 'text',
+        rawContent: 'telegram raw bot',
+        normalizedText: 'task_type: coding\nsession_id: session-1\nexecutor: claude\nmodel: sonnet\ntelegram bot',
+        metadataJson: null,
+        createdAtMs: 101,
+      },
+    ]);
+
+    expect(history).toBe('user: telegram user\nassistant: telegram bot');
   });
 });

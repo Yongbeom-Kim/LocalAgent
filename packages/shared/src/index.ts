@@ -6,7 +6,11 @@ export {
   Task,
   type TaskSource,
   type LarkTaskSource,
+  type TelegramTopicTaskSource,
+  type TelegramChatTaskSource,
   isValidTaskSource,
+  isValidTelegramTopicTaskSource,
+  isValidTelegramChatTaskSource,
   TASK_PHASES,
   type TaskPhase,
   isValidTaskPhase,
@@ -32,13 +36,19 @@ export {
   type TaskResultSubmission,
   type TaskResult,
   type TaskResultEvent,
+  type MirrorTaskEventSubmission,
+  type MirrorTaskEvent,
   type TaskEvent,
+  isValidTaskEvent,
   type ResultStatus,
   RESULT_STATUSES,
   MAX_RESULT_OUTPUT_BYTES,
   LARK_INBOUND_SCHEMA_VERSION_V1,
+  TELEGRAM_INBOUND_SCHEMA_VERSION_V1,
   isValidLarkInboundEnvelope,
+  isValidTelegramInboundEnvelope,
   type LarkInboundEnvelope,
+  type TelegramInboundEnvelope,
   type LarkMention,
 } from './types';
 export {
@@ -112,6 +122,17 @@ export {
   type LarkInboundClassificationResult,
 } from './lark-inbound-routing';
 export {
+  normalizeTelegramInboundContent,
+  isTelegramMessageTypeNormalizable,
+  type TelegramInboundContentNormalization,
+  type NormalizableTelegramMessageType,
+} from './telegram-content';
+export {
+  TELEGRAM_ROOT_USAGE_HINT,
+  classifyTelegramInboundEnvelope,
+  type TelegramInboundClassificationResult,
+} from './telegram-inbound-routing';
+export {
   DEFAULT_GC_AGE_THRESHOLD_MS,
   parseGcAgeThresholdPayload,
   parseGcCommand,
@@ -119,18 +140,35 @@ export {
 export { generateSessionId } from './session';
 export { loadSqliteConfig } from './db/config';
 export { createSqliteClient, assertExpectedSchemaVersion } from './db/client';
-export { sqliteSchema, schemaVersionTable, larkThreadsTable, larkMessagesTable } from './db/schema';
-export { formatLarkPromptHistory } from './db/history-format';
 export {
-  LarkHistoryRepository,
-  type LarkThreadRow,
-  type LarkMessageRow,
-  type LarkPhaseReactionAction,
-  type LarkPhaseReactionAttempt,
-  type RecordInboundAuditMessageParams,
-  type UpsertInboundLarkMessageParams,
-  type RecordOutboundLarkMessageParams,
-  type MarkLarkThreadNewInstanceParams,
-  type UpsertLarkThreadStateParams,
+  sqliteSchema,
+  schemaVersionTable,
+  larkThreadsTable,
+  larkMessagesTable,
+  telegramThreadsTable,
+  telegramMessagesTable,
+  sessionBridgesTable,
+} from './db/schema';
+export { LarkHistoryRepository } from './db/lark-history-repository';
+export { TelegramHistoryRepository } from './db/telegram-history-repository';
+export { SessionBridgeRepository } from './db/session-bridge-repository';
+export { formatLarkPromptHistory, formatTelegramPromptHistory } from './db/history-format';
+export type { SqliteConfig, SqliteClient } from './db/types';
+export type {
+  LarkMessageRow,
+  LarkThreadRow,
+  LarkPhaseReactionAction,
+  LarkPhaseReactionAttempt,
+  RecordInboundAuditMessageParams,
+  UpsertInboundLarkMessageParams,
+  RecordOutboundLarkMessageParams,
+  MarkLarkThreadNewInstanceParams,
+  UpsertLarkThreadStateParams,
 } from './db/lark-history-repository';
-export { type SqliteConfig, type SqliteClient } from './db/types';
+export type {
+  TelegramThreadRow,
+  TelegramMessageRow,
+  UpsertTelegramThreadStateParams,
+  RecordTelegramMessageParams,
+} from './db/telegram-history-repository';
+export type { SessionBridgeRow, UpsertSessionBridgeParams } from './db/session-bridge-repository';

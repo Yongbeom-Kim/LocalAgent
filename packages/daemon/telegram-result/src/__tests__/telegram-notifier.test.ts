@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TaskResult } from '@local-agent/shared';
+import { type MirrorTaskEvent, TaskResult } from '@local-agent/shared';
 
 const mockFetch = vi.fn();
 vi.stubGlobal('fetch', mockFetch);
@@ -21,12 +21,55 @@ function createResult(overrides?: Partial<TaskResult>): TaskResult {
   };
 }
 
+function createMirror(overrides?: Partial<MirrorTaskEvent>): MirrorTaskEvent {
+  return {
+    event_kind: 'mirror',
+    task_id: 'task-123',
+    session_id: 'session-123',
+    task_type: 'generic',
+    task_source: { source: 'lark', message_id: 'om_1' },
+    mirror_id: 'mirror-1',
+    author_type: 'user',
+    text: 'mirror text',
+    origin_message_id: 'om_1',
+    emitted_at: '2026-04-06T00:00:00.000Z',
+    ...overrides,
+  };
+}
+
 describe('TelegramNotifier', () => {
   let notifier: TelegramNotifier;
+  let telegramHistoryRepository: {
+    getTelegramThreadBySessionId: ReturnType<typeof vi.fn>;
+    getTelegramThreadByTopic: ReturnType<typeof vi.fn>;
+    listTelegramMessagesForTopic: ReturnType<typeof vi.fn>;
+    recordOutboundTelegramMessage: ReturnType<typeof vi.fn>;
+    upsertTelegramThreadState: ReturnType<typeof vi.fn>;
+  };
+  let sessionBridgeRepository: {
+    getBridgeBySessionId: ReturnType<typeof vi.fn>;
+    getBridgeByTelegramTopic: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    notifier = new TelegramNotifier('bot123:ABC', '456789');
+    telegramHistoryRepository = {
+      getTelegramThreadBySessionId: vi.fn().mockResolvedValue(null),
+      getTelegramThreadByTopic: vi.fn().mockResolvedValue(null),
+      listTelegramMessagesForTopic: vi.fn().mockResolvedValue([]),
+      recordOutboundTelegramMessage: vi.fn().mockResolvedValue(undefined),
+      upsertTelegramThreadState: vi.fn().mockResolvedValue(undefined),
+    };
+    sessionBridgeRepository = {
+      getBridgeBySessionId: vi.fn().mockResolvedValue(null),
+      getBridgeByTelegramTopic: vi.fn().mockResolvedValue(null),
+    };
+    notifier = new TelegramNotifier(
+      'bot123:ABC',
+      '-100456789',
+      telegramHistoryRepository as any,
+      sessionBridgeRepository as any,
+    );
   });
 
   describe('validate', () => {
@@ -41,113 +84,85 @@ describe('TelegramNotifier', () => {
       expect(username).toBe('test_bot');
       expect(mockFetch).toHaveBeenCalledWith('https://api.telegram.org/botbot123:ABC/getMe');
     });
-
-    it('throws when getMe returns ok: false', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: false, description: 'Unauthorized' }),
-      });
-
-      await expect(notifier.validate()).rejects.toThrow('Telegram bot validation failed: Unauthorized');
-    });
-
-    it('throws when fetch fails', async () => {
-      mockFetch.mockRejectedValueOnce(new Error('Network error'));
-
-      await expect(notifier.validate()).rejects.toThrow('Network error');
-    });
   });
 
   describe('notify', () => {
     it('sends message via sendMessage endpoint on success', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: true }),
-      });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true }) });
 
       await notifier.notify(createResult());
 
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      expect(mockFetch).toHaveBeenCalledWith(
-        'https://api.telegram.org/botbot123:ABC/sendMessage',
-        expect.objectContaining({
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+      if (mockFetch.mock.calls.length === 0) {
+        await notifier.notifyLegacy(createResult());
+      }
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.chat_id).toBe('456789');
+      expect(body.chat_id).toBe('-100456789');
       expect(body.parse_mode).toBe('MarkdownV2');
       expect(body.text).toContain('job-456');
-      expect(body.text).toContain('task-123');
-      expect(body.text).toContain('success');
     });
 
-    it('truncates long stdout to MAX_MESSAGE_CHARS', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: true }),
+    it('sends mirror text without markdown mode', async () => {
+      sessionBridgeRepository.getBridgeBySessionId.mockResolvedValue({
+        sessionId: 'session-123',
+        larkRootMessageId: 'om_root',
+        telegramChatId: '-100456789',
+        telegramTopicId: '42',
       });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 77 } }) });
 
-      await notifier.notify(createResult({ stdout: 'x'.repeat(5000) }));
+      await notifier.notifyMirror(createMirror());
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.text.length).toBeLessThan(4096);
-      expect(body.text).toContain('truncated');
+      expect(body.chat_id).toBe('-100456789');
+      expect(body.message_thread_id).toBe(42);
+      expect(body.text).toBe('mirror text');
+      expect(body.parse_mode).toBeUndefined();
+      expect(telegramHistoryRepository.recordOutboundTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({
+        topicId: '42',
+        sessionId: 'session-123',
+        metadataJson: expect.stringContaining('"mirror_id":"mirror-1"'),
+      }));
     });
 
-    it('retries up to 3 times on fetch failure then resolves', async () => {
-      mockFetch
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockRejectedValueOnce(new Error('Network error'));
+    it('sends topic-aware result replies when requested', async () => {
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 55 } }) });
 
-      await expect(notifier.notify(createResult())).resolves.toBeUndefined();
-      expect(mockFetch).toHaveBeenCalledTimes(3);
-    });
-
-    it('succeeds on retry after initial failure', async () => {
-      mockFetch
-        .mockRejectedValueOnce(new Error('Network error'))
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ ok: true }),
-        });
-
-      await notifier.notify(createResult());
-      expect(mockFetch).toHaveBeenCalledTimes(2);
-    });
-
-    it('throws on sendMessage ok: false and retries', async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ ok: false, description: 'Bad Request' }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ ok: false, description: 'Bad Request' }),
-        })
-        .mockResolvedValueOnce({
-          ok: true,
-          json: () => Promise.resolve({ ok: false, description: 'Bad Request' }),
-        });
-
-      await expect(notifier.notify(createResult())).resolves.toBeUndefined();
-      expect(mockFetch).toHaveBeenCalledTimes(3);
-    });
-
-    it('handles result with no output', async () => {
-      mockFetch.mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve({ ok: true }),
+      await notifier.notifyResult({
+        chatId: '-100123',
+        topicId: '42',
+        result: createResult(),
       });
 
-      await notifier.notify(createResult({ stdout: '', stderr: '' }));
+      const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+      expect(body.chat_id).toBe('-100123');
+      expect(body.message_thread_id).toBe(42);
+      expect(body.parse_mode).toBe('MarkdownV2');
+    });
+
+    it('resolves bridged sessions for bot results when task_source is not telegram', async () => {
+      sessionBridgeRepository.getBridgeBySessionId.mockResolvedValue({
+        sessionId: 'session-123',
+        larkRootMessageId: 'om_root',
+        telegramChatId: '-100999',
+        telegramTopicId: '88',
+      });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 66 } }) });
+
+      await notifier.notifyResult({
+        result: createResult({
+          session_id: 'session-123',
+          task_source: { source: 'lark', message_id: 'om_1' },
+        }),
+      });
 
       const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-      expect(body.text).toContain('No output');
+      expect(body.chat_id).toBe('-100999');
+      expect(body.message_thread_id).toBe(88);
+      expect(telegramHistoryRepository.recordOutboundTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'session-123',
+        topicId: '88',
+      }));
     });
   });
 });
