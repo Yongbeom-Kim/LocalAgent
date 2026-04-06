@@ -119,8 +119,7 @@ describe('POST /jobs', () => {
       topic_id: '42',
       message_id: '99',
     };
-    const res = await request(app)
-      .post('/jobs')
+    const res = await authedRequest(request(app).post('/jobs'))
       .send({ ...validJobSubmission(), task_source: taskSource });
 
     expect(res.status).toBe(201);

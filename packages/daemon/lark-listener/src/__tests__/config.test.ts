@@ -5,6 +5,7 @@ describe('loadLarkListenerConfig', () => {
   it('returns defaults when required env vars are set', () => {
     const config = loadLarkListenerConfig({
       API_URL: 'http://localhost:3000',
+      API_AUTH_TOKEN: 'test-token',
       LARK_APP_ID: 'app123',
       LARK_APP_SECRET: 'secret456',
       LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
@@ -23,6 +24,7 @@ describe('loadLarkListenerConfig', () => {
       LARK_APP_ID: 'app123',
       LARK_APP_SECRET: 'secret456',
       API_URL: 'http://other:4000',
+      API_AUTH_TOKEN: 'test-token',
       LOCAL_AGENT_DB_PATH: '/tmp/other.sqlite',
       LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '2',
       LOG_LEVEL: 'debug',
@@ -41,6 +43,7 @@ describe('loadLarkListenerConfig', () => {
     expect(() =>
       loadLarkListenerConfig({
         API_URL: 'http://localhost:3000',
+        API_AUTH_TOKEN: 'test-token',
         LARK_APP_SECRET: 'secret456',
         LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
       }),
@@ -50,6 +53,7 @@ describe('loadLarkListenerConfig', () => {
     expect(() =>
       loadLarkListenerConfig({
         API_URL: 'http://localhost:3000',
+        API_AUTH_TOKEN: 'test-token',
         LARK_APP_ID: 'app123',
         LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',
       }),
@@ -58,6 +62,7 @@ describe('loadLarkListenerConfig', () => {
     );
     expect(() =>
       loadLarkListenerConfig({
+        API_AUTH_TOKEN: 'test-token',
         LARK_APP_ID: 'app123',
         LARK_APP_SECRET: 'secret456',
         LOCAL_AGENT_DB_PATH: '/tmp/local-agent.sqlite',

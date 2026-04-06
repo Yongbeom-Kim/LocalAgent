@@ -55,7 +55,7 @@ describe('POST /tasks', () => {
 
   it('returns 401 when authorization header is missing', async () => {
     const app = buildApp();
-    const res = await request(app).post('/tasks').send({ task_type: 'generic', payload: 'hello' });
+    const res = await request(app).post('/tasks/').send({ task_type: 'generic', payload: 'hello' });
     expect(res.status).toBe(401);
     expect(res.body).toEqual({ error: 'Unauthorized' });
   });
@@ -187,8 +187,7 @@ describe('POST /tasks', () => {
       topic_id: '42',
       message_id: '99',
     };
-    const res = await request(app)
-      .post('/tasks')
+    const res = await authedRequest(request(app).post('/tasks'))
       .send({
         task_type: 'generic',
         payload: 'hello',

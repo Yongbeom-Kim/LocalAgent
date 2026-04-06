@@ -243,7 +243,11 @@ export class RabbitMQService {
       const parsed = JSON.parse(msg.content.toString()) as TaskEvent;
       const deliveryMap = this.getOrCreateDeliveryMap(queueName);
 
-      const deliveryId = parsed.event_kind === 'phase' ? parsed.event_id : parsed.result_id;
+      const deliveryId = parsed.event_kind === 'phase'
+        ? parsed.event_id
+        : parsed.event_kind === 'mirror'
+          ? parsed.mirror_id
+          : parsed.result_id;
 
       if (deliveryMap.has(deliveryId)) {
         logger.error(
