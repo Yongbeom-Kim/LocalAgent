@@ -1,8 +1,22 @@
+import { timingSafeEqual } from 'node:crypto';
 import type { RequestHandler } from 'express';
 import type { ApiAuthConfig } from '../../../shared/src/config';
 import { createLogger } from '../../../shared/src/logger';
 
-const logger = createLogger('api:auth');
+const logger = createLogger('api:auth', process.env.LOG_LEVEL ?? 'info');
+
+function tokensMatch(providedToken: string, expectedToken: string): boolean {
+  const provided = Buffer.from(providedToken, 'utf8');
+  const expected = Buffer.from(expectedToken, 'utf8');
+
+  // Avoid leaking timing information on mismatch.
+  if (provided.length !== expected.length) {
+    timingSafeEqual(expected, expected);
+    return false;
+  }
+
+  return timingSafeEqual(provided, expected);
+}
 
 export function createApiAuthMiddleware(config: ApiAuthConfig): RequestHandler {
   return (req, res, next) => {
@@ -22,7 +36,7 @@ export function createApiAuthMiddleware(config: ApiAuthConfig): RequestHandler {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    if (match[1] !== config.token) {
+    if (!tokensMatch(match[1], config.token)) {
       logger.debug({ path: req.path, method: req.method, reason: 'token_mismatch' }, 'API auth rejected request');
       return res.status(403).json({ error: 'Forbidden' });
     }

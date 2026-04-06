@@ -19,11 +19,13 @@ vi.mock('../../services/rabbitmq', () => {
   };
 });
 
-vi.mock('@local-agent/shared', async () => {
+vi.mock('@local-agent/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@local-agent/shared')>();
   const constants = await import('../../../../shared/src/constants');
   const types = await import('../../../../shared/src/types');
 
   return {
+    ...actual,
     TASK_EVENT_KINDS: constants.TASK_EVENT_KINDS,
     RESULT_STATUSES: types.RESULT_STATUSES,
     DEFAULT_RESULTS_EXCHANGE_NAME: constants.DEFAULT_RESULTS_EXCHANGE_NAME,
