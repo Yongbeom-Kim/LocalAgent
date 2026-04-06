@@ -1,14 +1,15 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { JobAttempt, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
 import { ExecutorPrecheckResult, TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
+import { checkRequiredBinaries } from './executor-precheck';
 
 const logger = createLogger('task-daemon:cursor');
 const REQUIRED_BINARIES = ['agent'] as const;
 
 export class CursorExecutor implements TaskExecutor {
   async precheck(_env: ExecutionEnvironment): Promise<ExecutorPrecheckResult> {
-    return this.checkRequiredBinaries('cursor', REQUIRED_BINARIES);
+    return checkRequiredBinaries('cursor', REQUIRED_BINARIES);
   }
 
   async execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
@@ -54,34 +55,6 @@ export class CursorExecutor implements TaskExecutor {
       mode: 'fresh',
       input: this.buildFreshInput(job),
     });
-  }
-
-  private checkRequiredBinaries(
-    executorName: string,
-    binaries: readonly string[],
-  ): ExecutorPrecheckResult {
-    try {
-      const missing = binaries.filter((binary) => {
-        const result = spawnSync('sh', ['-lc', `command -v ${binary} >/dev/null 2>&1`], {
-          stdio: 'ignore',
-        });
-        return result.status !== 0;
-      });
-
-      if (missing.length === 0) {
-        return { ok: true };
-      }
-
-      return {
-        ok: false,
-        stderr: `Executor "${executorName}" unavailable: missing required binaries in PATH: ${missing.join(', ')}`,
-      };
-    } catch {
-      return {
-        ok: false,
-        stderr: `Executor "${executorName}" unavailable: missing required binaries in PATH: ${binaries.join(', ')}`,
-      };
-    }
   }
 
   private buildFreshInput(job: JobAttempt): string {
