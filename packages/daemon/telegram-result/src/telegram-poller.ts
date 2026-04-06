@@ -2,6 +2,9 @@ import { TaskResult, buildApiAuthHeaders, createLogger } from '@local-agent/shar
 import { TelegramNotifier } from './adapters/telegram-notifier';
 
 const logger = createLogger('telegram-daemon:poller');
+const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED';
+
+class ApiAuthConfigurationError extends Error {}
 
 type TaskEventKind = 'result' | 'phase';
 
@@ -42,8 +45,17 @@ export class TelegramPoller {
         status,
         context,
       },
-      'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED',
+      API_AUTH_FAILURE_LOG,
     );
+  }
+
+  private throwIfAuthFailureStatus(status: number, context: string, details?: Record<string, unknown>): void {
+    if (!this.isAuthFailureStatus(status)) {
+      return;
+    }
+
+    this.logAuthFailure(context, status, details);
+    throw new ApiAuthConfigurationError(`${context} failed with auth status ${status}`);
   }
 
   async pollOnce(): Promise<void> {
@@ -57,10 +69,7 @@ export class TelegramPoller {
         return;
       }
 
-      if (this.isAuthFailureStatus(res.status)) {
-        this.logAuthFailure('GET /results/next/:queue_name', res.status, { queue_name: this.queueName });
-        throw new Error(`API auth failure (${res.status}) while polling results`);
-      }
+      this.throwIfAuthFailureStatus(res.status, 'GET /results/next/:queue_name', { queue_name: this.queueName });
 
       if (res.status !== 200) {
         logger.warn({ status: res.status }, 'Unexpected response from API');
@@ -86,6 +95,12 @@ export class TelegramPoller {
       await this.notifier.notify(result);
       await this.ackDelivery(event.id, 'Result');
     } catch (err) {
+      if (err instanceof ApiAuthConfigurationError) {
+        logger.error({ err }, 'Stopping telegram poll due to API auth configuration error');
+        this.stop();
+        return;
+      }
+
       logger.error({ err }, 'Telegram poll error');
     }
   }
@@ -164,19 +179,20 @@ export class TelegramPoller {
         method: 'POST',
         headers: this.buildApiHeaders(),
       });
-      if (this.isAuthFailureStatus(ackRes.status)) {
-        this.logAuthFailure('POST /results/:queue_name/:id/ack', ackRes.status, {
-          queue_name: this.queueName,
-          id,
-        });
-        throw new Error(`API auth failure (${ackRes.status}) while acknowledging ${label.toLowerCase()}`);
-      }
+      this.throwIfAuthFailureStatus(ackRes.status, 'POST /results/:queue_name/:id/ack', {
+        queue_name: this.queueName,
+        id,
+      });
       if (ackRes.status !== 200) {
         logger.warn({ id, status: ackRes.status }, `${label} ACK failed`);
       } else {
         logger.info({ id }, `${label} acknowledged`);
       }
     } catch (ackErr) {
+      if (ackErr instanceof ApiAuthConfigurationError) {
+        throw ackErr;
+      }
+
       logger.error({ id, err: ackErr }, `${label} ACK request failed`);
       throw ackErr;
     }
