@@ -5,6 +5,8 @@ import {
   TaskResultSubmission,
   createLogger,
   LarkHistoryRepository,
+  SessionBridgeRepository,
+  TelegramHistoryRepository,
   createSqliteClient,
   loadSqliteConfig,
 } from '@local-agent/shared';
@@ -18,12 +20,28 @@ type RemoveDirectory = (path: string) => void;
 type DirectoryExists = (path: string) => boolean;
 type DeleteSessionRows = (sessionId: string) => Promise<void>;
 
+function isMissingTableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('no such table') || message.includes('Failed query: delete from "session_bridges"');
+}
+
 const deleteSessionRowsFromDb: DeleteSessionRows = async (sessionId: string): Promise<void> => {
   const client = await createSqliteClient(loadSqliteConfig());
 
   try {
-    const repository = new LarkHistoryRepository(client.db);
-    await repository.deleteLarkRowsBySessionId(sessionId);
+    const larkRepository = new LarkHistoryRepository(client.db);
+    const telegramRepository = new TelegramHistoryRepository(client.db);
+    const bridgeRepository = new SessionBridgeRepository(client.db);
+
+    try {
+      await bridgeRepository.deleteBridgeBySessionId(sessionId);
+      await telegramRepository.deleteTelegramRowsBySessionId(sessionId);
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
+    await larkRepository.deleteLarkRowsBySessionId(sessionId);
   } finally {
     client.close();
   }

@@ -8,7 +8,13 @@
       "when": 1743782400000,
       "tag": "0000_init_lark_thread_state",
       "breakpoints": false
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1775433600000,
+      "tag": "0001_telegram_bridge_state",
+      "breakpoints": false
     }
   ]
 }
-

@@ -1,4 +1,6 @@
 import {
+  MirrorTaskEvent,
+  SessionBridgeRepository,
   TaskResult,
   createLogger,
   LarkHistoryRepository,
@@ -31,10 +33,12 @@ export class LarkNotifier {
       | 'markLarkThreadNewInstance'
       | 'getLarkMessageByMessageId'
       | 'getLarkThreadByRootMessageId'
+      | 'getLarkMessagesForThread'
       | 'upsertLarkThreadState'
       | 'deleteLarkRowsBySessionId'
     >,
     private readonly tokenProvider: TokenProvider = new LarkTenantTokenProvider(appId, appSecret),
+    private readonly sessionBridgeRepository?: Pick<SessionBridgeRepository, 'getBridgeBySessionId'>,
   ) {}
 
   async notify(result: TaskResult): Promise<void> {
@@ -55,6 +59,76 @@ export class LarkNotifier {
         }
       }
     }
+  }
+
+  async notifyMirror(event: MirrorTaskEvent): Promise<void> {
+    if (!this.larkHistoryRepository || !this.sessionBridgeRepository) {
+      return;
+    }
+
+    const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(event.session_id);
+    if (!bridge) {
+      return;
+    }
+
+    const existingMessages = await this.larkHistoryRepository.getLarkMessagesForThread(bridge.larkRootMessageId);
+    const duplicate = existingMessages.some((message) => {
+      if (message.direction !== 'outbound' || !message.metadataJson) {
+        return false;
+      }
+
+      try {
+        const metadata = JSON.parse(message.metadataJson) as { mirror_id?: string };
+        return metadata.mirror_id === event.mirror_id;
+      } catch {
+        return false;
+      }
+    });
+
+    if (duplicate) {
+      return;
+    }
+
+    const token = await this.tokenProvider.getTenantAccessToken();
+    const createdAtMs = Date.now();
+    const rawContent = JSON.stringify({ text: event.text });
+
+    const msgRes = await fetch(LARK_REPLY_URL(bridge.larkRootMessageId), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        msg_type: 'text',
+        content: rawContent,
+        reply_in_thread: true,
+      }),
+    });
+
+    const msgData = await msgRes.json() as { code: number; data?: { message_id?: string } };
+    if (msgData.code !== 0) {
+      throw new Error(`Lark mirror send failed with code ${msgData.code}`);
+    }
+
+    const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(bridge.larkRootMessageId);
+    await this.larkHistoryRepository.recordOutboundLarkMessage({
+      messageId: msgData.data?.message_id ?? this.buildSyntheticOutboundMessageId(event.mirror_id),
+      source: event.task_source.source,
+      rootMessageId: bridge.larkRootMessageId,
+      sessionId: event.session_id,
+      threadId: existingThread?.threadId ?? null,
+      messageType: 'text',
+      rawContent,
+      normalizedText: event.text,
+      metadataJson: JSON.stringify({
+        mirror_origin: event.task_source.source,
+        origin_message_id: event.origin_message_id,
+        mirror_id: event.mirror_id,
+        mirrored_by: 'local-agent',
+      }),
+      createdAtMs,
+    });
   }
 
   private async sendNotification(result: TaskResult): Promise<void> {

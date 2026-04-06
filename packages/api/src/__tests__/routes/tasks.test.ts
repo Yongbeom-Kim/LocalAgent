@@ -179,6 +179,26 @@ describe('POST /tasks', () => {
     expect(res.status).toBe(400);
   });
 
+  it('accepts telegram task_source on POST /tasks', async () => {
+    const app = buildApp();
+    const taskSource = {
+      source: 'telegram',
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+    };
+    const res = await request(app)
+      .post('/tasks')
+      .send({
+        task_type: 'generic',
+        payload: 'hello',
+        task_source: taskSource,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.task_source).toEqual(taskSource);
+  });
+
   it('returns 201 for non-control task with explicit executor/model', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))

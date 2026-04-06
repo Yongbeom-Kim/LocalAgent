@@ -14,9 +14,15 @@ import {
   isControlTaskType,
   type TaskSubmission,
   LARK_INBOUND_SCHEMA_VERSION_V1,
+  TELEGRAM_INBOUND_SCHEMA_VERSION_V1,
   isValidLarkInboundEnvelope,
+  isValidTelegramInboundEnvelope,
+  isValidTaskEvent,
+  isValidTelegramTopicTaskSource,
   type LarkInboundEnvelope,
+  type TelegramInboundEnvelope,
 } from '../types';
+import { TASK_EVENT_KINDS } from '../constants';
 
 /** Exact static allowlist order for `cursor` (must match `EXECUTOR_MODELS.cursor`). */
 const CURSOR_AGENT_MODELS_EXPECTED = [
@@ -420,6 +426,51 @@ describe('task phase events', () => {
   });
 });
 
+describe('telegram task source contracts', () => {
+  it('accepts a telegram task source with chat and topic ids', () => {
+    expect(isValidTelegramTopicTaskSource({
+      source: 'telegram',
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+    })).toBe(true);
+  });
+
+  it('rejects a telegram topic task source missing topic_id', () => {
+    expect(isValidTelegramTopicTaskSource({
+      source: 'telegram',
+      chat_id: '-100123',
+      message_id: '99',
+    })).toBe(false);
+  });
+});
+
+describe('mirror task events', () => {
+  it('accepts mirror as a valid task event kind', () => {
+    expect(TASK_EVENT_KINDS).toContain('mirror');
+  });
+
+  it('accepts a mirror event payload with mirror_id and no destination', () => {
+    expect(isValidTaskEvent({
+      event_kind: 'mirror',
+      task_id: 'task-123',
+      session_id: 'session-123',
+      task_type: 'coding',
+      task_source: {
+        source: 'telegram',
+        chat_id: '-100123',
+        topic_id: '42',
+        message_id: '99',
+      },
+      mirror_id: 'mirror-123',
+      author_type: 'user',
+      text: 'hello',
+      origin_message_id: '99',
+      emitted_at: '2026-04-06T10:00:00.000Z',
+    })).toBe(true);
+  });
+});
+
 describe('LarkInboundEnvelope (normalized lark_inbound contract)', () => {
   it('accepts a minimally valid root-message envelope (root_message_id = message_id; thread_id = null)', () => {
     const env: LarkInboundEnvelope = {
@@ -483,5 +534,44 @@ describe('LarkInboundEnvelope (normalized lark_inbound contract)', () => {
 
     expect(isValidLarkInboundEnvelope(env)).toBe(true);
     expect(JSON.stringify(env)).toContain('"raw_content"');
+  });
+});
+
+describe('TelegramInboundEnvelope (normalized telegram_inbound contract)', () => {
+  it('accepts a minimally valid topic message envelope', () => {
+    const env: TelegramInboundEnvelope = {
+      platform: 'telegram',
+      schema_version: TELEGRAM_INBOUND_SCHEMA_VERSION_V1,
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+      sender_id: '12345',
+      sender_is_bot: false,
+      message_type: 'text',
+      raw_content: 'hello',
+      normalized_text: 'hello',
+      is_normalizable: true,
+      occurred_at_ms: 1743811200000,
+    };
+
+    expect(isValidTelegramInboundEnvelope(env)).toBe(true);
+    const roundTrip = JSON.parse(JSON.stringify(env)) as unknown;
+    expect(isValidTelegramInboundEnvelope(roundTrip)).toBe(true);
+  });
+
+  it('requires normalized_text when is_normalizable = true', () => {
+    expect(isValidTelegramInboundEnvelope({
+      platform: 'telegram',
+      schema_version: 1,
+      chat_id: '-100123',
+      topic_id: '42',
+      message_id: '99',
+      sender_id: '12345',
+      sender_is_bot: false,
+      message_type: 'text',
+      raw_content: 'hello',
+      is_normalizable: true,
+      occurred_at_ms: 1,
+    })).toBe(false);
   });
 });

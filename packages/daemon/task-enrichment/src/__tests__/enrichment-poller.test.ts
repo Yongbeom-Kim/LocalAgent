@@ -13,6 +13,7 @@ import {
 } from '@local-agent/shared';
 import { EnrichmentService, EnrichmentResult } from '../enrichment-service';
 import { ThreadContextFetcher } from '../adapters/thread-context-fetcher';
+import { TelegramThreadContextFetcher } from '../adapters/telegram-thread-context-fetcher';
 import { TaskPhasePublisher } from '../adapters/task-phase-publisher';
 
 const mockEnrich = vi.fn();
@@ -1297,6 +1298,69 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         stderr: '',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       }),
+    });
+  });
+});
+
+describe('TelegramThreadContextFetcher', () => {
+  it('returns inherited task metadata for a mapped telegram topic', async () => {
+    const fetcher = new TelegramThreadContextFetcher({
+      getTelegramThreadByTopic: vi.fn().mockResolvedValue({
+        chatId: '-100123',
+        topicId: '42',
+        sessionId: 'session-1',
+        source: 'telegram',
+        taskType: 'coding',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        seedMessageId: '1',
+        statusMessageId: null,
+        metadataJson: null,
+        createdAtMs: 100,
+        updatedAtMs: 100,
+        endedAtMs: null,
+      }),
+      listTelegramMessagesForTopic: vi.fn().mockResolvedValue([
+        {
+          chatId: '-100123',
+          messageId: '10',
+          topicId: '42',
+          sessionId: 'session-1',
+          direction: 'inbound',
+          senderType: 'user',
+          messageType: 'text',
+          rawContent: 'hello',
+          normalizedText: 'hello',
+          metadataJson: null,
+          createdAtMs: 100,
+        },
+      ]),
+    } as any);
+
+    await expect(fetcher.fetchThreadContext('-100123', '42')).resolves.toEqual({
+      kind: 'thread',
+      threadContext: 'user: hello',
+      inheritedTaskType: 'coding',
+      inheritedSessionId: 'session-1',
+      inheritedExecutor: 'claude',
+      inheritedExecutorModel: 'sonnet',
+    });
+  });
+
+  it('returns not_thread for an unmapped telegram topic', async () => {
+    const fetcher = new TelegramThreadContextFetcher({
+      getTelegramThreadByTopic: vi.fn().mockResolvedValue(null),
+      listTelegramMessagesForTopic: vi.fn(),
+    } as any);
+
+    await expect(fetcher.fetchThreadContext('-100123', '99')).resolves.toEqual({
+      kind: 'not_thread',
+      threadContext: null,
+      inheritedTaskType: null,
+      inheritedSessionId: null,
+      inheritedExecutor: null,
+      inheritedExecutorModel: null,
     });
   });
 });

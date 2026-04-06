@@ -6,8 +6,8 @@ const require = createRequire(import.meta.url);
 const libsqlSqlite3Entry = require.resolve('@libsql/client/sqlite3');
 const drizzleOrmEntry = require.resolve('drizzle-orm');
 const drizzleLibsqlSqlite3Entry = require.resolve('drizzle-orm/libsql/sqlite3');
-const drizzleLibsqlMigratorEntry = require.resolve('drizzle-orm/libsql/migrator');
 const drizzleLibsqlEntry = require.resolve('drizzle-orm/libsql');
+const drizzleLibsqlMigratorEntry = require.resolve('drizzle-orm/libsql/migrator');
 const drizzleSqliteCoreEntry = require.resolve('drizzle-orm/sqlite-core');
 const drizzleOrmSqlEntry = require.resolve('drizzle-orm/sql');
 const dotenvEntry = require.resolve('dotenv');
@@ -21,8 +21,8 @@ export default defineConfig({
       { find: '@local-agent/shared', replacement: sharedSource },
       { find: '@libsql/client/sqlite3', replacement: libsqlSqlite3Entry },
       { find: /^drizzle-orm\/libsql\/sqlite3$/, replacement: drizzleLibsqlSqlite3Entry },
-      { find: /^drizzle-orm\/libsql\/migrator$/, replacement: drizzleLibsqlMigratorEntry },
       { find: /^drizzle-orm\/libsql$/, replacement: drizzleLibsqlEntry },
+      { find: /^drizzle-orm\/libsql\/migrator$/, replacement: drizzleLibsqlMigratorEntry },
       { find: /^drizzle-orm\/sqlite-core$/, replacement: drizzleSqliteCoreEntry },
       { find: /^drizzle-orm\/sql$/, replacement: drizzleOrmSqlEntry },
       { find: /^drizzle-orm$/, replacement: drizzleOrmEntry },

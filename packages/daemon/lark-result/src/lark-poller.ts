@@ -1,4 +1,4 @@
-import { TaskResult, buildApiAuthHeaders, createLogger } from '@local-agent/shared';
+import { MirrorTaskEvent, TaskResult, buildApiAuthHeaders, createLogger } from '@local-agent/shared';
 import { LarkPhaseNotifier, type TaskPhaseEventLike } from './adapters/lark-phase-notifier';
 import { LarkNotifier } from './adapters/lark-notifier';
 import {
@@ -13,7 +13,7 @@ const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or
 
 class ApiAuthConfigurationError extends Error {}
 
-type TaskEventKind = 'result' | 'phase';
+type TaskEventKind = 'result' | 'phase' | 'mirror';
 
 interface TaskEventEnvelope {
   event_kind: TaskEventKind;
@@ -121,6 +121,22 @@ export class LarkPoller {
         return;
       }
 
+      if (event.event_kind === 'mirror') {
+        const mirrorEvent = event.event as MirrorTaskEvent;
+
+        try {
+          if (mirrorEvent.task_source.source !== 'lark') {
+            await this.notifier.notifyMirror(mirrorEvent);
+          }
+        } catch (err) {
+          logger.warn({ mirror_id: mirrorEvent.mirror_id, err }, 'Mirror event dispatch failed');
+        } finally {
+          await this.ackDelivery(event.id);
+        }
+
+        return;
+      }
+
       const result = event.event as TaskResult;
       try {
         logger.info({ result_id: result.result_id, job_id: result.job_id, task_id: result.task_id }, 'Received result');
@@ -180,6 +196,14 @@ export class LarkPoller {
       return value.event_id ?? `phase-${Date.now()}`;
     }
 
+    if (eventKind === 'mirror') {
+      const value = event as { event?: { mirror_id?: string }; mirror_id?: string };
+      if (value.event?.mirror_id) {
+        return value.event.mirror_id;
+      }
+      return value.mirror_id ?? `mirror-${Date.now()}`;
+    }
+
     const value = event as { event?: { result_id?: string }; result_id?: string };
     if (value.event?.result_id) {
       return value.event.result_id;
@@ -194,7 +218,7 @@ export class LarkPoller {
 
     const candidate = payload as Record<string, unknown>;
     return (
-      (candidate.event_kind === 'phase' || candidate.event_kind === 'result') &&
+      (candidate.event_kind === 'phase' || candidate.event_kind === 'result' || candidate.event_kind === 'mirror') &&
       'event' in candidate
     );
   }
@@ -205,7 +229,7 @@ export class LarkPoller {
     }
 
     const candidate = payload as Record<string, unknown>;
-    if (candidate.event_kind !== 'phase' && candidate.event_kind !== 'result') {
+    if (candidate.event_kind !== 'phase' && candidate.event_kind !== 'result' && candidate.event_kind !== 'mirror') {
       return false;
     }
 
@@ -261,22 +285,14 @@ export class LarkPoller {
         method: 'POST',
         headers: this.buildApiHeaders(),
       });
-      this.throwIfAuthFailureStatus(ackRes.status, 'POST /results/:queue_name/:id/ack', {
-        queue_name: this.queueName,
-        id,
-      });
+      this.throwIfAuthFailureStatus(ackRes.status, 'POST /results/:queue_name/:id/ack', { id, queue_name: this.queueName });
       if (ackRes.status !== 200) {
         logger.warn({ id, status: ackRes.status }, 'Task event ACK failed');
       } else {
         logger.info({ id }, 'Task event acknowledged');
       }
     } catch (ackErr) {
-      if (ackErr instanceof ApiAuthConfigurationError) {
-        throw ackErr;
-      }
-
       logger.error({ id, err: ackErr }, 'Task event ACK request failed');
-      throw ackErr;
     }
   }
 

@@ -23,6 +23,6 @@ export const MAX_SNIPPET_CHARS = 100000;
 /** Express `json()` body limit (also headroom for non-result routes). RabbitMQ default max message size is far larger. */
 export const MAX_API_JSON_BODY_BYTES = 1024 * 1024;
 
-export const TASK_EVENT_KINDS = ['result', 'phase'] as const;
+export const TASK_EVENT_KINDS = ['result', 'phase', 'mirror'] as const;
 
 export const GLOBAL_SYSTEM_PROMPT = `You are running in a non-interactive environment. Any output beyond ${MAX_SNIPPET_CHARS} characters will be truncated. If your response is likely to exceed this limit, create a Lark document with the full content and send the document link to the user instead.`;

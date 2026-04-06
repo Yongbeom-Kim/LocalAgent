@@ -1,16 +1,6 @@
 import { readdirSync, statSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
-import {
-  Job,
-  TaskResultSubmission,
-  SESSION_BASE_DIR,
-  createLogger,
-  LarkHistoryRepository,
-  createSqliteClient,
-  loadSqliteConfig,
-  parseGcAgeThresholdPayload,
-  DEFAULT_GC_AGE_THRESHOLD_MS,
-} from '@local-agent/shared';
+import { Job, TaskResultSubmission, SESSION_BASE_DIR, SESSION_DIR_TTL_DAYS, createLogger, LarkHistoryRepository, SessionBridgeRepository, TelegramHistoryRepository, createSqliteClient, loadSqliteConfig } from '@local-agent/shared';
 import { SessionLockManager } from './session-lock';
 
 const logger = createLogger('task-daemon:gc-executor');
@@ -18,12 +8,30 @@ const logger = createLogger('task-daemon:gc-executor');
 type ListStaleSessionIds = (cutoffMs: number) => Promise<string[]>;
 type DeleteRowsBySessionId = (sessionId: string) => Promise<void>;
 
+function isMissingTableError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return message.includes('no such table') || message.includes('session_bridges');
+}
+
 const listStaleSessionIdsFromDb: ListStaleSessionIds = async (cutoffMs: number): Promise<string[]> => {
   const client = await createSqliteClient(loadSqliteConfig());
 
   try {
-    const repository = new LarkHistoryRepository(client.db);
-    return await repository.getStaleLarkSessionIdsBeforeUpdatedAt(cutoffMs);
+    const larkRepository = new LarkHistoryRepository(client.db);
+    const sessionIds = new Set<string>(await larkRepository.getStaleLarkSessionIdsBeforeUpdatedAt(cutoffMs));
+
+    try {
+      const telegramRepository = new TelegramHistoryRepository(client.db);
+      for (const sessionId of await telegramRepository.getStaleTelegramSessionIdsBeforeUpdatedAt(cutoffMs)) {
+        sessionIds.add(sessionId);
+      }
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
+
+    return [...sessionIds].sort();
   } finally {
     client.close();
   }
@@ -33,8 +41,20 @@ const deleteRowsBySessionIdFromDb: DeleteRowsBySessionId = async (sessionId: str
   const client = await createSqliteClient(loadSqliteConfig());
 
   try {
-    const repository = new LarkHistoryRepository(client.db);
-    await repository.deleteLarkRowsBySessionId(sessionId);
+    const larkRepository = new LarkHistoryRepository(client.db);
+
+    try {
+      const telegramRepository = new TelegramHistoryRepository(client.db);
+      const bridgeRepository = new SessionBridgeRepository(client.db);
+      await bridgeRepository.deleteBridgeBySessionId(sessionId);
+      await telegramRepository.deleteTelegramRowsBySessionId(sessionId);
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
+
+    await larkRepository.deleteLarkRowsBySessionId(sessionId);
   } finally {
     client.close();
   }
@@ -49,9 +69,7 @@ export class GcExecutor {
   ) {}
 
   async execute(job: Job): Promise<TaskResultSubmission> {
-    const ageThresholdMs = parseGcAgeThresholdPayload(job.payload);
-    const cutoffAgeMs = ageThresholdMs ?? DEFAULT_GC_AGE_THRESHOLD_MS;
-    const cutoff = Date.now() - cutoffAgeMs;
+    const cutoff = Date.now() - SESSION_DIR_TTL_DAYS * 24 * 60 * 60 * 1000;
 
     if (!existsSync(SESSION_BASE_DIR)) {
       const dbCleanup = await this.cleanupStaleRows(job, cutoff);

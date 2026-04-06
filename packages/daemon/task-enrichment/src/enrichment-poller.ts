@@ -4,22 +4,31 @@ import {
   TaskPhase,
   buildApiAuthHeaders,
   classifyLarkInboundEnvelope,
+  classifyTelegramInboundEnvelope,
   createLogger,
   GC_THREAD_REJECTION_REASON,
   generateSessionId,
   isControlTaskType,
   isValidLarkInboundEnvelope,
+  isValidTelegramInboundEnvelope,
   type LarkInboundClassificationResult,
   type LarkInboundEnvelope,
+  type TelegramInboundClassificationResult,
+  type TelegramInboundEnvelope,
   formatThreadOnlyCommandMessage,
   formatThreadTaskCommandRejectedMessage,
   type TaskExecutorType,
   type LarkHistoryRepository,
+  type TelegramHistoryRepository,
+  type SessionBridgeRepository,
   ROOT_TASK_USAGE_HINT,
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
 import { ApiAuthConfigurationError, TaskPhasePublisher } from './adapters/task-phase-publisher';
+import { TelegramThreadContextFetcher } from './adapters/telegram-thread-context-fetcher';
+import { TelegramTopicCreator } from './adapters/telegram-topic-creator';
+import { LarkAnchorCreator } from './adapters/lark-anchor-creator';
 
 const logger = createLogger('enrichment-daemon:poller');
 const CLEANUP_TASK_TYPE = 'cleanup';
@@ -41,6 +50,8 @@ const STATUS_INCOMPLETE_METADATA_REASON =
   'Cannot check /status because the inherited thread metadata is incomplete.';
 const LARK_INBOUND_TASK_TYPE = 'lark_inbound';
 const LARK_INBOUND_DECODE_FAILURE_REASON = 'Failed to decode inbound Lark message envelope.';
+const TELEGRAM_INBOUND_TASK_TYPE = 'telegram_inbound';
+const TELEGRAM_INBOUND_DECODE_FAILURE_REASON = 'Failed to decode inbound Telegram message envelope.';
 const API_AUTH_FAILURE_LOG = 'API authentication failed; check API_AUTH_TOKEN or API_AUTH_DISABLED';
 
 const GC_EXECUTOR = { executor: 'claude' as const, executor_model: 'sonnet' as const };
@@ -53,15 +64,37 @@ type StatusLookupResponse = {
 
 type LarkHistoryWriter = Pick<
   LarkHistoryRepository,
-  'recordInboundAuditMessage' | 'upsertLarkThreadState' | 'getLarkThreadByRootMessageId'
+  | 'recordInboundAuditMessage'
+  | 'upsertLarkThreadState'
+  | 'getLarkThreadByRootMessageId'
+  | 'recordOutboundLarkMessage'
+>;
+
+type TelegramHistoryWriter = Pick<
+  TelegramHistoryRepository,
+  | 'getTelegramThreadByTopic'
+  | 'getTelegramMessageByChatAndMessageId'
+  | 'recordInboundTelegramMessage'
+  | 'upsertTelegramThreadState'
+>;
+
+type SessionBridgeWriter = Pick<
+  SessionBridgeRepository,
+  'getBridgeBySessionId' | 'getBridgeByLarkRootMessageId' | 'getBridgeByTelegramTopic' | 'upsertSessionBridge'
 >;
 
 type InboundClassificationResult =
   | LarkInboundClassificationResult
+  | TelegramInboundClassificationResult
   | {
       kind: 'duplicate';
       task: Task;
       envelope: LarkInboundEnvelope;
+    }
+  | {
+      kind: 'duplicate';
+      task: Task;
+      envelope: TelegramInboundEnvelope;
     };
 
 type LegacyThreadContextResult = {
@@ -71,6 +104,15 @@ type LegacyThreadContextResult = {
   inheritedExecutor: TaskExecutorType | null;
   inheritedExecutorModel: string | null;
 };
+
+interface BridgeRuntimeOptions {
+  telegramHistoryRepository?: TelegramHistoryWriter;
+  sessionBridgeRepository?: SessionBridgeWriter;
+  telegramThreadContextFetcher?: TelegramThreadContextFetcher;
+  telegramTopicCreator?: TelegramTopicCreator;
+  telegramForumGroupId?: string;
+  larkAnchorCreator?: LarkAnchorCreator;
+}
 
 function resolveNewInstancePair(task: Task, threadResult: ThreadContextResult): {
   executor: TaskExecutorType;
@@ -164,6 +206,7 @@ export class EnrichmentPoller {
     private readonly larkHistoryRepository?: LarkHistoryWriter,
     private readonly apiAuthToken?: string,
     phasePublisher?: TaskPhasePublisher,
+    private readonly bridgeRuntime: BridgeRuntimeOptions = {},
   ) {
     this.phasePublisher = phasePublisher ?? new TaskPhasePublisher(apiUrl, apiAuthToken);
   }
@@ -171,6 +214,12 @@ export class EnrichmentPoller {
   private buildApiHeaders(): Record<string, string> {
     return {
       'Content-Type': 'application/json',
+      ...buildApiAuthHeaders(this.apiAuthToken),
+    };
+  }
+
+  private buildOptionalAuthHeaders(): Record<string, string> {
+    return {
       ...buildApiAuthHeaders(this.apiAuthToken),
     };
   }
@@ -190,10 +239,9 @@ export class EnrichmentPoller {
 
   async pollOnce(): Promise<void> {
     try {
-      const nextTaskHeaders = buildApiAuthHeaders(this.apiAuthToken);
-      const res = Object.keys(nextTaskHeaders).length > 0
-        ? await fetch(`${this.apiUrl}/tasks/next`, { headers: nextTaskHeaders })
-        : await fetch(`${this.apiUrl}/tasks/next`);
+      const res = await fetch(`${this.apiUrl}/tasks/next`, {
+        headers: this.buildOptionalAuthHeaders(),
+      });
 
       this.throwIfAuthFailureStatus(res.status, 'GET /tasks/next');
 
@@ -213,12 +261,12 @@ export class EnrichmentPoller {
       let task = rawTask;
       let inboundClassification: Extract<InboundClassificationResult, { kind: 'accepted' }> | null = null;
 
-      if (rawTask.task_type === LARK_INBOUND_TASK_TYPE) {
+      if (rawTask.task_type === LARK_INBOUND_TASK_TYPE || rawTask.task_type === TELEGRAM_INBOUND_TASK_TYPE) {
         const prepared = await this.prepareInboundTask(rawTask);
         if (prepared.kind === 'duplicate') {
           logger.info(
             { task_id: rawTask.task_id, message_id: prepared.envelope.message_id },
-            'Skipping duplicate lark_inbound delivery',
+            'Skipping duplicate inbound delivery',
           );
           await this.ackTask(rawTask.task_id);
           return;
@@ -245,7 +293,7 @@ export class EnrichmentPoller {
       const isThreadReplyTask = task.task_type === THREAD_REPLY_TASK_TYPE;
       let threadResult: ThreadContextResult | undefined;
 
-      if (isCleanupTask && task.task_source?.source !== 'lark') {
+      if (isCleanupTask && !this.hasThreadScopedSource(task)) {
         logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected cleanup task without lark task_source');
         const published = await this.publishRejection(task, CLEANUP_MISSING_SOURCE_REASON);
         if (published) {
@@ -321,6 +369,19 @@ export class EnrichmentPoller {
         }
       }
 
+      if (
+        this.bridgeRuntime.telegramThreadContextFetcher &&
+        task.task_source?.source === 'telegram' &&
+        'topic_id' in task.task_source
+      ) {
+        threadResult = normalizeThreadResult(
+          await this.bridgeRuntime.telegramThreadContextFetcher.fetchThreadContext(
+            task.task_source.chat_id,
+            task.task_source.topic_id,
+          ),
+        );
+      }
+
       if (isGcTask && threadResult?.kind === 'thread') {
         logger.warn({ task_id: task.task_id }, 'Rejected gc task inside thread');
         const published = await this.publishRejection(task, GC_THREAD_REJECTION_REASON);
@@ -378,7 +439,7 @@ export class EnrichmentPoller {
         return;
       }
 
-      if (isNewInstanceTask && task.task_source?.source !== 'lark') {
+      if (isNewInstanceTask && !this.hasThreadScopedSource(task)) {
         logger.warn({ task_id: task.task_id, task_source: task.task_source }, 'Rejected new_instance task without lark task_source');
         const published = await this.publishRejection(task, NEW_INSTANCE_MISSING_SOURCE_REASON);
         if (published) {
@@ -566,13 +627,18 @@ export class EnrichmentPoller {
         : (rootSessionId ?? generateSessionId());
 
       if (inboundClassification?.shouldMaterializeRootState) {
-        await this.materializeRootThreadState(inboundClassification.envelope, {
+        await this.materializeInboundRootState(inboundClassification, {
           sessionId,
           taskType: task.task_type,
           executor: task.executor ?? GC_EXECUTOR.executor,
           executorModel: task.executor_model ?? GC_EXECUTOR.executor_model,
           status: 'active',
         });
+      }
+
+      if (inboundClassification?.kind === 'accepted') {
+        await this.ensureBridgeForAcceptedInbound(inboundClassification, task, sessionId);
+        await this.publishMirrorEvent(inboundClassification, task, sessionId);
       }
 
       if (threadResult?.kind === 'thread' && threadResult.inheritedSessionId) {
@@ -619,11 +685,28 @@ export class EnrichmentPoller {
         this.stop();
         return;
       }
+
       logger.error({ err }, 'Enrichment poll error');
     }
   }
 
   private async prepareInboundTask(task: Task): Promise<InboundClassificationResult> {
+    if (task.task_type === LARK_INBOUND_TASK_TYPE) {
+      return this.prepareLarkInboundTask(task);
+    }
+
+    if (task.task_type === TELEGRAM_INBOUND_TASK_TYPE) {
+      return this.prepareTelegramInboundTask(task);
+    }
+
+    return {
+      kind: 'rejected',
+      task,
+      reason: 'Unsupported inbound task type.',
+    };
+  }
+
+  private async prepareLarkInboundTask(task: Task): Promise<InboundClassificationResult> {
     if (!this.larkHistoryRepository) {
       return {
         kind: 'rejected',
@@ -666,6 +749,278 @@ export class EnrichmentPoller {
     }
 
     return classifyLarkInboundEnvelope(task, envelope);
+  }
+
+  private async prepareTelegramInboundTask(task: Task): Promise<InboundClassificationResult> {
+    const telegramHistoryRepository = this.bridgeRuntime.telegramHistoryRepository;
+    if (!telegramHistoryRepository) {
+      return {
+        kind: 'rejected',
+        task,
+        reason: 'Telegram inbound handling requires a history repository.',
+      };
+    }
+
+    let parsedPayload: unknown;
+    try {
+      parsedPayload = JSON.parse(task.payload);
+    } catch {
+      return {
+        kind: 'rejected',
+        task,
+        reason: TELEGRAM_INBOUND_DECODE_FAILURE_REASON,
+      };
+    }
+
+    if (!isValidTelegramInboundEnvelope(parsedPayload)) {
+      return {
+        kind: 'rejected',
+        task,
+        reason: TELEGRAM_INBOUND_DECODE_FAILURE_REASON,
+      };
+    }
+
+    const envelope = parsedPayload;
+    const existingMessage = await telegramHistoryRepository.getTelegramMessageByChatAndMessageId(
+      envelope.chat_id,
+      envelope.message_id,
+    );
+
+    if (existingMessage) {
+      return {
+        kind: 'duplicate',
+        task: {
+          ...task,
+          task_source: {
+            source: 'telegram',
+            chat_id: envelope.chat_id,
+            topic_id: envelope.topic_id,
+            message_id: envelope.message_id,
+          },
+        },
+        envelope,
+      };
+    }
+
+    const existingThread = await telegramHistoryRepository.getTelegramThreadByTopic(
+      envelope.chat_id,
+      envelope.topic_id,
+    );
+
+    await telegramHistoryRepository.recordInboundTelegramMessage({
+      chatId: envelope.chat_id,
+      topicId: envelope.topic_id,
+      messageId: envelope.message_id,
+      sessionId: existingThread?.sessionId ?? `telegram-topic:${envelope.chat_id}:${envelope.topic_id}`,
+      direction: 'inbound',
+      senderType: 'user',
+      messageType: envelope.message_type,
+      rawContent: envelope.raw_content,
+      normalizedText: envelope.is_normalizable ? envelope.normalized_text : null,
+      metadataJson: JSON.stringify({ sender_id: envelope.sender_id }),
+      createdAtMs: envelope.occurred_at_ms,
+    });
+
+    return classifyTelegramInboundEnvelope(task, envelope, Boolean(existingThread));
+  }
+
+  private async materializeInboundRootState(
+    inboundClassification: Extract<InboundClassificationResult, { kind: 'accepted' }>,
+    params: {
+      sessionId: string;
+      taskType: string;
+      executor: string;
+      executorModel: string;
+      status: string;
+    },
+  ): Promise<void> {
+    if (inboundClassification.envelope.platform === 'lark') {
+      await this.materializeRootThreadState(inboundClassification.envelope, params);
+      return;
+    }
+
+    const telegramHistoryRepository = this.bridgeRuntime.telegramHistoryRepository;
+    if (!telegramHistoryRepository) {
+      return;
+    }
+
+    const existingThread = await telegramHistoryRepository.getTelegramThreadByTopic(
+      inboundClassification.envelope.chat_id,
+      inboundClassification.envelope.topic_id,
+    );
+
+    if (existingThread && existingThread.status !== 'audit_only') {
+      return;
+    }
+
+    await telegramHistoryRepository.upsertTelegramThreadState({
+      chatId: inboundClassification.envelope.chat_id,
+      topicId: inboundClassification.envelope.topic_id,
+      sessionId: params.sessionId,
+      source: 'telegram',
+      taskType: params.taskType,
+      executor: params.executor,
+      executorModel: params.executorModel,
+      status: params.status,
+      seedMessageId: inboundClassification.envelope.message_id,
+      createdAtMs: existingThread?.createdAtMs ?? inboundClassification.envelope.occurred_at_ms,
+      updatedAtMs: inboundClassification.envelope.occurred_at_ms,
+      endedAtMs: null,
+    });
+  }
+
+  private async ensureBridgeForAcceptedInbound(
+    inboundClassification: Extract<InboundClassificationResult, { kind: 'accepted' }>,
+    task: Task,
+    sessionId: string,
+  ): Promise<void> {
+    const sessionBridgeRepository = this.bridgeRuntime.sessionBridgeRepository;
+    if (!sessionBridgeRepository) {
+      return;
+    }
+
+    const existingBridge = await sessionBridgeRepository.getBridgeBySessionId(sessionId);
+    if (existingBridge) {
+      return;
+    }
+
+    if (inboundClassification.envelope.platform === 'lark') {
+      const telegramTopicCreator = this.bridgeRuntime.telegramTopicCreator;
+      const telegramHistoryRepository = this.bridgeRuntime.telegramHistoryRepository;
+      const forumGroupId = this.bridgeRuntime.telegramForumGroupId;
+      if (!telegramTopicCreator || !telegramHistoryRepository || !forumGroupId) {
+        return;
+      }
+
+      const topic = await telegramTopicCreator.createForumTopic(
+        forumGroupId,
+        `${task.task_type} • ${sessionId.slice(0, 8)}`,
+      );
+      const topicId = String(topic.message_thread_id);
+      const now = Date.now();
+
+      await telegramHistoryRepository.upsertTelegramThreadState({
+        chatId: forumGroupId,
+        topicId,
+        sessionId,
+        source: 'telegram',
+        taskType: task.task_type,
+        executor: task.executor ?? GC_EXECUTOR.executor,
+        executorModel: task.executor_model ?? GC_EXECUTOR.executor_model,
+        status: 'active',
+        createdAtMs: now,
+        updatedAtMs: now,
+        endedAtMs: null,
+      });
+
+      await sessionBridgeRepository.upsertSessionBridge({
+        sessionId,
+        larkRootMessageId: inboundClassification.envelope.root_message_id,
+        telegramChatId: forumGroupId,
+        telegramTopicId: topicId,
+        createdAtMs: now,
+        updatedAtMs: now,
+        endedAtMs: null,
+      });
+      return;
+    }
+
+    const larkAnchorCreator = this.bridgeRuntime.larkAnchorCreator;
+    if (!larkAnchorCreator || !this.larkHistoryRepository) {
+      return;
+    }
+
+    const anchor = await larkAnchorCreator.createRootMessage({
+      sessionId,
+      taskType: task.task_type,
+      userText: inboundClassification.envelope.is_normalizable
+        ? inboundClassification.envelope.normalized_text
+        : inboundClassification.envelope.raw_content,
+    });
+
+    await this.larkHistoryRepository.upsertLarkThreadState({
+      rootMessageId: anchor.rootMessageId,
+      threadId: null,
+      sessionId,
+      source: 'telegram',
+      chatType: 'p2p',
+      taskType: task.task_type,
+      executor: task.executor ?? GC_EXECUTOR.executor,
+      executorModel: task.executor_model ?? GC_EXECUTOR.executor_model,
+      status: 'active',
+      createdAtMs: anchor.createdAtMs,
+      updatedAtMs: anchor.createdAtMs,
+      endedAtMs: null,
+    });
+
+    await this.larkHistoryRepository.recordOutboundLarkMessage({
+      messageId: anchor.rootMessageId,
+      source: 'telegram',
+      rootMessageId: anchor.rootMessageId,
+      sessionId,
+      threadId: null,
+      messageType: 'text',
+      rawContent: JSON.stringify({ text: anchor.text }),
+      normalizedText: anchor.text,
+      metadataJson: JSON.stringify({ bridge_anchor: 'telegram' }),
+      createdAtMs: anchor.createdAtMs,
+    });
+
+    await sessionBridgeRepository.upsertSessionBridge({
+      sessionId,
+      larkRootMessageId: anchor.rootMessageId,
+      telegramChatId: inboundClassification.envelope.chat_id,
+      telegramTopicId: inboundClassification.envelope.topic_id,
+      createdAtMs: anchor.createdAtMs,
+      updatedAtMs: inboundClassification.envelope.occurred_at_ms,
+      endedAtMs: null,
+    });
+  }
+
+  private async publishMirrorEvent(
+    inboundClassification: Extract<InboundClassificationResult, { kind: 'accepted' }>,
+    task: Task,
+    sessionId: string,
+  ): Promise<void> {
+    const text = inboundClassification.envelope.is_normalizable
+      ? inboundClassification.envelope.normalized_text
+      : null;
+
+    if (text === null || !task.task_source) {
+      return;
+    }
+
+    const mirrorId = inboundClassification.envelope.platform === 'lark'
+      ? `lark:${inboundClassification.envelope.message_id}`
+      : `telegram:${inboundClassification.envelope.chat_id}:${inboundClassification.envelope.message_id}`;
+
+    await fetch(`${this.apiUrl}/results`, {
+      method: 'POST',
+      headers: this.buildApiHeaders(),
+      body: JSON.stringify({
+        event_kind: 'mirror',
+        task_id: task.task_id,
+        session_id: sessionId,
+        task_type: task.task_type,
+        task_source: task.task_source,
+        mirror_id: mirrorId,
+        author_type: 'user',
+        text,
+        origin_message_id: inboundClassification.envelope.message_id,
+      }),
+    });
+  }
+
+  private hasThreadScopedSource(task: Task): boolean {
+    if (!task.task_source) {
+      return false;
+    }
+
+    if (task.task_source.source === 'lark') {
+      return true;
+    }
+
+    return 'topic_id' in task.task_source;
   }
 
   private async materializeRootThreadState(
@@ -749,9 +1104,6 @@ export class EnrichmentPoller {
       logger.info({ task_id: task.task_id }, 'Published rejection result');
       return true;
     } catch (err) {
-      if (err instanceof ApiAuthConfigurationError) {
-        throw err;
-      }
       logger.error({ task_id: task.task_id, err }, 'Failed to publish rejection result');
       return false;
     }
@@ -761,9 +1113,6 @@ export class EnrichmentPoller {
     try {
       await this.phasePublisher.publish(task, phase);
     } catch (err) {
-      if (err instanceof ApiAuthConfigurationError) {
-        throw err;
-      }
       logger.warn({ task_id: task.task_id, task_type: task.task_type, phase, err }, 'Failed to publish task phase');
     }
   }
@@ -805,9 +1154,6 @@ export class EnrichmentPoller {
 
       return true;
     } catch (err) {
-      if (err instanceof ApiAuthConfigurationError) {
-        throw err;
-      }
       logger.error({ task_id: task.task_id, err }, 'Failed to publish status result');
       return false;
     }
@@ -815,10 +1161,10 @@ export class EnrichmentPoller {
 
   private async ackTask(taskId: string): Promise<void> {
     try {
-      const ackHeaders = buildApiAuthHeaders(this.apiAuthToken);
-      const ackRes = Object.keys(ackHeaders).length > 0
-        ? await fetch(`${this.apiUrl}/tasks/${taskId}/ack`, { method: 'POST', headers: ackHeaders })
-        : await fetch(`${this.apiUrl}/tasks/${taskId}/ack`, { method: 'POST' });
+      const ackRes = await fetch(`${this.apiUrl}/tasks/${taskId}/ack`, {
+        method: 'POST',
+        headers: this.buildOptionalAuthHeaders(),
+      });
       this.throwIfAuthFailureStatus(ackRes.status, 'POST /tasks/:id/ack', taskId);
       if (ackRes.status !== 200) {
         logger.warn({ task_id: taskId, status: ackRes.status }, 'Task ACK failed');
@@ -826,9 +1172,6 @@ export class EnrichmentPoller {
         logger.info({ task_id: taskId }, 'Task acknowledged');
       }
     } catch (ackErr) {
-      if (ackErr instanceof ApiAuthConfigurationError) {
-        throw ackErr;
-      }
       logger.error({ task_id: taskId, err: ackErr }, 'Task ACK request failed');
     }
   }

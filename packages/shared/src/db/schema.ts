@@ -1,5 +1,13 @@
 import { sql } from 'drizzle-orm';
-import { sqliteTable, integer, text, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
+import {
+  sqliteTable,
+  integer,
+  text,
+  index,
+  uniqueIndex,
+  primaryKey,
+  foreignKey,
+} from 'drizzle-orm/sqlite-core';
 
 export const schemaVersionTable = sqliteTable('__schema_version', {
   id: integer('id').primaryKey(),
@@ -72,10 +80,103 @@ export const larkMessagesTable = sqliteTable(
   }),
 );
 
+export const telegramThreadsTable = sqliteTable(
+  'telegram_threads',
+  {
+    chatId: text('chat_id').notNull(),
+    topicId: text('topic_id').notNull(),
+    sessionId: text('session_id').notNull().unique(),
+    source: text('source').notNull(),
+    taskType: text('task_type').notNull(),
+    executor: text('executor').notNull(),
+    executorModel: text('executor_model').notNull(),
+    status: text('status').notNull(),
+    seedMessageId: text('seed_message_id'),
+    statusMessageId: text('status_message_id'),
+    metadataJson: text('metadata_json'),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+    endedAtMs: integer('ended_at_ms'),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.chatId, table.topicId] }),
+    sessionIdIdx: index('idx_telegram_threads_session_id').on(table.sessionId),
+    statusUpdatedAtIdx: index('idx_telegram_threads_status_updated_at').on(
+      table.status,
+      sql`${table.updatedAtMs} DESC`,
+    ),
+  }),
+);
+
+export const telegramMessagesTable = sqliteTable(
+  'telegram_messages',
+  {
+    chatId: text('chat_id').notNull(),
+    messageId: text('message_id').notNull(),
+    topicId: text('topic_id').notNull(),
+    sessionId: text('session_id').notNull(),
+    direction: text('direction').notNull(),
+    senderType: text('sender_type').notNull(),
+    messageType: text('message_type').notNull(),
+    rawContent: text('raw_content').notNull(),
+    normalizedText: text('normalized_text'),
+    metadataJson: text('metadata_json'),
+    createdAtMs: integer('created_at_ms').notNull(),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.chatId, table.messageId] }),
+    topicFk: foreignKey({
+      columns: [table.chatId, table.topicId],
+      foreignColumns: [telegramThreadsTable.chatId, telegramThreadsTable.topicId],
+    }),
+    topicCreatedAtIdx: index('idx_telegram_messages_topic_created_at').on(
+      table.chatId,
+      table.topicId,
+      table.createdAtMs,
+      table.messageId,
+    ),
+    sessionCreatedAtIdx: index('idx_telegram_messages_session_created_at').on(
+      table.sessionId,
+      table.createdAtMs,
+      table.messageId,
+    ),
+  }),
+);
+
+export const sessionBridgesTable = sqliteTable(
+  'session_bridges',
+  {
+    sessionId: text('session_id').primaryKey(),
+    larkRootMessageId: text('lark_root_message_id').notNull().unique(),
+    telegramChatId: text('telegram_chat_id').notNull(),
+    telegramTopicId: text('telegram_topic_id').notNull(),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+    endedAtMs: integer('ended_at_ms'),
+  },
+  (table) => ({
+    telegramTopicUnique: uniqueIndex('session_bridges_telegram_topic_unique').on(
+      table.telegramChatId,
+      table.telegramTopicId,
+    ),
+    larkRootFk: foreignKey({
+      columns: [table.larkRootMessageId],
+      foreignColumns: [larkThreadsTable.rootMessageId],
+    }),
+    telegramTopicFk: foreignKey({
+      columns: [table.telegramChatId, table.telegramTopicId],
+      foreignColumns: [telegramThreadsTable.chatId, telegramThreadsTable.topicId],
+    }),
+  }),
+);
+
 export const sqliteSchema = {
   schemaVersionTable,
   larkThreadsTable,
   larkMessagesTable,
+  telegramThreadsTable,
+  telegramMessagesTable,
+  sessionBridgesTable,
 };
 
 export type SqliteSchema = typeof sqliteSchema;
