@@ -60,6 +60,12 @@ export class LarkNotifier {
   private async sendNotification(result: TaskResult): Promise<void> {
     const token = await this.tokenProvider.getTenantAccessToken();
 
+    const stdoutText = result.stdout
+      ? `Stdout:\n${result.stdout}`
+      : 'Stdout: (empty)';
+    const stderrText = result.stderr
+      ? `Stderr:\n${result.stderr}`
+      : 'Stderr: (empty)';
     const text = [
       ...(result.executor && result.executor_model
         ? [`executor: ${result.executor}`, `model: ${result.executor_model}`]
@@ -70,7 +76,8 @@ export class LarkNotifier {
       `Job ID: ${result.job_id}`,
       `status: ${result.status}`,
       `Exit code: ${result.exit_code ?? 'N/A'}`,
-      result.stdout ? `Output:\n${result.stdout}` : 'No output',
+      stdoutText,
+      stderrText,
     ].join('\n');
 
     let msgRes: Response;
@@ -129,30 +136,53 @@ export class LarkNotifier {
     const rootMessageId = sourceMessage?.rootMessageId ?? result.task_source.message_id;
     const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(rootMessageId);
     const createdAtMs = Date.now();
+    const isShellCommand = result.task_type === 'shell_command';
     const eventKind = this.getOutboundEventKind(result);
     const metadataJson = eventKind ? JSON.stringify({ event_kind: eventKind }) : null;
 
-    await this.larkHistoryRepository.upsertLarkThreadState({
-      rootMessageId,
-      threadId: sourceMessage?.threadId ?? existingThread?.threadId ?? null,
-      sessionId: result.session_id,
-      source: 'lark',
-      chatType: existingThread?.chatType ?? null,
-      taskType: result.task_type,
-      executor: result.executor ?? existingThread?.executor ?? 'claude',
-      executorModel: result.executor_model ?? existingThread?.executorModel ?? 'sonnet',
-      status: result.task_type === 'cleanup' ? 'ended' : 'active',
-      createdAtMs: existingThread?.createdAtMs ?? sourceMessage?.createdAtMs ?? createdAtMs,
-      updatedAtMs: createdAtMs,
-      endedAtMs: result.task_type === 'cleanup' ? createdAtMs : null,
-    });
+    const threadId = sourceMessage?.threadId ?? existingThread?.threadId ?? null;
+    const sessionId = isShellCommand
+      ? existingThread?.sessionId ?? sourceMessage?.sessionId ?? result.session_id
+      : result.session_id;
+
+    if (!isShellCommand) {
+      await this.larkHistoryRepository.upsertLarkThreadState({
+        rootMessageId,
+        threadId,
+        sessionId,
+        source: 'lark',
+        chatType: existingThread?.chatType ?? null,
+        taskType: result.task_type,
+        executor: result.executor ?? existingThread?.executor ?? 'claude',
+        executorModel: result.executor_model ?? existingThread?.executorModel ?? 'sonnet',
+        status: result.task_type === 'cleanup' ? 'ended' : 'active',
+        createdAtMs: existingThread?.createdAtMs ?? sourceMessage?.createdAtMs ?? createdAtMs,
+        updatedAtMs: createdAtMs,
+        endedAtMs: result.task_type === 'cleanup' ? createdAtMs : null,
+      });
+    } else if (existingThread) {
+      await this.larkHistoryRepository.upsertLarkThreadState({
+        rootMessageId,
+        threadId,
+        sessionId,
+        source: existingThread.source,
+        chatType: existingThread.chatType,
+        taskType: existingThread.taskType,
+        executor: existingThread.executor,
+        executorModel: existingThread.executorModel,
+        status: existingThread.status,
+        createdAtMs: existingThread.createdAtMs,
+        updatedAtMs: createdAtMs,
+        endedAtMs: existingThread.endedAtMs,
+      });
+    }
 
     const outboundParams: RecordOutboundLarkMessageParams = {
       messageId: messageIdFromResponse ?? this.buildSyntheticOutboundMessageId(result.result_id),
       source: 'lark',
       rootMessageId,
-      sessionId: result.session_id,
-      threadId: sourceMessage?.threadId ?? existingThread?.threadId ?? null,
+      sessionId,
+      threadId,
       messageType: 'text',
       rawContent: JSON.stringify({ text }),
       normalizedText: text,
@@ -162,9 +192,9 @@ export class LarkNotifier {
 
     await this.larkHistoryRepository.recordOutboundLarkMessage(outboundParams);
 
-    if (this.isNewInstanceReply(result) && result.executor && result.executor_model) {
+    if (!isShellCommand && this.isNewInstanceReply(result) && result.executor && result.executor_model) {
       await this.larkHistoryRepository.markLarkThreadNewInstance({
-        sessionId: result.session_id,
+        sessionId,
         executor: result.executor,
         executorModel: result.executor_model,
         updatedAtMs: createdAtMs,
@@ -193,6 +223,9 @@ export class LarkNotifier {
   }
 
   private isNewInstanceReply(result: TaskResult): boolean {
+    if (result.task_type === 'shell_command') {
+      return false;
+    }
     return result.task_type === 'new_instance' || result.stdout.includes(NEW_INSTANCE_MARKER);
   }
 

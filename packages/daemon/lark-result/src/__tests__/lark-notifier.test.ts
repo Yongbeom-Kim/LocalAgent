@@ -244,7 +244,28 @@ describe('LarkNotifier', () => {
     expect(content.text).toContain('job-456');
     expect(content.text).toContain('task-123');
     expect(content.text).toContain('success');
-    expect(content.text).toContain('Output:\n');
+    expect(content.text).toContain('Stdout:\n');
+    expect(content.text).toContain('Stderr:');
+  });
+
+  it('renders stdout and stderr explicitly for shell results', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0 }),
+      });
+
+    await notifier.notify(createResult({
+      task_type: 'shell_command',
+      stdout: 'ok',
+      stderr: 'warn',
+    }));
+
+    const sendCall = mockFetch.mock.calls[0];
+    const body = JSON.parse(sendCall[1].body);
+    const content = JSON.parse(body.content);
+    expect(content.text).toContain('Stdout:\nok');
+    expect(content.text).toContain('Stderr:\nwarn');
   });
 
   it('includes task_type prefix line in reply text', async () => {
@@ -312,6 +333,70 @@ describe('LarkNotifier', () => {
     const body = JSON.parse(sendCall[1].body);
     const content = JSON.parse(body.content);
     expect(content.text).toContain('session_id: 0195f2d6-5d6d-7b8d-9f8d-123456789abc');
+  });
+
+  it('preserves existing thread state for shell_command replies', async () => {
+    const repository = createRepositoryMocks();
+    repository.getLarkMessageByMessageId.mockResolvedValue({
+      messageId: 'om_root_shell',
+      source: 'lark',
+      rootMessageId: 'om_root_shell',
+      sessionId: 'session_prev',
+      threadId: 'omt_shell',
+      direction: 'inbound',
+      senderType: 'user',
+      messageType: 'text',
+      rawContent: '{"text":"/shell ls"}',
+      normalizedText: '/shell ls',
+      metadataJson: null,
+      createdAtMs: 100,
+    });
+    repository.getLarkThreadByRootMessageId.mockResolvedValue({
+      rootMessageId: 'om_root_shell',
+      threadId: 'omt_shell',
+      sessionId: 'session_prev',
+      source: 'lark',
+      chatType: 'group',
+      taskType: 'code_review',
+      executor: 'cursor',
+      executorModel: 'gpt-5.4-medium-fast',
+      status: 'active',
+      createdAtMs: 100,
+      updatedAtMs: 150,
+      endedAtMs: null,
+    });
+
+    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_shell' } }),
+      });
+
+    await dbNotifier.notify(createResult({
+      task_type: 'shell_command',
+      session_id: 'session_new',
+      executor: 'builtin',
+      executor_model: 'none',
+      task_source: { source: 'lark', message_id: 'om_root_shell' },
+    }));
+
+    expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session_prev',
+    }));
+    expect(repository.upsertLarkThreadState).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session_prev',
+      taskType: 'code_review',
+      executor: 'cursor',
+      executorModel: 'gpt-5.4-medium-fast',
+      status: 'active',
+    }));
+    expect(repository.markLarkThreadNewInstance).not.toHaveBeenCalled();
   });
 
   it('omits session_id line when session_id is absent', async () => {
