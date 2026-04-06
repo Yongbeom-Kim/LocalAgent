@@ -44,6 +44,8 @@ interface MockChildProcess extends EventEmitter {
   stdout: Readable;
   stderr: Readable;
   stdinData: string;
+  kill: ReturnType<typeof vi.fn>;
+  pid: number;
 }
 
 function createMockChild(): MockChildProcess {
@@ -58,6 +60,8 @@ function createMockChild(): MockChildProcess {
   Object.defineProperty(child, 'stdinData', { get: () => stdinData });
   child.stdout = new Readable({ read() {} });
   child.stderr = new Readable({ read() {} });
+  child.kill = vi.fn();
+  child.pid = 1234;
   return child;
 }
 
@@ -272,5 +276,30 @@ describe('ClaudeWExecutor', () => {
 
     expect(Buffer.byteLength(result.stdout, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
     expect(Buffer.byteLength(result.stderr, 'utf-8')).toBeLessThanOrEqual(100 * 1024);
+  });
+
+  it('registers cancellation hooks that terminate the spawned process', async () => {
+    const child = createMockChild();
+    const processKill = vi.spyOn(process, 'kill').mockImplementation(() => true as never);
+    mockSpawn.mockReturnValue(child as any);
+
+    const cancel = vi.fn();
+    const resultPromise = executor.execute(createJobAttempt(), createEnv(), {
+      runningJob: {
+        attachCancellationHandle: ({ cancel: attachedCancel }) => {
+          cancel.mockImplementation(attachedCancel);
+        },
+        clear: vi.fn(),
+        hasCancellationHandle: vi.fn().mockReturnValue(false),
+        isCancellationRequested: vi.fn().mockReturnValue(false),
+      },
+    });
+
+    cancel();
+    emitOutput(child, 'partial', '', 0);
+    await resultPromise;
+
+    expect(processKill).toHaveBeenCalledWith(-1234, 'SIGTERM');
+    processKill.mockRestore();
   });
 });

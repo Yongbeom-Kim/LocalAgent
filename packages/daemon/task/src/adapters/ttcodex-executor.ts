@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { JobAttempt, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
-import { ExecutorPrecheckResult, TaskExecutor } from '../ports/task-executor';
+import { ExecutorPrecheckResult, TaskExecutionHooks, TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 import { checkRequiredBinaries } from './executor-precheck';
+import { attachProcessCancellation } from '../services/process-cancellation';
 
 const logger = createLogger('task-daemon:ttcodex');
 const REQUIRED_BINARIES = ['ttadk', 'codex'] as const;
@@ -12,7 +13,7 @@ export class TTCodexExecutor implements TaskExecutor {
     return checkRequiredBinaries('ttcodex', REQUIRED_BINARIES);
   }
 
-  async execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
+  async execute(job: JobAttempt, env: ExecutionEnvironment, hooks?: TaskExecutionHooks): Promise<TaskResultSubmission> {
     logger.info({ job_id: job.job_id, task_id: job.task_id, task_type: job.task_type }, 'Spawning TTCodex');
 
     if (!job.payload) {
@@ -40,7 +41,7 @@ export class TTCodexExecutor implements TaskExecutor {
       const continueResult = await this.spawnTTCodex(job, env, {
         mode: 'continue',
         input: job.payload,
-      });
+      }, hooks);
 
       if (continueResult.status === 'success') {
         return continueResult;
@@ -55,7 +56,7 @@ export class TTCodexExecutor implements TaskExecutor {
     return this.spawnTTCodex(job, env, {
       mode: 'fresh',
       input: this.buildFreshInput(job),
-    });
+    }, hooks);
   }
 
   private buildFreshInput(job: JobAttempt): string {
@@ -134,6 +135,7 @@ export class TTCodexExecutor implements TaskExecutor {
     job: JobAttempt,
     env: ExecutionEnvironment,
     options: { mode: 'continue' | 'fresh'; input: string },
+    hooks?: TaskExecutionHooks,
   ): Promise<TaskResultSubmission> {
     const promptString = this.buildPromptForArgv(job, options.input);
     const actionArg = this.buildActionArg(options);
@@ -141,6 +143,7 @@ export class TTCodexExecutor implements TaskExecutor {
 
     return new Promise((resolve) => {
       const child = spawn('ttadk', args, { cwd: env.workDir, shell: false, detached: process.platform !== 'win32' });
+      attachProcessCancellation(child, hooks);
       let stdout = '';
       let stderr = '';
       child.stdin.write(promptString);

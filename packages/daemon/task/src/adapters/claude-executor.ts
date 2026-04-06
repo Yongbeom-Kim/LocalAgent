@@ -1,8 +1,9 @@
 import { spawn } from 'node:child_process';
 import { JobAttempt, TaskResultSubmission, MAX_RESULT_OUTPUT_BYTES, createLogger, truncate } from '@local-agent/shared';
-import { ExecutorPrecheckResult, TaskExecutor } from '../ports/task-executor';
+import { ExecutorPrecheckResult, TaskExecutionHooks, TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 import { checkRequiredBinaries } from './executor-precheck';
+import { attachProcessCancellation } from '../services/process-cancellation';
 
 const logger = createLogger('task-daemon:claude');
 const REQUIRED_BINARIES = ['claude'] as const;
@@ -12,7 +13,7 @@ export class ClaudeExecutor implements TaskExecutor {
     return checkRequiredBinaries('claude', REQUIRED_BINARIES);
   }
 
-  async execute(job: JobAttempt, env: ExecutionEnvironment): Promise<TaskResultSubmission> {
+  async execute(job: JobAttempt, env: ExecutionEnvironment, hooks?: TaskExecutionHooks): Promise<TaskResultSubmission> {
     logger.info({ job_id: job.job_id, task_id: job.task_id, task_type: job.task_type }, 'Spawning Claude');
 
     if (!job.payload) {
@@ -32,7 +33,7 @@ export class ClaudeExecutor implements TaskExecutor {
       const continueResult = await this.spawnClaude(job, env, {
         mode: 'continue',
         input: job.payload,
-      });
+      }, hooks);
 
       if (continueResult.status === 'success') {
         return continueResult;
@@ -47,7 +48,7 @@ export class ClaudeExecutor implements TaskExecutor {
     return this.spawnClaude(job, env, {
       mode: 'fresh',
       input: this.buildFreshInput(job),
-    });
+    }, hooks);
   }
 
   private buildFreshInput(job: JobAttempt): string {
@@ -62,6 +63,7 @@ export class ClaudeExecutor implements TaskExecutor {
     job: JobAttempt,
     env: ExecutionEnvironment,
     options: { mode: 'continue' | 'fresh'; input: string },
+    hooks?: TaskExecutionHooks,
   ): Promise<TaskResultSubmission> {
     const args = [
       '--dangerously-skip-permissions',
@@ -74,6 +76,7 @@ export class ClaudeExecutor implements TaskExecutor {
 
     return new Promise((resolve) => {
       const child = spawn('claude', args, { cwd: env.workDir, detached: process.platform !== 'win32' });
+      attachProcessCancellation(child, hooks);
       let stdout = '';
       let stderr = '';
 

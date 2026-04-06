@@ -10,7 +10,7 @@ import {
   createSqliteClient,
   loadSqliteConfig,
 } from '@local-agent/shared';
-import { ExecutorPrecheckResult, TaskExecutor } from '../ports/task-executor';
+import { ExecutorPrecheckResult, TaskExecutionHooks, TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
 
 const logger = createLogger('task-daemon:cleanup-executor');
@@ -59,7 +59,7 @@ export class CleanupExecutor implements TaskExecutor {
     return { ok: true };
   }
 
-  async execute(job: JobAttempt, _env: ExecutionEnvironment): Promise<TaskResultSubmission> {
+  async execute(job: JobAttempt, _env: ExecutionEnvironment, _hooks?: TaskExecutionHooks): Promise<TaskResultSubmission> {
     const workDir = join(this.baseDir, job.session_id);
     const workspaceExists = this.directoryExists(workDir);
     const successMessage = workspaceExists
