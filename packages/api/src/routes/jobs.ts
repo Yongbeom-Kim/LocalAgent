@@ -1,10 +1,16 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
-import { Job, isValidExecutorPreferences, isValidTaskSource } from '@local-agent/shared';
+import {
+  Job,
+  IMMEDIATE_SESSION_JOB_TASK_TYPES,
+  isValidExecutorPreferences,
+  isValidTaskSource,
+} from '@local-agent/shared';
 import { RabbitMQService, RabbitMQUnavailableError } from '../services/rabbitmq';
 
 export function createJobRoutes(rabbitmq: RabbitMQService): Router {
   const router = Router();
+  const immediateTaskTypes = IMMEDIATE_SESSION_JOB_TASK_TYPES as readonly string[];
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
@@ -16,6 +22,10 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
       }
       if (typeof task_type !== 'string' || !task_type) {
         res.status(400).json({ error: 'task_type is required and must be a string' });
+        return;
+      }
+      if (req.body.immediate === true && !immediateTaskTypes.includes(task_type)) {
+        res.status(400).json({ error: 'Only allowlisted immediate task types may use the immediate path' });
         return;
       }
       if (typeof payload !== 'string') {
@@ -100,6 +110,23 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     }
   });
 
+  router.get('/immediate/next/:sessionId', async (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const job = await rabbitmq.getNextImmediateJobFromSession(req.params.sessionId);
+      if (!job) {
+        res.status(204).send();
+        return;
+      }
+      res.status(200).json(job);
+    } catch (err) {
+      if (err instanceof RabbitMQUnavailableError) {
+        res.status(503).json({ error: 'RabbitMQ temporarily unavailable' });
+        return;
+      }
+      next(err);
+    }
+  });
+
   router.post('/:sessionId/:id/ack', (req: Request, res: Response, next: NextFunction) => {
     try {
       const acked = rabbitmq.ackJobFromSession(req.params.sessionId, req.params.id);
@@ -113,9 +140,35 @@ export function createJobRoutes(rabbitmq: RabbitMQService): Router {
     }
   });
 
+  router.post('/immediate/:sessionId/:id/ack', (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const acked = rabbitmq.ackImmediateJobFromSession(req.params.sessionId, req.params.id);
+      if (!acked) {
+        res.status(404).json({ error: 'Job not found or already acknowledged' });
+        return;
+      }
+      res.status(200).json({ acknowledged: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
   router.post('/:sessionId/:id/nack', (req: Request, res: Response, next: NextFunction) => {
     try {
       const nacked = rabbitmq.nackJobFromSession(req.params.sessionId, req.params.id);
+      if (!nacked) {
+        res.status(404).json({ error: 'Job not found or already processed' });
+        return;
+      }
+      res.status(200).json({ requeued: true });
+    } catch (err) {
+      next(err);
+    }
+  });
+
+  router.post('/immediate/:sessionId/:id/nack', (req: Request, res: Response, next: NextFunction) => {
+    try {
+      const nacked = rabbitmq.nackImmediateJobFromSession(req.params.sessionId, req.params.id);
       if (!nacked) {
         res.status(404).json({ error: 'Job not found or already processed' });
         return;

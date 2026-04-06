@@ -1,4 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  DEFAULT_IMMEDIATE_JOBS_EXCHANGE_NAME,
+  DEFAULT_KILL_CANCELLATION_GRACE_TIMEOUT_MS,
+} from '@local-agent/shared';
 import { RabbitMQService, RabbitMQUnavailableError } from '../../services/rabbitmq';
 
 type MockChannel = ReturnType<typeof createMockChannel>;
@@ -84,6 +88,7 @@ describe('RabbitMQService', () => {
     await service.connect();
     expect(channel.assertQueue).toHaveBeenCalledWith('test-queue', { durable: true });
     expect(channel.assertExchange).toHaveBeenCalledWith('jobs', 'direct', { durable: true });
+    expect(channel.assertExchange).toHaveBeenCalledWith(DEFAULT_IMMEDIATE_JOBS_EXCHANGE_NAME, 'direct', { durable: true });
   });
 
   it('sends persistent full task payload to queue', async () => {
@@ -306,6 +311,85 @@ describe('RabbitMQService', () => {
       Buffer.from(JSON.stringify(job)),
       { persistent: true },
     );
+  });
+
+  it('asserts and binds per-session immediate queues with idle ttl', async () => {
+    await service.connect();
+    const queueName = await service.ensureImmediateSessionJobQueue('session-1');
+    expect(queueName).toBe('jobs.immediate.session-1');
+    expect(channel.assertQueue).toHaveBeenCalledWith('jobs.immediate.session-1', {
+      durable: true,
+      arguments: { 'x-expires': 3600000 },
+    });
+    expect(channel.bindQueue).toHaveBeenCalledWith('jobs.immediate.session-1', 'jobs.immediate', 'session-1');
+  });
+
+  it('publishes kill jobs to the immediate exchange with session_id as routing key', async () => {
+    await service.connect();
+    const job = {
+      job_id: 'job-kill',
+      task_id: 'task-kill',
+      task_type: 'kill',
+      payload: '',
+      executors: [{ executor: 'builtin', executor_model: 'none' }],
+      submitted_at: '2026-04-06T00:00:00.000Z',
+      session_id: 'session-1',
+      enriched_at: '2026-04-06T00:00:01.000Z',
+    };
+    const result = await service.publishJob(job as any);
+    expect(result).toBe(true);
+    await flushAsyncWork();
+    expect(channel.publish).toHaveBeenCalledWith(
+      'jobs.immediate',
+      'session-1',
+      Buffer.from(JSON.stringify(job)),
+      { persistent: true },
+    );
+  });
+
+  it('tracks immediate deliveries independently from normal session deliveries', async () => {
+    await service.connect();
+    channel.get
+      .mockResolvedValueOnce({
+        content: Buffer.from(JSON.stringify({
+          job_id: 'job-shared',
+          task_id: 'task-normal',
+          task_type: 'generic',
+          payload: 'hello',
+          executors: [{ executor: 'claude', executor_model: 'sonnet' }],
+          submitted_at: '2026-04-06T00:00:00.000Z',
+          session_id: 'session-1',
+          enriched_at: '2026-04-06T00:00:01.000Z',
+        })),
+        fields: { deliveryTag: 10 },
+      })
+      .mockResolvedValueOnce({
+        content: Buffer.from(JSON.stringify({
+          job_id: 'job-shared',
+          task_id: 'task-kill',
+          task_type: 'kill',
+          payload: '',
+          executors: [{ executor: 'builtin', executor_model: 'none' }],
+          submitted_at: '2026-04-06T00:00:02.000Z',
+          session_id: 'session-1',
+          enriched_at: '2026-04-06T00:00:03.000Z',
+        })),
+        fields: { deliveryTag: 11 },
+      });
+
+    const normal = await service.getNextJobFromSession('session-1');
+    const immediate = await service.getNextImmediateJobFromSession('session-1');
+
+    expect(normal?.job_id).toBe('job-shared');
+    expect(immediate?.job_id).toBe('job-shared');
+    expect(service.ackJobFromSession('session-1', 'job-shared')).toBe(true);
+    expect(service.ackImmediateJobFromSession('session-1', 'job-shared')).toBe(true);
+    expect(channel.ack).toHaveBeenCalledTimes(2);
+  });
+
+  it('exports the shared kill cancellation grace timeout constant', async () => {
+    await service.connect();
+    expect(DEFAULT_KILL_CANCELLATION_GRACE_TIMEOUT_MS).toBe(5000);
   });
 
   it('reads and acks jobs from a specific session queue', async () => {

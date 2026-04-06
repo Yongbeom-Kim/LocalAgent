@@ -9,7 +9,10 @@ import {
   DEFAULT_LARK_QUEUE_NAME,
   DEFAULT_JOBS_EXCHANGE_NAME,
   DEFAULT_SESSION_JOBS_QUEUE_PREFIX,
+  DEFAULT_IMMEDIATE_JOBS_EXCHANGE_NAME,
+  DEFAULT_IMMEDIATE_SESSION_JOBS_QUEUE_PREFIX,
   DEFAULT_SESSION_QUEUE_IDLE_TTL_MS,
+  IMMEDIATE_SESSION_JOB_TASK_TYPES,
   DEFAULT_TELEGRAM_QUEUE_NAME,
 } from '@local-agent/shared';
 import { BufferedAmqpEnqueuer } from './buffered-amqp-enqueuer';
@@ -70,6 +73,10 @@ export class RabbitMQService {
     return `${DEFAULT_SESSION_JOBS_QUEUE_PREFIX}.${sessionId}`;
   }
 
+  static getImmediateSessionQueueName(sessionId: string): string {
+    return `${DEFAULT_IMMEDIATE_SESSION_JOBS_QUEUE_PREFIX}.${sessionId}`;
+  }
+
   async connect(): Promise<void> {
     this.closing = false;
     const connected = await this.ensureConnected();
@@ -110,45 +117,39 @@ export class RabbitMQService {
     return queueName;
   }
 
+  async ensureImmediateSessionJobQueue(sessionId: string): Promise<string> {
+    const queueName = RabbitMQService.getImmediateSessionQueueName(sessionId);
+    await this.withChannel('ensure immediate session queue', async (channel) => {
+      await this.assertImmediateSessionJobQueue(channel, sessionId);
+    });
+    return queueName;
+  }
+
   async publishJob(message: Job): Promise<boolean> {
     const buffer = Buffer.from(JSON.stringify(message));
     return this.publishBuffer.enqueue({
       operationName: 'publish job',
       publish: async (channel) => {
-        await this.assertSessionJobQueue(channel, message.session_id);
-        return channel.publish(DEFAULT_JOBS_EXCHANGE_NAME, message.session_id, buffer, {
+        const isImmediate = this.isImmediateTaskType(message.task_type);
+        if (isImmediate) {
+          await this.assertImmediateSessionJobQueue(channel, message.session_id);
+        } else {
+          await this.assertSessionJobQueue(channel, message.session_id);
+        }
+        return channel.publish(
+          isImmediate ? DEFAULT_IMMEDIATE_JOBS_EXCHANGE_NAME : DEFAULT_JOBS_EXCHANGE_NAME,
+          message.session_id,
+          buffer,
+          {
           persistent: true,
-        });
+          },
+        );
       },
     });
   }
 
   async getNextJobFromSession(sessionId: string): Promise<Job | null> {
-    return this.withChannel('get next job from session', async (channel) => {
-      const queueName = RabbitMQService.getSessionQueueName(sessionId);
-      const msg = await channel.get(queueName, { noAck: false });
-      if (msg === false) {
-        return null;
-      }
-
-      const parsed = JSON.parse(msg.content.toString()) as Job;
-      const deliveryMap = this.getOrCreateDeliveryMap(queueName);
-
-      if (deliveryMap.has(parsed.job_id)) {
-        logger.error(
-          { job_id: parsed.job_id, deliveryTag: msg.fields.deliveryTag, queueName },
-          'Duplicate job_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
-        );
-        channel.ack(msg);
-        return null;
-      }
-
-      deliveryMap.set(parsed.job_id, {
-        message: msg as unknown as GetMessage,
-        generation: this.connectionGeneration,
-      });
-      return parsed;
-    });
+    return this.getNextJobFromQueue(RabbitMQService.getSessionQueueName(sessionId));
   }
 
   ackJobFromSession(sessionId: string, jobId: string): boolean {
@@ -157,6 +158,27 @@ export class RabbitMQService {
 
   nackJobFromSession(sessionId: string, jobId: string, requeue = true): boolean {
     return this.finalizeJobDelivery(sessionId, jobId, 'nack', requeue);
+  }
+
+  async getNextImmediateJobFromSession(sessionId: string): Promise<Job | null> {
+    return this.getNextJobFromQueue(RabbitMQService.getImmediateSessionQueueName(sessionId));
+  }
+
+  ackImmediateJobFromSession(sessionId: string, jobId: string): boolean {
+    return this.finalizeJobDeliveryByQueueName(
+      RabbitMQService.getImmediateSessionQueueName(sessionId),
+      jobId,
+      'ack',
+    );
+  }
+
+  nackImmediateJobFromSession(sessionId: string, jobId: string, requeue = true): boolean {
+    return this.finalizeJobDeliveryByQueueName(
+      RabbitMQService.getImmediateSessionQueueName(sessionId),
+      jobId,
+      'nack',
+      requeue,
+    );
   }
 
   async listSessionQueues(): Promise<SessionJobDescriptor[]> {
@@ -349,6 +371,7 @@ export class RabbitMQService {
   private async assertBaseTopology(channel: amqplib.Channel): Promise<void> {
     await channel.assertQueue(this.queueName, { durable: true });
     await channel.assertExchange(DEFAULT_JOBS_EXCHANGE_NAME, 'direct', { durable: true });
+    await channel.assertExchange(DEFAULT_IMMEDIATE_JOBS_EXCHANGE_NAME, 'direct', { durable: true });
     await channel.assertExchange(DEFAULT_RESULTS_EXCHANGE_NAME, 'fanout', { durable: true });
     await channel.assertQueue(DEFAULT_LARK_QUEUE_NAME, { durable: true });
     await channel.bindQueue(DEFAULT_LARK_QUEUE_NAME, DEFAULT_RESULTS_EXCHANGE_NAME, '');
@@ -363,6 +386,15 @@ export class RabbitMQService {
       arguments: { 'x-expires': DEFAULT_SESSION_QUEUE_IDLE_TTL_MS },
     });
     await channel.bindQueue(queueName, DEFAULT_JOBS_EXCHANGE_NAME, sessionId);
+  }
+
+  private async assertImmediateSessionJobQueue(channel: amqplib.Channel, sessionId: string): Promise<void> {
+    const queueName = RabbitMQService.getImmediateSessionQueueName(sessionId);
+    await channel.assertQueue(queueName, {
+      durable: true,
+      arguments: { 'x-expires': DEFAULT_SESSION_QUEUE_IDLE_TTL_MS },
+    });
+    await channel.bindQueue(queueName, DEFAULT_IMMEDIATE_JOBS_EXCHANGE_NAME, sessionId);
   }
 
   private async withChannel<T>(
@@ -417,10 +449,54 @@ export class RabbitMQService {
     mode: 'ack' | 'nack',
     requeue = true,
   ): boolean {
-    const queueName = RabbitMQService.getSessionQueueName(sessionId);
+    return this.finalizeJobDeliveryByQueueName(
+      RabbitMQService.getSessionQueueName(sessionId),
+      jobId,
+      mode,
+      requeue,
+    );
+  }
+
+  private finalizeJobDeliveryByQueueName(
+    queueName: string,
+    jobId: string,
+    mode: 'ack' | 'nack',
+    requeue = true,
+  ): boolean {
     const deliveryMap = this.queueDeliveryMaps.get(queueName);
     if (!deliveryMap) return false;
     return this.finalizeTrackedDelivery(deliveryMap, jobId, mode, requeue);
+  }
+
+  private async getNextJobFromQueue(queueName: string): Promise<Job | null> {
+    return this.withChannel('get next job from queue', async (channel) => {
+      const msg = await channel.get(queueName, { noAck: false });
+      if (msg === false) {
+        return null;
+      }
+
+      const parsed = JSON.parse(msg.content.toString()) as Job;
+      const deliveryMap = this.getOrCreateDeliveryMap(queueName);
+
+      if (deliveryMap.has(parsed.job_id)) {
+        logger.error(
+          { job_id: parsed.job_id, deliveryTag: msg.fields.deliveryTag, queueName },
+          'Duplicate job_id received while an earlier delivery is still outstanding; acknowledging duplicate message',
+        );
+        channel.ack(msg);
+        return null;
+      }
+
+      deliveryMap.set(parsed.job_id, {
+        message: msg as unknown as GetMessage,
+        generation: this.connectionGeneration,
+      });
+      return parsed;
+    });
+  }
+
+  private isImmediateTaskType(taskType: string): boolean {
+    return (IMMEDIATE_SESSION_JOB_TASK_TYPES as readonly string[]).includes(taskType);
   }
 
   private finalizeTrackedDelivery(
