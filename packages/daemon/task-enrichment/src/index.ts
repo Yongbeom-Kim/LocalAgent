@@ -16,6 +16,7 @@ async function main() {
   logger.info(
     {
       apiUrl: config.apiUrl,
+      apiAuthEnabled: config.apiAuthEnabled,
       pollIntervalMs: config.pollIntervalMs,
       taskDaemonStatusUrl: config.taskDaemonStatusUrl,
       enrichmentConfigDir: config.enrichmentConfigDir,
@@ -43,8 +44,8 @@ async function main() {
     config.taskDaemonStatusUrl,
     enrichmentService,
     threadContextFetcher,
-    undefined,
     larkHistoryRepository,
+    config.apiAuthToken,
   );
   poller.start(config.pollIntervalMs);
 
