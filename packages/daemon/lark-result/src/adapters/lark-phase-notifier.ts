@@ -21,6 +21,7 @@ const LARK_ADD_REACTION_URL = (messageId: string) =>
 
 interface LarkReactionOperator {
   operator_id?: string;
+  operator_type?: string;
   open_id?: string;
   user_id?: string;
 }
@@ -103,11 +104,7 @@ export class LarkPhaseNotifier {
 
     try {
       const token = await this.tokenProvider.getTenantAccessToken();
-      const cleared = await clearBotOwnedPhaseReactions({
-        messageId,
-        token,
-        expectedReactionTypes: getPhaseReactionTypes(),
-      });
+      let excludedReactionIds: string[] | undefined;
 
       if (reaction) {
         const addRes = await fetch(LARK_ADD_REACTION_URL(messageId), {
@@ -118,11 +115,21 @@ export class LarkPhaseNotifier {
           },
           body: JSON.stringify({ reaction_type: { emoji_type: reaction } }),
         });
-        const addData = (await addRes.json()) as { code: number; msg?: string };
+        const addData = (await addRes.json()) as { code: number; msg?: string; data?: { reaction_id?: string } };
         if (addData.code !== 0) {
           throw new Error(`add reaction failed with code ${addData.code}${addData.msg ? `: ${addData.msg}` : ''}`);
         }
+        if (addData.data?.reaction_id) {
+          excludedReactionIds = [addData.data.reaction_id];
+        }
       }
+
+      const cleared = await clearBotOwnedPhaseReactions({
+        messageId,
+        token,
+        expectedReactionTypes: getPhaseReactionTypes(),
+        excludedReactionIds,
+      });
 
       await this.recordPhaseAttempt(messageId, {
         phase: event.phase,
@@ -219,12 +226,14 @@ export interface ClearBotOwnedPhaseReactionsParams {
   messageId: string;
   token: string;
   expectedReactionTypes: string[];
+  excludedReactionIds?: string[];
 }
 
 export async function clearBotOwnedPhaseReactions(
   params: ClearBotOwnedPhaseReactionsParams,
 ): Promise<number> {
   try {
+    const excludedReactionIds = new Set(params.excludedReactionIds ?? []);
     const listRes = await fetch(LARK_REACTIONS_URL(params.messageId), {
       method: 'GET',
       headers: { Authorization: `Bearer ${params.token}` },
@@ -249,6 +258,10 @@ export async function clearBotOwnedPhaseReactions(
 
     let deleted = 0;
     for (const item of items) {
+      if (excludedReactionIds.has(item.reaction_id)) {
+        continue;
+      }
+
       const reactionType = item.reaction_type?.emoji_type;
       if (!reactionType || !params.expectedReactionTypes.includes(reactionType)) {
         continue;
@@ -257,7 +270,8 @@ export async function clearBotOwnedPhaseReactions(
       const operator = item.operator;
       const operatorMatchesBot = Boolean(
         operator &&
-          ((botOpenId && (operator.open_id === botOpenId || operator.operator_id === botOpenId)) ||
+          (operator.operator_type === 'app' ||
+            (botOpenId && (operator.open_id === botOpenId || operator.operator_id === botOpenId)) ||
             (botUserId && (operator.user_id === botUserId || operator.operator_id === botUserId))),
       );
       if (!operatorMatchesBot) {

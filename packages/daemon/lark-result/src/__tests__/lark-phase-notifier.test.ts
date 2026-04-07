@@ -29,11 +29,11 @@ describe('LarkPhaseNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ code: 0, data: { open_id: 'ou_bot', items: [] } }),
+        json: () => Promise.resolve({ code: 0, data: { reaction_id: 'react-new' } }),
       })
       .mockResolvedValueOnce({
         ok: true,
-        json: () => Promise.resolve({ code: 0 }),
+        json: () => Promise.resolve({ code: 0, data: { open_id: 'ou_bot', items: [] } }),
       });
 
     await notifier.notify({
@@ -43,12 +43,16 @@ describe('LarkPhaseNotifier', () => {
       task_source: { source: 'lark', message_id: 'om_1' },
     });
 
-    expect(mockFetch).toHaveBeenNthCalledWith(2,
+    expect(mockFetch).toHaveBeenNthCalledWith(1,
       'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ reaction_type: { emoji_type: 'OnIt' } }),
+        body: JSON.stringify({ reaction_type: { emoji_type: 'OK' } }),
       }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions?user_id_type=open_id',
+      expect.objectContaining({ method: 'GET' }),
     );
     expect(repository.appendLarkPhaseReactionAttempt).toHaveBeenCalledWith('om_1', expect.objectContaining({
       phase: 'received',
@@ -62,6 +66,10 @@ describe('LarkPhaseNotifier', () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
+        json: () => Promise.resolve({ code: 0, data: { reaction_id: 'react-new' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
         json: () => Promise.resolve({
           code: 0,
           data: {
@@ -69,14 +77,18 @@ describe('LarkPhaseNotifier', () => {
             items: [
               {
                 reaction_id: 'react-1',
-                reaction_type: { emoji_type: 'OnIt' },
+                reaction_type: { emoji_type: 'OK' },
                 operator: { open_id: 'ou_bot' },
+              },
+              {
+                reaction_id: 'react-new',
+                reaction_type: { emoji_type: 'OneSecond' },
+                operator: { operator_id: 'cli_app123', operator_type: 'app' },
               },
             ],
           },
         }),
       })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0 }) })
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0 }) });
 
     await notifier.notify({
@@ -86,16 +98,24 @@ describe('LarkPhaseNotifier', () => {
       task_source: { source: 'lark', message_id: 'om_1' },
     });
 
-    expect(mockFetch).toHaveBeenNthCalledWith(2,
-      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions/react-1',
-      expect.objectContaining({ method: 'DELETE' }),
-    );
-    expect(mockFetch).toHaveBeenNthCalledWith(3,
+    expect(mockFetch).toHaveBeenNthCalledWith(1,
       'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ reaction_type: { emoji_type: 'Hourglass' } }),
+        body: JSON.stringify({ reaction_type: { emoji_type: 'OneSecond' } }),
       }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions?user_id_type=open_id',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(3,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions/react-1',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+    expect(mockFetch).not.toHaveBeenCalledWith(
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions/react-new',
+      expect.anything(),
     );
   });
 
@@ -110,7 +130,7 @@ describe('LarkPhaseNotifier', () => {
             items: [
               {
                 reaction_id: 'react-1',
-                reaction_type: { emoji_type: 'Runner' },
+                reaction_type: { emoji_type: 'OnIt' },
                 operator: { open_id: 'ou_bot' },
               },
             ],
@@ -171,12 +191,16 @@ describe('LarkPhaseNotifier', () => {
       action: 'set',
       ok: false,
       event_id: 'evt-5',
-      error: expect.stringContaining('list reactions failed'),
+      error: expect.stringContaining('add reaction failed'),
     }));
   });
 
   it('does not remove or mutate non-phase reactions (user or other emojis)', async () => {
     mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { reaction_id: 'react-new' } }),
+      })
       .mockResolvedValueOnce({
         ok: true,
         json: () => Promise.resolve({
@@ -186,7 +210,7 @@ describe('LarkPhaseNotifier', () => {
             items: [
               {
                 reaction_id: 'react-user-phase',
-                reaction_type: { emoji_type: 'OnIt' },
+                reaction_type: { emoji_type: 'OK' },
                 operator: { open_id: 'ou_user' },
               },
               {
@@ -196,14 +220,18 @@ describe('LarkPhaseNotifier', () => {
               },
               {
                 reaction_id: 'react-bot-phase',
-                reaction_type: { emoji_type: 'Eye' },
+                reaction_type: { emoji_type: 'Typing' },
                 operator: { open_id: 'ou_bot' },
+              },
+              {
+                reaction_id: 'react-new',
+                reaction_type: { emoji_type: 'OneSecond' },
+                operator: { operator_id: 'cli_app123', operator_type: 'app' },
               },
             ],
           },
         }),
       })
-      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0 }) })
       .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0 }) });
 
     await notifier.notify({
@@ -215,6 +243,10 @@ describe('LarkPhaseNotifier', () => {
 
     expect(mockFetch).toHaveBeenCalledTimes(3);
     expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions?user_id_type=open_id',
+      expect.objectContaining({ method: 'GET' }),
+    );
+    expect(mockFetch).toHaveBeenNthCalledWith(3,
       'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions/react-bot-phase',
       expect.objectContaining({ method: 'DELETE' }),
     );
@@ -245,12 +277,12 @@ describe('clearBotOwnedPhaseReactions', () => {
             items: [
               {
                 reaction_id: 'react-1',
-                reaction_type: { emoji_type: 'OnIt' },
+                reaction_type: { emoji_type: 'OK' },
                 operator: { open_id: 'ou_bot' },
               },
               {
                 reaction_id: 'react-2',
-                reaction_type: { emoji_type: 'OnIt' },
+                reaction_type: { emoji_type: 'OK' },
                 operator: { open_id: 'ou_user' },
               },
             ],
@@ -262,11 +294,48 @@ describe('clearBotOwnedPhaseReactions', () => {
     const deleted = await clearBotOwnedPhaseReactions({
       messageId: 'om_1',
       token: 'token-abc',
-      expectedReactionTypes: ['OnIt', 'Eye'],
+      expectedReactionTypes: ['OK', 'Typing'],
     });
 
     expect(deleted).toBe(1);
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
-});
 
+  it('deletes app-owned phase reactions when lark returns operator_type app without bot ids', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({
+          code: 0,
+          data: {
+            items: [
+              {
+                reaction_id: 'react-app-phase',
+                reaction_type: { emoji_type: 'OK' },
+                operator: { operator_id: 'cli_app123', operator_type: 'app' },
+              },
+              {
+                reaction_id: 'react-user-phase',
+                reaction_type: { emoji_type: 'OK' },
+                operator: { operator_id: 'ou_user123', operator_type: 'user' },
+              },
+            ],
+          },
+        }),
+      })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0 }) });
+
+    const deleted = await clearBotOwnedPhaseReactions({
+      messageId: 'om_1',
+      token: 'token-abc',
+      expectedReactionTypes: ['OK', 'Typing'],
+    });
+
+    expect(deleted).toBe(1);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(2,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_1/reactions/react-app-phase',
+      expect.objectContaining({ method: 'DELETE' }),
+    );
+  });
+});
