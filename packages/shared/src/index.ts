@@ -45,6 +45,7 @@ export {
   MAX_RESULT_OUTPUT_BYTES,
   LARK_INBOUND_SCHEMA_VERSION_V1,
   TELEGRAM_INBOUND_SCHEMA_VERSION_V1,
+  type TaskContextRef,
   isValidLarkInboundEnvelope,
   isValidTelegramInboundEnvelope,
   type LarkInboundEnvelope,

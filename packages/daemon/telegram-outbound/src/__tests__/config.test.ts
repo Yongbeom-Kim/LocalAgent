@@ -26,7 +26,7 @@ describe('loadTelegramDaemonConfig', () => {
       TELEGRAM_BOT_TOKEN: 'bot123:ABC',
       TELEGRAM_FORUM_GROUP_ID: '-100456789',
       LOCAL_AGENT_DB_PATH: '/tmp/other.db',
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '7',
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '8',
     });
     expect(config.apiUrl).toBe('http://other:4000');
     expect(config.pollIntervalMs).toBe(2000);
@@ -34,7 +34,7 @@ describe('loadTelegramDaemonConfig', () => {
     expect(config.telegramBotToken).toBe('bot123:ABC');
     expect(config.telegramForumGroupId).toBe('-100456789');
     expect(config.dbPath).toBe('/tmp/other.db');
-    expect(config.expectedSchemaVersion).toBe(7);
+    expect(config.expectedSchemaVersion).toBe(8);
   });
 
   it('throws when required env vars are missing', () => {

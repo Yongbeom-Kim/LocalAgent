@@ -29,6 +29,14 @@ describe('LarkNotifier', () => {
     markBridgeEnded: ReturnType<typeof vi.fn>;
     deleteBridgeBySessionId: ReturnType<typeof vi.fn>;
   };
+  let sessionRepository: {
+    markSessionEnded: ReturnType<typeof vi.fn>;
+    deleteSessionById: ReturnType<typeof vi.fn>;
+  };
+  let sessionPlatformLinkRepository: {
+    markLinksEnded: ReturnType<typeof vi.fn>;
+    deleteLinksBySessionId: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -39,6 +47,14 @@ describe('LarkNotifier', () => {
       getBridgeBySessionId: vi.fn().mockResolvedValue(null),
       markBridgeEnded: vi.fn().mockResolvedValue(undefined),
       deleteBridgeBySessionId: vi.fn().mockResolvedValue(undefined),
+    };
+    sessionRepository = {
+      markSessionEnded: vi.fn().mockResolvedValue(undefined),
+      deleteSessionById: vi.fn().mockResolvedValue(undefined),
+    };
+    sessionPlatformLinkRepository = {
+      markLinksEnded: vi.fn().mockResolvedValue(undefined),
+      deleteLinksBySessionId: vi.fn().mockResolvedValue(undefined),
     };
     notifier = new LarkNotifier('app-id', 'app-secret', 'user-123', undefined, tokenProvider);
   });
@@ -63,6 +79,8 @@ describe('LarkNotifier', () => {
       repository,
       tokenProvider,
       sessionBridgeRepository,
+      sessionRepository,
+      sessionPlatformLinkRepository,
     );
 
     mockFetch
@@ -107,6 +125,8 @@ describe('LarkNotifier', () => {
       repository,
       tokenProvider,
       sessionBridgeRepository,
+      sessionRepository,
+      sessionPlatformLinkRepository,
     );
 
     mockFetch
@@ -148,6 +168,8 @@ describe('LarkNotifier', () => {
       repository,
       tokenProvider,
       sessionBridgeRepository,
+      sessionRepository,
+      sessionPlatformLinkRepository,
     );
 
     mockFetch
@@ -169,7 +191,11 @@ describe('LarkNotifier', () => {
     expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session_3',
     }));
+    expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session_3', expect.any(Number));
+    expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session_3', expect.any(Number));
     expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3');
+    expect(sessionPlatformLinkRepository.deleteLinksBySessionId).toHaveBeenCalledWith('session_3');
+    expect(sessionRepository.deleteSessionById).toHaveBeenCalledWith('session_3');
     expect(repository.markLarkThreadNewInstance).not.toHaveBeenCalled();
     expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session_3');
     expect(sessionBridgeRepository.markBridgeEnded).not.toHaveBeenCalled();
@@ -194,6 +220,8 @@ describe('LarkNotifier', () => {
       repository,
       tokenProvider,
       sessionBridgeRepository,
+      sessionRepository,
+      sessionPlatformLinkRepository,
     );
 
     mockFetch
@@ -212,15 +240,28 @@ describe('LarkNotifier', () => {
       task_source: { source: 'lark', message_id: 'om_root_3b' },
     }));
 
+    expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session_3b', expect.any(Number));
+    expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session_3b', expect.any(Number));
     expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3b');
     expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session_3b');
     expect(sessionBridgeRepository.markBridgeEnded).toHaveBeenCalledWith('session_3b', expect.any(Number));
     expect(sessionBridgeRepository.deleteBridgeBySessionId).toHaveBeenCalledWith('session_3b');
+    expect(sessionPlatformLinkRepository.deleteLinksBySessionId).toHaveBeenCalledWith('session_3b');
+    expect(sessionRepository.deleteSessionById).toHaveBeenCalledWith('session_3b');
   });
 
   it('still deletes lark rows for /end replies when session bridge repository is not provided', async () => {
     const repository = createRepositoryMocks();
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      undefined,
+      sessionRepository,
+      sessionPlatformLinkRepository,
+    );
 
     mockFetch
       .mockResolvedValueOnce({
@@ -238,7 +279,11 @@ describe('LarkNotifier', () => {
       task_source: { source: 'lark', message_id: 'om_root_3c' },
     }));
 
+    expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session_3c', expect.any(Number));
+    expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session_3c', expect.any(Number));
     expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3c');
+    expect(sessionPlatformLinkRepository.deleteLinksBySessionId).toHaveBeenCalledWith('session_3c');
+    expect(sessionRepository.deleteSessionById).toHaveBeenCalledWith('session_3c');
   });
 
   it('promotes placeholder root thread rows to the real session_id on first successful reply', async () => {
@@ -279,6 +324,8 @@ describe('LarkNotifier', () => {
       repository,
       tokenProvider,
       sessionBridgeRepository,
+      sessionRepository,
+      sessionPlatformLinkRepository,
     );
 
     mockFetch
