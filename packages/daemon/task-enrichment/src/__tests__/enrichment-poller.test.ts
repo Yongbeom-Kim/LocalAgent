@@ -147,8 +147,8 @@ describe('EnrichmentPoller', () => {
     await poller.pollOnce();
 
     expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
-    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'queued');
-    expect(mockEnrich).toHaveBeenCalledWith(task, 'generated-session-id', undefined);
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, expect.objectContaining({ ...task, session_id: 'generated-session-id' }), 'queued');
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ ...task, session_id: 'generated-session-id' }), 'generated-session-id', undefined);
     expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next', {
       headers: buildApiAuthHeaders('daemon-token'),
     });
@@ -475,7 +475,7 @@ describe('EnrichmentPoller', () => {
     await poller.pollOnce();
 
     expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
-    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, task, 'queued');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, expect.objectContaining({ ...task, session_id: 'generated-session-id' }), 'queued');
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
@@ -1365,14 +1365,9 @@ describe('TelegramThreadContextFetcher', () => {
   });
 });
 
-describe('EnrichmentPoller lark_inbound flow', () => {
+describe('EnrichmentPoller canonical ingress flow', () => {
   let poller: EnrichmentPoller;
   let mockThreadFetcher: { fetchThreadContext: ReturnType<typeof vi.fn> };
-  let mockHistoryRepository: {
-    recordInboundAuditMessage: ReturnType<typeof vi.fn>;
-    upsertLarkThreadState: ReturnType<typeof vi.fn>;
-    getLarkThreadByRootMessageId: ReturnType<typeof vi.fn>;
-  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1386,17 +1381,12 @@ describe('EnrichmentPoller lark_inbound flow', () => {
     vi.mocked(TaskPhasePublisher).mockClear();
     const service = new EnrichmentService() as any;
     mockThreadFetcher = { fetchThreadContext: vi.fn() };
-    mockHistoryRepository = {
-      recordInboundAuditMessage: vi.fn().mockResolvedValue(true),
-      upsertLarkThreadState: vi.fn().mockResolvedValue(undefined),
-      getLarkThreadByRootMessageId: vi.fn().mockResolvedValue(null),
-    };
     poller = new EnrichmentPoller(
       'http://localhost:3000',
       'http://task-daemon:7070',
       service,
       mockThreadFetcher as unknown as ThreadContextFetcher,
-      mockHistoryRepository as any,
+      undefined,
       'daemon-token',
     );
   });
@@ -1405,20 +1395,15 @@ describe('EnrichmentPoller lark_inbound flow', () => {
     poller.stop();
   });
 
-  it('persists inbound audit before thread lookup and materializes root state only after accepted classification', async () => {
-    const envelope = createInboundEnvelope();
+  it('consumes canonical tasks with session_id without decoding channel envelopes', async () => {
     const task = createTask({
-      task_type: 'lark_inbound',
-      payload: JSON.stringify(envelope),
-      executor: undefined,
-      executor_model: undefined,
-      task_source: undefined,
+      task_type: 'code_review',
+      payload: 'review this',
+      session_id: 'sess-1',
+      task_source: { source: 'lark', message_id: 'om_1' },
+      context_ref: { platform: 'lark', root_key: 'om_root_1' },
     });
-    const jobSubmission = createJobSubmission({
-      task_type: 'deploy',
-      payload: 'fix prod',
-      session_id: 'generated-session-id',
-    });
+    const jobSubmission = createJobSubmission({ payload: 'review this', session_id: 'sess-1' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
     mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
 
@@ -1429,174 +1414,47 @@ describe('EnrichmentPoller lark_inbound flow', () => {
 
     await poller.pollOnce();
 
-    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
-    expect(mockThreadFetcher.fetchThreadContext).toHaveBeenCalledWith('om_root_inbound', expect.any(Set));
-    expect(mockHistoryRepository.upsertLarkThreadState).toHaveBeenCalledWith({
-      rootMessageId: 'om_root_inbound',
-      threadId: null,
-      sessionId: 'generated-session-id',
-      source: 'lark',
-      chatType: 'p2p',
-      taskType: 'deploy',
-      executor: 'claude',
-      executorModel: 'sonnet',
-      status: 'active',
-      createdAtMs: 1710000000000,
-      updatedAtMs: 1710000000000,
-      endedAtMs: null,
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ session_id: 'sess-1' }), 'sess-1', undefined);
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
+      body: JSON.stringify(jobSubmission),
     });
-    expect(mockEnrich).toHaveBeenCalledWith(
-      expect.objectContaining({
-        task_type: 'deploy',
-        payload: 'fix prod',
-        executor: 'claude',
-        executor_model: 'sonnet',
-        task_source: { source: 'lark', message_id: 'om_root_inbound' },
-      }),
-      'generated-session-id',
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+  });
+
+  it('does not instantiate channel topic or anchor creators during canonical enrichment', async () => {
+    const task = createTask({
+      payload: 'review this',
+      session_id: 'sess-1',
+      task_source: { source: 'telegram', chat_id: '-100', topic_id: '42', message_id: '10' },
+      context_ref: { platform: 'telegram', root_key: '-100:42' },
+    });
+    const jobSubmission = createJobSubmission({ payload: 'review this', session_id: 'sess-1' });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+
+    const telegramThreadContextFetcher = { fetchThreadContext: vi.fn().mockResolvedValue({ kind: 'not_thread' }) };
+    poller = new EnrichmentPoller(
+      'http://localhost:3000',
+      'http://task-daemon:7070',
+      new EnrichmentService() as any,
+      mockThreadFetcher as unknown as ThreadContextFetcher,
       undefined,
+      'daemon-token',
+      undefined,
+      { telegramThreadContextFetcher: telegramThreadContextFetcher as any },
     );
-  });
-
-  it('rejects malformed root /task after persisting the inbound audit row', async () => {
-    const envelope = createInboundEnvelope({ normalized_text: '/task deploy', raw_content: '{"text":"/task deploy"}' });
-    const task = createTask({
-      task_type: 'lark_inbound',
-      payload: JSON.stringify(envelope),
-      executor: undefined,
-      executor_model: undefined,
-    });
 
     mockFetch
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
-      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
       .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
 
     await poller.pollOnce();
 
-    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
-    expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
-    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
-      body: JSON.stringify({
-        job_id: 'task-123',
-        task_id: 'task-123',
-        task_type: 'deploy',
-        status: 'failure',
-        exit_code: null,
-        stdout: 'Usage: /task <type> <executor> <model> <payload> or /status, /end (in a thread)',
-        stderr: '',
-        task_source: { source: 'lark', message_id: 'om_root_inbound' },
-      }),
-    });
-  });
-
-  it('rejects threaded /task after persisting inbound history and preserves task_source', async () => {
-    const envelope = createInboundEnvelope({
-      message_id: 'om_reply_inbound',
-      root_message_id: 'om_root_inbound',
-      thread_id: 'omt_inbound',
-      normalized_text: '/task deploy claude sonnet nope',
-      raw_content: '{"text":"/task deploy claude sonnet nope"}',
-    });
-    const task = createTask({
-      task_type: 'lark_inbound',
-      payload: JSON.stringify(envelope),
-      executor: undefined,
-      executor_model: undefined,
-    });
-
-    mockFetch
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
-      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
-
-    await poller.pollOnce();
-
-    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
-    expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
-    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
-      body: JSON.stringify({
-        job_id: 'task-123',
-        task_id: 'task-123',
-        task_type: 'deploy',
-        status: 'failure',
-        exit_code: null,
-        stdout: formatThreadTaskCommandRejectedMessage(),
-        stderr: '',
-        task_source: { source: 'lark', message_id: 'om_reply_inbound' },
-      }),
-    });
-  });
-
-  it('rejects non-normalizable threaded input downstream after audit persistence', async () => {
-    const envelope = createInboundEnvelope({
-      message_id: 'om_reply_non_normalizable',
-      root_message_id: 'om_root_inbound',
-      thread_id: 'omt_inbound',
-      message_type: 'image',
-      raw_content: '{"image_key":"img_1"}',
-      is_normalizable: false,
-      normalized_text: undefined,
-    } as unknown as Partial<LarkInboundEnvelope>);
-    const task = createTask({
-      task_type: 'lark_inbound',
-      payload: JSON.stringify(envelope),
-      executor: undefined,
-      executor_model: undefined,
-    });
-
-    mockFetch
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
-      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
-
-    await poller.pollOnce();
-
-    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
-    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
-      body: JSON.stringify({
-        job_id: 'task-123',
-        task_id: 'task-123',
-        task_type: 'thread_reply',
-        status: 'failure',
-        exit_code: null,
-        stdout: formatThreadReplyHelpMessage(),
-        stderr: '',
-        task_source: { source: 'lark', message_id: 'om_reply_non_normalizable' },
-      }),
-    });
-  });
-
-  it('acks duplicate inbound deliveries without double-persisting or creating work', async () => {
-    const envelope = createInboundEnvelope({ message_id: 'om_duplicate', root_message_id: 'om_duplicate' });
-    const task = createTask({
-      task_type: 'lark_inbound',
-      payload: JSON.stringify(envelope),
-      executor: undefined,
-      executor_model: undefined,
-    });
-    mockHistoryRepository.recordInboundAuditMessage.mockResolvedValue(false);
-
-    mockFetch
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
-      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
-
-    await poller.pollOnce();
-
-    expect(mockHistoryRepository.recordInboundAuditMessage).toHaveBeenCalledWith({ envelope });
-    expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
-    expect(mockHistoryRepository.upsertLarkThreadState).not.toHaveBeenCalled();
-    expect(mockEnrich).not.toHaveBeenCalled();
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/tasks/task-123/ack', {
-      method: 'POST',
-      headers: buildApiAuthHeaders('daemon-token'),
-    });
+    expect(telegramThreadContextFetcher.fetchThreadContext).toHaveBeenCalledWith('-100', '42');
+    expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/results', expect.objectContaining({
+      body: expect.stringContaining('"event_kind":"mirror"'),
+    }));
   });
 });

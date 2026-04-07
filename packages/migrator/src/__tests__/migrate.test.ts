@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe('runMigrations', () => {
-  it('applies the initial lark sqlite schema', async () => {
+  it('applies the sqlite schema including canonical sessions and platform links', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-migrator-test-'));
     tempDirs.push(tempDir);
 
@@ -48,6 +48,27 @@ describe('runMigrations', () => {
         "SELECT 1 as exists_flag FROM sqlite_master WHERE type='table' AND name='session_bridges'",
       );
       expect(sessionBridgesTableExists.rows[0]?.exists_flag).toBe(1);
+
+      const sessionsTableExists = await client.execute(
+        "SELECT 1 as exists_flag FROM sqlite_master WHERE type='table' AND name='sessions'",
+      );
+      expect(sessionsTableExists.rows[0]?.exists_flag).toBe(1);
+
+      const sessionPlatformLinksTableExists = await client.execute(
+        "SELECT 1 as exists_flag FROM sqlite_master WHERE type='table' AND name='session_platform_links'",
+      );
+      expect(sessionPlatformLinksTableExists.rows[0]?.exists_flag).toBe(1);
+
+      const sessionPlatformLinksPkInfo = await client.execute("PRAGMA index_list('session_platform_links')");
+      expect(
+        sessionPlatformLinksPkInfo.rows.some(
+          (row) => String(row.origin).toLowerCase() === 'pk' || Number(row.origin) === 112,
+        ),
+      ).toBe(true);
+      expect(sessionPlatformLinksPkInfo.rows.some((row) => row.name === 'session_platform_links_platform_external_thread_key_unique')).toBe(true);
+
+      const sessionBridgesUniqueInfo = await client.execute("PRAGMA index_list('session_bridges')");
+      expect(sessionBridgesUniqueInfo.rows.some((row) => row.name === 'session_platform_links_platform_external_thread_key_unique')).toBe(false);
 
       await client.execute({
         sql: `
@@ -131,6 +152,122 @@ describe('runMigrations', () => {
       });
       expect(bridgeLookup.rows[0]?.telegram_chat_id).toBe('-100123');
       expect(bridgeLookup.rows[0]?.telegram_topic_id).toBe('42');
+
+      await client.execute({
+        sql: `
+          INSERT INTO sessions (
+            session_id,
+            task_type,
+            executor,
+            executor_model,
+            status,
+            created_at_ms,
+            updated_at_ms,
+            ended_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id) DO NOTHING
+        `,
+        args: ['session-1', 'coding', 'claude', 'sonnet', 'active', 100, 100, null],
+      });
+
+      await client.execute({
+        sql: `
+          INSERT INTO session_platform_links (
+            session_id,
+            platform,
+            external_thread_key,
+            created_at_ms,
+            updated_at_ms,
+            ended_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id, platform) DO NOTHING
+        `,
+        args: ['session-1', 'lark', 'om_root_1', 100, 100, null],
+      });
+
+      await client.execute({
+        sql: `
+          INSERT INTO session_platform_links (
+            session_id,
+            platform,
+            external_thread_key,
+            created_at_ms,
+            updated_at_ms,
+            ended_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?)
+          ON CONFLICT(session_id, platform) DO NOTHING
+        `,
+        args: ['session-1', 'telegram', '-100123:42', 100, 100, null],
+      });
+
+      const canonicalSessionLookup = await client.execute({
+        sql: 'SELECT session_id, task_type, status FROM sessions WHERE session_id = ?',
+        args: ['session-1'],
+      });
+      expect(canonicalSessionLookup.rows[0]?.session_id).toBe('session-1');
+      expect(canonicalSessionLookup.rows[0]?.task_type).toBe('coding');
+      expect(canonicalSessionLookup.rows[0]?.status).toBe('active');
+
+      const larkLinkLookup = await client.execute({
+        sql: 'SELECT external_thread_key FROM session_platform_links WHERE session_id = ? AND platform = ?',
+        args: ['session-1', 'lark'],
+      });
+      expect(larkLinkLookup.rows[0]?.external_thread_key).toBe('om_root_1');
+
+      const telegramLinkLookup = await client.execute({
+        sql: 'SELECT external_thread_key FROM session_platform_links WHERE session_id = ? AND platform = ?',
+        args: ['session-1', 'telegram'],
+      });
+      expect(telegramLinkLookup.rows[0]?.external_thread_key).toBe('-100123:42');
+
+      const duplicatePlatformExternalInsert = await client.execute({
+        sql: `
+          INSERT INTO sessions (
+            session_id,
+            task_type,
+            executor,
+            executor_model,
+            status,
+            created_at_ms,
+            updated_at_ms,
+            ended_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: ['session-2', 'coding', 'claude', 'sonnet', 'active', 200, 200, null],
+      });
+      expect(duplicatePlatformExternalInsert.rowsAffected).toBe(1);
+
+      await expect(
+        client.execute({
+          sql: `
+            INSERT INTO session_platform_links (
+              session_id,
+              platform,
+              external_thread_key,
+              created_at_ms,
+              updated_at_ms,
+              ended_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `,
+          args: ['session-2', 'telegram', '-100123:42', 200, 200, null],
+        }),
+      ).rejects.toThrow(/UNIQUE constraint failed: session_platform_links\.platform, session_platform_links\.external_thread_key/);
+
+      await expect(
+        client.execute({
+          sql: `
+            INSERT INTO session_platform_links (
+              session_id,
+              platform,
+              external_thread_key,
+              created_at_ms,
+              updated_at_ms,
+              ended_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?)
+          `,
+          args: ['session-1', 'lark', 'om_root_2', 200, 200, null],
+        }),
+      ).rejects.toThrow(/UNIQUE constraint failed: session_platform_links\.session_id, session_platform_links\.platform/);
     } finally {
       client.close();
     }

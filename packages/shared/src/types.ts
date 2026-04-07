@@ -128,6 +128,11 @@ export interface ExecutorPreference {
   executor_model: string;
 }
 
+export interface TaskContextRef {
+  platform: 'lark' | 'telegram';
+  root_key: string;
+}
+
 export function isValidExecutorPreferences(
   executors: unknown,
 ): executors is ExecutorPreference[] {
@@ -156,6 +161,8 @@ export interface TaskSubmission {
   payload: string;
   executor?: string;
   executor_model?: string;
+  session_id?: string;
+  context_ref?: TaskContextRef;
   task_source?: TaskSource;
 }
 
@@ -166,6 +173,8 @@ export interface Task {
   executor?: string;
   executor_model?: string;
   submitted_at: string;
+  session_id?: string;
+  context_ref?: TaskContextRef;
   task_source?: TaskSource;
 }
 

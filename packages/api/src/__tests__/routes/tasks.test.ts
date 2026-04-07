@@ -84,6 +84,51 @@ describe('POST /tasks', () => {
     });
   });
 
+  it('returns 201 and preserves canonical session_id/context_ref fields', async () => {
+    const app = buildApp();
+    const canonical = {
+      session_id: 'session-123',
+      context_ref: {
+        platform: 'lark',
+        root_key: 'om_root_123',
+      },
+    };
+
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      ...canonical,
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.session_id).toBe('session-123');
+    expect(res.body.context_ref).toEqual({
+      platform: 'lark',
+      root_key: 'om_root_123',
+    });
+    expect(mockRabbitMQ.publish).toHaveBeenCalledWith(
+      expect.objectContaining({
+        session_id: 'session-123',
+        context_ref: {
+          platform: 'lark',
+          root_key: 'om_root_123',
+        },
+      }),
+    );
+  });
+
+  it('returns 201 without session_id/context_ref for legacy callers', async () => {
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.session_id).toBeUndefined();
+    expect(res.body.context_ref).toBeUndefined();
+  });
+
   it('returns 503 when broker publish applies backpressure', async () => {
     mockRabbitMQ.publish.mockResolvedValueOnce(false);
     const app = buildApp();
@@ -120,6 +165,60 @@ describe('POST /tasks', () => {
     const res = await authedRequest(request(app).post('/tasks'))
       .send({ task_type: 'generic' });
     expect(res.status).toBe(400);
+  });
+
+  it('returns 400 when session_id is not a string', async () => {
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      session_id: 123,
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('session_id must be a string if provided');
+  });
+
+  it('returns 400 when context_ref is not an object', async () => {
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      context_ref: 'bad',
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('context_ref must be an object if provided');
+  });
+
+  it('returns 400 when context_ref.platform is invalid', async () => {
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      context_ref: {
+        platform: 'discord',
+        root_key: 'root-1',
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('context_ref.platform must be one of: lark, telegram');
+  });
+
+  it('returns 400 when context_ref.root_key is not a string', async () => {
+    const app = buildApp();
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      context_ref: {
+        platform: 'telegram',
+        root_key: 123,
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('context_ref.root_key must be a string');
   });
 
   it('returns 201 with task_source when provided', async () => {

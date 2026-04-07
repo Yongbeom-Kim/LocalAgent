@@ -25,8 +25,12 @@
       "projectFolder": "packages/daemon/lark-result"
     },
     {
-      "packageName": "@local-agent/telegram-result-daemon",
-      "projectFolder": "packages/daemon/telegram-result"
+      "packageName": "@local-agent/telegram-inbound-daemon",
+      "projectFolder": "packages/daemon/telegram-inbound"
+    },
+    {
+      "packageName": "@local-agent/telegram-outbound-daemon",
+      "projectFolder": "packages/daemon/telegram-outbound"
     },
     {
       "packageName": "@local-agent/task-enrichment-daemon",

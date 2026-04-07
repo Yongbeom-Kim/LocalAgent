@@ -31,10 +31,12 @@ export class TelegramNotifier {
       | 'listTelegramMessagesForTopic'
       | 'recordOutboundTelegramMessage'
       | 'upsertTelegramThreadState'
+      | 'markTelegramThreadEnded'
+      | 'deleteTelegramRowsBySessionId'
     >,
     private readonly sessionBridgeRepository?: Pick<
       SessionBridgeRepository,
-      'getBridgeBySessionId' | 'getBridgeByTelegramTopic'
+      'getBridgeBySessionId' | 'getBridgeByTelegramTopic' | 'markBridgeEnded' | 'deleteBridgeBySessionId'
     >,
   ) {
     this.apiBase = `${TELEGRAM_API_BASE}${botToken}`;
@@ -208,6 +210,27 @@ export class TelegramNotifier {
       metadataJson: JSON.stringify({ event_kind: 'result', result_id: params.result.result_id }),
       createdAtMs: Date.now(),
     });
+
+    if (params.result.task_type === 'cleanup') {
+      await this.cleanupTerminalSessionRows(destination.sessionId, Date.now());
+    }
+  }
+
+  private async cleanupTerminalSessionRows(sessionId: string, endedAtMs: number): Promise<void> {
+    await this.telegramHistoryRepository?.markTelegramThreadEnded(sessionId, endedAtMs);
+    await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
+
+    if (!this.sessionBridgeRepository) {
+      return;
+    }
+
+    const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(sessionId);
+    if (!bridge) {
+      return;
+    }
+
+    await this.sessionBridgeRepository.markBridgeEnded(sessionId, endedAtMs);
+    await this.sessionBridgeRepository.deleteBridgeBySessionId(sessionId);
   }
 
   private async sendMessage(result: TaskResult): Promise<void> {

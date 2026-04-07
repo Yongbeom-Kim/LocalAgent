@@ -1,5 +1,5 @@
 {
-  "name": "@local-agent/telegram-result-daemon",
+  "name": "@local-agent/telegram-inbound-daemon",
   "version": "0.0.1",
   "private": true,
   "main": "dist/index.js",

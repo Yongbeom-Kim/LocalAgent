@@ -9,41 +9,21 @@ import {
 } from '@local-agent/shared';
 import { TelegramPoller } from './telegram-poller';
 import { TelegramNotifier } from './adapters/telegram-notifier';
-import { TelegramTopicManager } from './adapters/telegram-topic-manager';
-import { TelegramTaskSubmitter } from './adapters/telegram-task-submitter';
-import { TelegramPhasePublisher } from './adapters/telegram-phase-publisher';
-import { TelegramUpdatePoller } from './telegram-update-poller';
 
 async function main() {
   const config = loadTelegramDaemonConfig();
-  const logger = createLogger('telegram-daemon', config.logLevel);
+  const logger = createLogger('telegram-outbound', config.logLevel);
 
   const notifier = new TelegramNotifier(config.telegramBotToken, config.telegramForumGroupId);
-  const topicManager = new TelegramTopicManager(config.telegramBotToken);
 
   logger.info('Validating Telegram bot token...');
   try {
     const botUsername = await notifier.validate();
-    const chat = await topicManager.getChat(config.telegramForumGroupId);
-    if (chat.is_forum !== true) {
-      throw new Error('Configured Telegram group is not forum-enabled');
-    }
-    logger.info({ botUsername, forumGroupId: config.telegramForumGroupId }, 'Telegram bot validated');
+    logger.info({ botUsername, forumGroupId: config.telegramForumGroupId }, 'Telegram outbound validated');
   } catch (err) {
-    logger.fatal({ err }, 'Telegram bot validation failed');
+    logger.fatal({ err }, 'Telegram outbound validation failed');
     process.exit(1);
   }
-
-  logger.info(
-    {
-      apiUrl: config.apiUrl,
-      pollIntervalMs: config.pollIntervalMs,
-      queueName: DEFAULT_TELEGRAM_QUEUE_NAME,
-      dbPath: config.dbPath,
-      expectedSchemaVersion: config.expectedSchemaVersion,
-    },
-    'Starting telegram-daemon',
-  );
 
   const sqliteClient = await createSqliteClient({
     dbPath: config.dbPath,
@@ -62,21 +42,11 @@ async function main() {
   );
 
   const poller = new TelegramPoller(config.apiUrl, DEFAULT_TELEGRAM_QUEUE_NAME, statefulNotifier);
-  const taskSubmitter = new TelegramTaskSubmitter(config.apiUrl);
-  const phasePublisher = new TelegramPhasePublisher(config.apiUrl);
-  const updatePoller = new TelegramUpdatePoller(
-    config.telegramForumGroupId,
-    topicManager,
-    taskSubmitter,
-    phasePublisher,
-  );
   poller.start(config.pollIntervalMs);
-  updatePoller.start(config.pollIntervalMs);
 
   const shutdown = () => {
-    logger.info('Shutting down telegram-daemon...');
+    logger.info('Shutting down telegram-outbound...');
     poller.stop();
-    updatePoller.stop();
     sqliteClient.close();
     process.exit(0);
   };
@@ -86,7 +56,7 @@ async function main() {
 }
 
 main().catch((err) => {
-  const logger = createLogger('telegram-daemon');
+  const logger = createLogger('telegram-outbound');
   logger.fatal({ err }, 'Fatal error');
   process.exit(1);
 });

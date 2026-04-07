@@ -12,6 +12,7 @@ import {
   isTaskExecutorType,
   type TaskResultSubmission,
   isControlTaskType,
+  type Task,
   type TaskSubmission,
   LARK_INBOUND_SCHEMA_VERSION_V1,
   TELEGRAM_INBOUND_SCHEMA_VERSION_V1,
@@ -394,8 +395,18 @@ describe('TaskSubmission routing fields', () => {
       payload: 'review this diff',
       executor: 'claude',
       executor_model: 'sonnet',
+      session_id: 'session-123',
+      context_ref: {
+        platform: 'lark',
+        root_key: 'om_root_123',
+      },
     };
     expect(task.executor_model).toBe('sonnet');
+    expect(task.session_id).toBe('session-123');
+    expect(task.context_ref).toEqual({
+      platform: 'lark',
+      root_key: 'om_root_123',
+    });
   });
 
   it('allows control-task submissions without executor fields', () => {
@@ -404,6 +415,36 @@ describe('TaskSubmission routing fields', () => {
       payload: '',
     };
     expect(task.executor).toBeUndefined();
+  });
+
+  it('allows legacy task submissions without canonical routing fields', () => {
+    const task: TaskSubmission = {
+      task_type: 'generic',
+      payload: 'hello',
+    };
+
+    expect(task.session_id).toBeUndefined();
+    expect(task.context_ref).toBeUndefined();
+  });
+
+  it('preserves canonical routing fields on Task', () => {
+    const task: Task = {
+      task_id: 'task-123',
+      task_type: 'generic',
+      payload: 'hello',
+      submitted_at: '2026-04-07T00:00:00.000Z',
+      session_id: 'session-123',
+      context_ref: {
+        platform: 'telegram',
+        root_key: '-100123:42',
+      },
+    };
+
+    expect(task.session_id).toBe('session-123');
+    expect(task.context_ref).toEqual({
+      platform: 'telegram',
+      root_key: '-100123:42',
+    });
   });
 });
 

@@ -38,7 +38,10 @@ export class LarkNotifier {
       | 'deleteLarkRowsBySessionId'
     >,
     private readonly tokenProvider: TokenProvider = new LarkTenantTokenProvider(appId, appSecret),
-    private readonly sessionBridgeRepository?: Pick<SessionBridgeRepository, 'getBridgeBySessionId'>,
+    private readonly sessionBridgeRepository?: Pick<
+      SessionBridgeRepository,
+      'getBridgeBySessionId' | 'markBridgeEnded' | 'deleteBridgeBySessionId'
+    >,
   ) {}
 
   async notify(result: TaskResult): Promise<void> {
@@ -246,8 +249,24 @@ export class LarkNotifier {
     }
 
     if (result.task_type === 'cleanup') {
-      await this.larkHistoryRepository.deleteLarkRowsBySessionId(result.session_id);
+      await this.cleanupTerminalSessionRows(result.session_id, createdAtMs);
     }
+  }
+
+  private async cleanupTerminalSessionRows(sessionId: string, endedAtMs: number): Promise<void> {
+    await this.larkHistoryRepository?.deleteLarkRowsBySessionId(sessionId);
+
+    if (!this.sessionBridgeRepository) {
+      return;
+    }
+
+    const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(sessionId);
+    if (!bridge) {
+      return;
+    }
+
+    await this.sessionBridgeRepository.markBridgeEnded(sessionId, endedAtMs);
+    await this.sessionBridgeRepository.deleteBridgeBySessionId(sessionId);
   }
 
   private getOutboundEventKind(result: TaskResult): string | null {
