@@ -22,6 +22,32 @@ export interface SessionPlatformLinkRow {
   endedAtMs: number | null;
 }
 
+function toSessionPlatformLinkRow(
+  row:
+    | {
+        sessionId: string;
+        platform: string;
+        externalThreadKey: string;
+        createdAtMs: number;
+        updatedAtMs: number;
+        endedAtMs: number | null;
+      }
+    | undefined,
+): SessionPlatformLinkRow | null {
+  if (!row) {
+    return null;
+  }
+
+  if (row.platform !== 'lark' && row.platform !== 'telegram') {
+    throw new Error(`Unexpected session platform: ${row.platform}`);
+  }
+
+  return {
+    ...row,
+    platform: row.platform,
+  };
+}
+
 export class SessionPlatformLinkRepository {
   constructor(private readonly db: LibSQLDatabase<SqliteSchema>) {}
 
@@ -60,7 +86,7 @@ export class SessionPlatformLinkRepository {
       .where(and(eq(sessionPlatformLinksTable.sessionId, sessionId), eq(sessionPlatformLinksTable.platform, platform)))
       .get();
 
-    return row ?? null;
+    return toSessionPlatformLinkRow(row);
   }
 
   async getLinkBySessionIdAndPlatform(
@@ -85,7 +111,7 @@ export class SessionPlatformLinkRepository {
       )
       .get();
 
-    return row ?? null;
+    return toSessionPlatformLinkRow(row);
   }
 
   async getLinkByPlatformThread(

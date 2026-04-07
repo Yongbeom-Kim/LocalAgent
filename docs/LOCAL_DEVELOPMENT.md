@@ -54,9 +54,9 @@ Copy `.env.example` before starting anything. Service endpoint variables are req
 | `TASK_DAEMON_DISABLE_MACHINE_LOCK` | unset | No; test/debug only |
 | `TASK_DAEMON_STATUS_URL` | Example: `http://127.0.0.1:7070` | Yes for `task-enrichment` |
 | `LOCAL_AGENT_DB_PATH` | Example: `/tmp/local-agent.sqlite` | Yes for `task`, `task-enrichment`, `lark-listener`, `lark-result`, `migrator` |
-| `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` | `1` | Recommended for non-migrator services |
+| `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` | `8` | Recommended for non-migrator services |
 | `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | Provided by your Lark app | Yes for `lark-listener` and `lark-result` |
-| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | Provided by your Telegram bot/chat | Yes for Telegram daemon |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_FORUM_GROUP_ID` | Provided by your Telegram bot/forum group | Yes for Telegram daemons |
 
 ## 3. Start RabbitMQ
 
@@ -140,14 +140,19 @@ npm run dev --prefix packages/daemon/lark-result
 ```
 
 ```bash
-# Terminal 6 — Telegram notifications (project root)
-npm run dev --prefix packages/daemon/telegram-result
+# Terminal 6 — Telegram inbound (project root)
+npm run dev --prefix packages/daemon/telegram-inbound
+```
+
+```bash
+# Terminal 7 — Telegram outbound (project root)
+npm run dev --prefix packages/daemon/telegram-outbound
 ```
 
 ## 9. Start the Lark Listener (optional)
 
 ```bash
-# Terminal 7 — Lark listener (project root)
+# Terminal 8 — Lark listener (project root)
 npm run dev --prefix packages/daemon/lark-listener
 ```
 
@@ -180,7 +185,8 @@ npm run dev --prefix packages/cli -- submit \
 | 5 | Task Daemon | `npm run dev --prefix packages/daemon/task` | Yes |
 | 6 | Lark Result Daemon | `npm run dev --prefix packages/daemon/lark-result` | No |
 | 7 | Lark Listener | `npm run dev --prefix packages/daemon/lark-listener` | No |
-| 8 | Telegram Daemon | `npm run dev --prefix packages/daemon/telegram-result` | No |
+| 8 | Telegram Inbound | `npm run dev --prefix packages/daemon/telegram-inbound` | No |
+| 9 | Telegram Outbound | `npm run dev --prefix packages/daemon/telegram-outbound` | No |
 
 Minimum setup: Terminals 1-5.
 

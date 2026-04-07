@@ -1,4 +1,6 @@
 import {
+  SessionPlatformLinkRepository,
+  SessionRepository,
   SessionBridgeRepository,
   TelegramHistoryRepository,
   type MirrorTaskEvent,
@@ -37,6 +39,14 @@ export class TelegramNotifier {
     private readonly sessionBridgeRepository?: Pick<
       SessionBridgeRepository,
       'getBridgeBySessionId' | 'getBridgeByTelegramTopic' | 'markBridgeEnded' | 'deleteBridgeBySessionId'
+    >,
+    private readonly sessionRepository?: Pick<
+      SessionRepository,
+      'markSessionEnded' | 'deleteSessionById'
+    >,
+    private readonly sessionPlatformLinkRepository?: Pick<
+      SessionPlatformLinkRepository,
+      'markLinksEnded' | 'deleteLinksBySessionId'
     >,
   ) {
     this.apiBase = `${TELEGRAM_API_BASE}${botToken}`;
@@ -217,20 +227,26 @@ export class TelegramNotifier {
   }
 
   private async cleanupTerminalSessionRows(sessionId: string, endedAtMs: number): Promise<void> {
+    await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
+    await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
     await this.telegramHistoryRepository?.markTelegramThreadEnded(sessionId, endedAtMs);
-    await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
 
     if (!this.sessionBridgeRepository) {
+      await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
+      await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
+      await this.sessionRepository?.deleteSessionById(sessionId);
       return;
     }
 
     const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(sessionId);
-    if (!bridge) {
-      return;
+    if (bridge) {
+      await this.sessionBridgeRepository.markBridgeEnded(sessionId, endedAtMs);
+      await this.sessionBridgeRepository.deleteBridgeBySessionId(sessionId);
     }
 
-    await this.sessionBridgeRepository.markBridgeEnded(sessionId, endedAtMs);
-    await this.sessionBridgeRepository.deleteBridgeBySessionId(sessionId);
+    await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
+    await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
+    await this.sessionRepository?.deleteSessionById(sessionId);
   }
 
   private async sendMessage(result: TaskResult): Promise<void> {

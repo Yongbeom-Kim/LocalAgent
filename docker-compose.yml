@@ -56,7 +56,7 @@ services:
       LOG_LEVEL: info
       DEBUG: "${DEBUG:-0}"
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
     volumes:
       - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
       - local-agent-db:/data
@@ -83,7 +83,7 @@ services:
       LARK_APP_SECRET: ${LARK_APP_SECRET}
       LARK_RECIPIENT_ID: ${LARK_RECIPIENT_ID}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -107,7 +107,7 @@ services:
       TASK_DAEMON_STATUS_URL: http://task-daemon:7070
       LOG_LEVEL: info
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -132,7 +132,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_FORUM_GROUP_ID: ${TELEGRAM_FORUM_GROUP_ID}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -157,7 +157,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_FORUM_GROUP_ID: ${TELEGRAM_FORUM_GROUP_ID}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -181,7 +181,7 @@ services:
       LARK_APP_ID: ${LARK_APP_ID}
       LARK_APP_SECRET: ${LARK_APP_SECRET}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
     volumes:
       - local-agent-db:/data
     depends_on:
