@@ -155,7 +155,7 @@ describe('POST /jobs', () => {
   });
 
   it('rejects non-allowlisted task types on the explicit immediate path', async () => {
-    const res = await request(buildApp()).post('/jobs').send({ ...validJobSubmission(), immediate: true });
+    const res = await authedRequest(request(buildApp()).post('/jobs')).send({ ...validJobSubmission(), immediate: true });
     expect(res.status).toBe(400);
     expect(res.body).toEqual({ error: 'Only allowlisted immediate task types may use the immediate path' });
   });
@@ -242,6 +242,12 @@ describe('GET /jobs/next/:sessionId', () => {
 describe('GET /jobs/immediate/next/:sessionId', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('returns 401 when authorization header is missing', async () => {
+    const res = await request(buildApp()).get('/jobs/immediate/next/session-123');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+  });
+
   it('returns the next immediate job for a session', async () => {
     mockRabbitMQ.getNextImmediateJobFromSession.mockResolvedValueOnce({
       job_id: 'job-kill',
@@ -253,20 +259,20 @@ describe('GET /jobs/immediate/next/:sessionId', () => {
       session_id: 'session-123',
       enriched_at: '2026-04-06T00:00:01.000Z',
     });
-    const res = await request(buildApp()).get('/jobs/immediate/next/session-123');
+    const res = await authedRequest(request(buildApp()).get('/jobs/immediate/next/session-123'));
     expect(res.status).toBe(200);
     expect(mockRabbitMQ.getNextImmediateJobFromSession).toHaveBeenCalledWith('session-123');
   });
 
   it('returns 204 when the immediate session queue is empty', async () => {
     mockRabbitMQ.getNextImmediateJobFromSession.mockResolvedValueOnce(null);
-    const res = await request(buildApp()).get('/jobs/immediate/next/session-123');
+    const res = await authedRequest(request(buildApp()).get('/jobs/immediate/next/session-123'));
     expect(res.status).toBe(204);
   });
 
   it('returns 503 when immediate job fetch cannot reconnect to RabbitMQ', async () => {
     mockRabbitMQ.getNextImmediateJobFromSession.mockRejectedValueOnce(new RabbitMQUnavailableError());
-    const res = await request(buildApp()).get('/jobs/immediate/next/session-123');
+    const res = await authedRequest(request(buildApp()).get('/jobs/immediate/next/session-123'));
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
@@ -302,9 +308,15 @@ describe('POST /jobs/:sessionId/:id/ack', () => {
 describe('POST /jobs/immediate/:sessionId/:id/ack', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('returns 401 when authorization header is missing', async () => {
+    const res = await request(buildApp()).post('/jobs/immediate/session-123/job-abc/ack');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+  });
+
   it('returns 200 with acknowledged true when immediate job is found', async () => {
     mockRabbitMQ.ackImmediateJobFromSession.mockReturnValueOnce(true);
-    const res = await request(buildApp()).post('/jobs/immediate/session-123/job-abc/ack');
+    const res = await authedRequest(request(buildApp()).post('/jobs/immediate/session-123/job-abc/ack'));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ acknowledged: true });
     expect(mockRabbitMQ.ackImmediateJobFromSession).toHaveBeenCalledWith('session-123', 'job-abc');
@@ -312,7 +324,7 @@ describe('POST /jobs/immediate/:sessionId/:id/ack', () => {
 
   it('returns 404 when immediate job delivery is no longer available', async () => {
     mockRabbitMQ.ackImmediateJobFromSession.mockReturnValueOnce(false);
-    const res = await request(buildApp()).post('/jobs/immediate/session-123/job-abc/ack');
+    const res = await authedRequest(request(buildApp()).post('/jobs/immediate/session-123/job-abc/ack'));
     expect(res.status).toBe(404);
   });
 });
@@ -347,9 +359,15 @@ describe('POST /jobs/:sessionId/:id/nack', () => {
 describe('POST /jobs/immediate/:sessionId/:id/nack', () => {
   beforeEach(() => vi.clearAllMocks());
 
+  it('returns 401 when authorization header is missing', async () => {
+    const res = await request(buildApp()).post('/jobs/immediate/session-123/job-abc/nack');
+    expect(res.status).toBe(401);
+    expect(res.body).toEqual({ error: 'Unauthorized' });
+  });
+
   it('returns 200 with requeued true when immediate job is found', async () => {
     mockRabbitMQ.nackImmediateJobFromSession.mockReturnValueOnce(true);
-    const res = await request(buildApp()).post('/jobs/immediate/session-123/job-abc/nack');
+    const res = await authedRequest(request(buildApp()).post('/jobs/immediate/session-123/job-abc/nack'));
     expect(res.status).toBe(200);
     expect(res.body).toEqual({ requeued: true });
     expect(mockRabbitMQ.nackImmediateJobFromSession).toHaveBeenCalledWith('session-123', 'job-abc');
@@ -357,7 +375,7 @@ describe('POST /jobs/immediate/:sessionId/:id/nack', () => {
 
   it('returns 404 when immediate job delivery cannot be requeued anymore', async () => {
     mockRabbitMQ.nackImmediateJobFromSession.mockReturnValueOnce(false);
-    const res = await request(buildApp()).post('/jobs/immediate/session-123/job-abc/nack');
+    const res = await authedRequest(request(buildApp()).post('/jobs/immediate/session-123/job-abc/nack'));
     expect(res.status).toBe(404);
   });
 });

@@ -141,7 +141,7 @@ export class RabbitMQService {
           message.session_id,
           buffer,
           {
-          persistent: true,
+            persistent: true,
           },
         );
       },
@@ -161,6 +161,10 @@ export class RabbitMQService {
   }
 
   async getNextImmediateJobFromSession(sessionId: string): Promise<Job | null> {
+    // The task-daemon polls immediate queues for discovered sessions even when no immediate
+    // job has ever been published for that session. Asserting avoids a 404 NOT_FOUND that
+    // would otherwise close the channel.
+    await this.ensureImmediateSessionJobQueue(sessionId);
     return this.getNextJobFromQueue(RabbitMQService.getImmediateSessionQueueName(sessionId));
   }
 
