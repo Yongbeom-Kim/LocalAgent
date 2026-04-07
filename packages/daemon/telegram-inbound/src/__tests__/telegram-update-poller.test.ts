@@ -13,6 +13,9 @@ describe('TelegramUpdatePoller', () => {
     publishReceived: vi.fn(),
     publishCompletedSyntheticFailure: vi.fn(),
   };
+  const sessionResolver = {
+    resolve: vi.fn(),
+  };
 
   let poller: TelegramUpdatePoller;
 
@@ -23,6 +26,7 @@ describe('TelegramUpdatePoller', () => {
       topicManager,
       taskSubmitter as any,
       phasePublisher as any,
+      sessionResolver as any,
     );
   });
 
@@ -48,22 +52,7 @@ describe('TelegramUpdatePoller', () => {
     }));
   });
 
-  it('publishes a synthetic failure result for updates from groups that are not forum-enabled', async () => {
-    topicManager.getUpdates.mockResolvedValue([
-      {
-        update_id: 1,
-        message: { message_id: 10, date: 1, message_thread_id: 42, from: { id: 7, is_bot: false }, chat: { id: -100456789 }, text: 'hi' },
-      },
-    ]);
-    topicManager.getChat.mockResolvedValue({ id: -100456789, is_forum: false });
-
-    await poller.pollOnce();
-
-    expect(phasePublisher.publishCompletedSyntheticFailure).toHaveBeenCalled();
-    expect(taskSubmitter.submit).not.toHaveBeenCalled();
-  });
-
-  it('submits a telegram inbound task and publishes received phase for accepted topic messages', async () => {
+  it('publishes canonical telegram task with session_id instead of telegram_inbound envelope', async () => {
     topicManager.getUpdates.mockResolvedValue([
       {
         update_id: 1,
@@ -73,24 +62,38 @@ describe('TelegramUpdatePoller', () => {
           message_thread_id: 42,
           from: { id: 7, is_bot: false },
           chat: { id: -100456789 },
-          text: '/task deploy claude sonnet ship it',
+          text: 'follow up',
         },
       },
     ]);
     topicManager.getChat.mockResolvedValue({ id: -100456789, is_forum: true });
+    sessionResolver.resolve.mockResolvedValue({
+      kind: 'accepted',
+      task: {
+        taskType: 'thread_reply',
+        payload: 'follow up',
+        taskSource: { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '10' },
+        sessionId: 'sess-1',
+        contextRef: { platform: 'telegram', root_key: '-100456789:42' },
+      },
+    });
     taskSubmitter.submit.mockResolvedValue('task-123');
 
     await poller.pollOnce();
 
     expect(taskSubmitter.submit).toHaveBeenCalledWith(
-      'telegram_inbound',
-      expect.stringContaining('"platform":"telegram"'),
+      'thread_reply',
+      'follow up',
       { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '10' },
+      undefined,
+      undefined,
+      { sessionId: 'sess-1', contextRef: { platform: 'telegram', root_key: '-100456789:42' } },
     );
     expect(phasePublisher.publishReceived).toHaveBeenCalledWith({
       taskId: 'task-123',
-      taskType: 'telegram_inbound',
+      taskType: 'thread_reply',
       taskSource: { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '10' },
+      sessionId: 'sess-1',
     });
   });
 });

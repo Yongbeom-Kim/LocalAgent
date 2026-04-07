@@ -45,10 +45,14 @@ describe('TelegramNotifier', () => {
     listTelegramMessagesForTopic: ReturnType<typeof vi.fn>;
     recordOutboundTelegramMessage: ReturnType<typeof vi.fn>;
     upsertTelegramThreadState: ReturnType<typeof vi.fn>;
+    markTelegramThreadEnded: ReturnType<typeof vi.fn>;
+    deleteTelegramRowsBySessionId: ReturnType<typeof vi.fn>;
   };
   let sessionBridgeRepository: {
     getBridgeBySessionId: ReturnType<typeof vi.fn>;
     getBridgeByTelegramTopic: ReturnType<typeof vi.fn>;
+    markBridgeEnded: ReturnType<typeof vi.fn>;
+    deleteBridgeBySessionId: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -59,10 +63,14 @@ describe('TelegramNotifier', () => {
       listTelegramMessagesForTopic: vi.fn().mockResolvedValue([]),
       recordOutboundTelegramMessage: vi.fn().mockResolvedValue(undefined),
       upsertTelegramThreadState: vi.fn().mockResolvedValue(undefined),
+      markTelegramThreadEnded: vi.fn().mockResolvedValue(undefined),
+      deleteTelegramRowsBySessionId: vi.fn().mockResolvedValue(undefined),
     };
     sessionBridgeRepository = {
       getBridgeBySessionId: vi.fn().mockResolvedValue(null),
       getBridgeByTelegramTopic: vi.fn().mockResolvedValue(null),
+      markBridgeEnded: vi.fn().mockResolvedValue(undefined),
+      deleteBridgeBySessionId: vi.fn().mockResolvedValue(undefined),
     };
     notifier = new TelegramNotifier(
       'bot123:ABC',
@@ -163,6 +171,54 @@ describe('TelegramNotifier', () => {
         sessionId: 'session-123',
         topicId: '88',
       }));
+    });
+
+    it('deletes telegram and shared bridge rows for /end replies when a bridge exists', async () => {
+      sessionBridgeRepository.getBridgeBySessionId.mockResolvedValue({
+        sessionId: 'session-end-1',
+        larkRootMessageId: 'om_end_1',
+        telegramChatId: '-100999',
+        telegramTopicId: '88',
+      });
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 67 } }) });
+
+      await notifier.notifyResult({
+        result: createResult({
+          task_type: 'cleanup',
+          session_id: 'session-end-1',
+          task_source: { source: 'lark', message_id: 'om_1' },
+        }),
+      });
+
+      expect(telegramHistoryRepository.recordOutboundTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'session-end-1',
+        topicId: '88',
+      }));
+      expect(telegramHistoryRepository.markTelegramThreadEnded).toHaveBeenCalledWith('session-end-1', expect.any(Number));
+      expect(telegramHistoryRepository.deleteTelegramRowsBySessionId).toHaveBeenCalledWith('session-end-1');
+      expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session-end-1');
+      expect(sessionBridgeRepository.markBridgeEnded).toHaveBeenCalledWith('session-end-1', expect.any(Number));
+      expect(sessionBridgeRepository.deleteBridgeBySessionId).toHaveBeenCalledWith('session-end-1');
+    });
+
+    it('deletes telegram rows without bridge operations when no bridge exists', async () => {
+      sessionBridgeRepository.getBridgeBySessionId.mockResolvedValue(null);
+      mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 68 } }) });
+
+      await notifier.notifyResult({
+        chatId: '-100123',
+        topicId: '42',
+        result: createResult({
+          task_type: 'cleanup',
+          session_id: 'session-end-2',
+        }),
+      });
+
+      expect(telegramHistoryRepository.markTelegramThreadEnded).toHaveBeenCalledWith('session-end-2', expect.any(Number));
+      expect(telegramHistoryRepository.deleteTelegramRowsBySessionId).toHaveBeenCalledWith('session-end-2');
+      expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session-end-2');
+      expect(sessionBridgeRepository.markBridgeEnded).not.toHaveBeenCalled();
+      expect(sessionBridgeRepository.deleteBridgeBySessionId).not.toHaveBeenCalled();
     });
   });
 });

@@ -1,15 +1,13 @@
 import {
   createLogger,
   type LarkHistoryRepository,
-  type TaskSource,
-  LARK_INBOUND_SCHEMA_VERSION_V1,
-  type LarkInboundEnvelope,
-  normalizeLarkInboundContent,
 } from '@local-agent/shared';
 import type { TaskSubmitter } from './adapters/task-submitter';
 import type { LarkReactor } from './adapters/lark-reactor';
 import type { LarkReplier } from './adapters/lark-replier';
-import type { LarkMessageMetadataResolver, ResolvedThreadIdentity } from './adapters/lark-message-metadata-resolver';
+import type { LarkMessageMetadataResolver } from './adapters/lark-message-metadata-resolver';
+import { LarkCanonicalTaskBuilder } from './adapters/lark-canonical-task-builder';
+import type { LarkSessionResolver } from './adapters/lark-session-resolver';
 import type { DedupMap } from './services/dedup';
 
 const logger = createLogger('lark-listener:handler');
@@ -34,12 +32,15 @@ interface LarkMessageEvent {
 export type { LarkMessageMetadataResolver };
 
 export class MessageHandler {
+  private readonly canonicalTaskBuilder = new LarkCanonicalTaskBuilder();
+
   constructor(
     private readonly submitter: TaskSubmitter,
     private readonly reactor: LarkReactor,
     private readonly replier: LarkReplier,
     private readonly dedup: DedupMap,
     private readonly metadataResolver: LarkMessageMetadataResolver,
+    private readonly sessionResolver: LarkSessionResolver,
     private readonly larkHistoryRepository?: Pick<LarkHistoryRepository, 'getLarkMessageByMessageId'>,
   ) {}
 
@@ -83,75 +84,39 @@ export class MessageHandler {
     );
 
     const threadIdentity = await this.metadataResolver.resolve(messageId);
+    const built = this.canonicalTaskBuilder.build(event, threadIdentity);
+    const resolved = await this.sessionResolver.resolve(built);
 
-    const envelope = this.buildEnvelope(event, threadIdentity);
-    const taskSource: TaskSource = { source: 'lark', message_id: messageId };
+    if (resolved.kind === 'duplicate') {
+      logger.info({ message_id: messageId }, 'Duplicate Lark inbound after persistence check');
+      return;
+    }
 
-    const taskId = await this.submitter.submit('lark_inbound', JSON.stringify(envelope), taskSource);
+    if (resolved.kind === 'rejected') {
+      logger.warn({ message_id: messageId, reason: resolved.reason }, 'Rejected Lark message during canonical resolution');
+      await this.replier.replyEnqueueFailure(messageId);
+      return;
+    }
+
+    const taskId = await this.submitter.submit(
+      resolved.task.taskType,
+      resolved.task.payload,
+      resolved.task.taskSource,
+      resolved.task.executor,
+      resolved.task.executorModel,
+      {
+        sessionId: resolved.task.sessionId,
+        contextRef: resolved.task.contextRef,
+      },
+    );
     if (!taskId) {
       logger.error({ message_id: messageId }, 'Failed to enqueue task');
       await this.replier.replyEnqueueFailure(messageId);
       return;
     }
 
-    logger.info({ message_id: messageId, task_id: taskId, task_type: 'lark_inbound' }, 'Task enqueued');
+    logger.info({ message_id: messageId, task_id: taskId, task_type: resolved.task.taskType }, 'Task enqueued');
     await this.reactor.react(messageId);
-  }
-
-  private buildEnvelope(event: LarkMessageEvent, threadIdentity: ResolvedThreadIdentity): LarkInboundEnvelope {
-    const messageId = event.message.message_id as string;
-    const rawContent = event.message.content as string;
-    const messageType = event.message.message_type;
-    const occurredAtMs = this.extractOccurredAtMs(event) ?? Date.now();
-
-    const mentions = (event.message.mentions ?? [])
-      .filter((m) => Boolean(m?.id?.open_id))
-      .map((m) => ({
-        key: m.key,
-        name: m.name,
-        open_id: m.id.open_id,
-      }));
-
-    const normalized = normalizeLarkInboundContent(messageType, rawContent);
-    const base = {
-      platform: 'lark' as const,
-      schema_version: LARK_INBOUND_SCHEMA_VERSION_V1,
-      message_id: messageId,
-      root_message_id: threadIdentity.rootMessageId,
-      thread_id: threadIdentity.threadId,
-      chat_type: event.message.chat_type,
-      sender_open_id: event.sender.sender_id.open_id,
-      sender_type: event.sender.sender_type,
-      message_type: messageType,
-      raw_content: rawContent,
-      mentions,
-      occurred_at_ms: occurredAtMs,
-    };
-
-    if (normalized.is_normalizable) {
-      return {
-        ...base,
-        is_normalizable: true,
-        normalized_text: normalized.normalized_text,
-      };
-    }
-
-    return {
-      ...base,
-      is_normalizable: false,
-    };
-  }
-
-  private extractOccurredAtMs(event: LarkMessageEvent): number | null {
-    const candidates = [event.event_time, event.timestamp, event.create_time];
-    for (const c of candidates) {
-      if (!c) continue;
-      const n = Number(c);
-      if (!Number.isFinite(n)) continue;
-      // Heuristic: allow seconds or ms.
-      return n < 10_000_000_000 ? n * 1000 : n;
-    }
-    return null;
   }
 
   private async shouldSkipMirroredOrBotMessage(messageId: string): Promise<boolean> {

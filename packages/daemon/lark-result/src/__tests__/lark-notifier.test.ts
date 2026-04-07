@@ -24,11 +24,21 @@ function createResult(overrides?: Partial<TaskResult>): TaskResult {
 describe('LarkNotifier', () => {
   let notifier: LarkNotifier;
   let tokenProvider: { getTenantAccessToken: ReturnType<typeof vi.fn> };
+  let sessionBridgeRepository: {
+    getBridgeBySessionId: ReturnType<typeof vi.fn>;
+    markBridgeEnded: ReturnType<typeof vi.fn>;
+    deleteBridgeBySessionId: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     tokenProvider = {
       getTenantAccessToken: vi.fn().mockResolvedValue('token-abc'),
+    };
+    sessionBridgeRepository = {
+      getBridgeBySessionId: vi.fn().mockResolvedValue(null),
+      markBridgeEnded: vi.fn().mockResolvedValue(undefined),
+      deleteBridgeBySessionId: vi.fn().mockResolvedValue(undefined),
     };
     notifier = new LarkNotifier('app-id', 'app-secret', 'user-123', undefined, tokenProvider);
   });
@@ -46,7 +56,14 @@ describe('LarkNotifier', () => {
 
   it('persists outbound lark replies after successful send', async () => {
     const repository = createRepositoryMocks();
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+    );
 
     mockFetch
       .mockResolvedValueOnce({
@@ -83,7 +100,14 @@ describe('LarkNotifier', () => {
 
   it('updates thread executor/model on /new while preserving session_id', async () => {
     const repository = createRepositoryMocks();
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+    );
 
     mockFetch
       .mockResolvedValueOnce({
@@ -117,7 +141,14 @@ describe('LarkNotifier', () => {
 
   it('does not create a new session on /end replies', async () => {
     const repository = createRepositoryMocks();
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+    );
 
     mockFetch
       .mockResolvedValueOnce({
@@ -140,6 +171,74 @@ describe('LarkNotifier', () => {
     }));
     expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3');
     expect(repository.markLarkThreadNewInstance).not.toHaveBeenCalled();
+    expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session_3');
+    expect(sessionBridgeRepository.markBridgeEnded).not.toHaveBeenCalled();
+    expect(sessionBridgeRepository.deleteBridgeBySessionId).not.toHaveBeenCalled();
+  });
+
+  it('deletes shared bridge rows for /end replies when a bridge exists', async () => {
+    const repository = createRepositoryMocks();
+    sessionBridgeRepository.getBridgeBySessionId.mockResolvedValue({
+      sessionId: 'session_3b',
+      larkRootMessageId: 'om_root_3b',
+      telegramChatId: '-100123',
+      telegramTopicId: '77',
+      createdAtMs: 10,
+      updatedAtMs: 10,
+      endedAtMs: null,
+    });
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_3b' } }),
+      });
+
+    await dbNotifier.notify(createResult({
+      task_type: 'cleanup',
+      session_id: 'session_3b',
+      task_source: { source: 'lark', message_id: 'om_root_3b' },
+    }));
+
+    expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3b');
+    expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session_3b');
+    expect(sessionBridgeRepository.markBridgeEnded).toHaveBeenCalledWith('session_3b', expect.any(Number));
+    expect(sessionBridgeRepository.deleteBridgeBySessionId).toHaveBeenCalledWith('session_3b');
+  });
+
+  it('still deletes lark rows for /end replies when session bridge repository is not provided', async () => {
+    const repository = createRepositoryMocks();
+    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { items: [] } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_3c' } }),
+      });
+
+    await dbNotifier.notify(createResult({
+      task_type: 'cleanup',
+      session_id: 'session_3c',
+      task_source: { source: 'lark', message_id: 'om_root_3c' },
+    }));
+
+    expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3c');
   });
 
   it('promotes placeholder root thread rows to the real session_id on first successful reply', async () => {
@@ -173,7 +272,14 @@ describe('LarkNotifier', () => {
       endedAtMs: null,
     });
 
-    const dbNotifier = new LarkNotifier('app-id', 'app-secret', 'user-123', repository, tokenProvider);
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+    );
 
     mockFetch
       .mockResolvedValueOnce({

@@ -14,7 +14,7 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_type, payload, task_source, executor, executor_model } = req.body;
+      const { task_type, payload, task_source, executor, executor_model, session_id, context_ref } = req.body;
 
       if (typeof task_type !== 'string') {
         res.status(400).json({ error: 'task_type is required and must be a string' });
@@ -28,6 +28,28 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
       if (task_source !== undefined && !isValidTaskSource(task_source)) {
         res.status(400).json({ error: 'task_source must be a valid source object' });
         return;
+      }
+
+      if (session_id !== undefined && typeof session_id !== 'string') {
+        res.status(400).json({ error: 'session_id must be a string if provided' });
+        return;
+      }
+
+      if (context_ref !== undefined) {
+        if (typeof context_ref !== 'object' || context_ref === null) {
+          res.status(400).json({ error: 'context_ref must be an object if provided' });
+          return;
+        }
+
+        const { platform, root_key } = context_ref as Record<string, unknown>;
+        if (platform !== 'lark' && platform !== 'telegram') {
+          res.status(400).json({ error: 'context_ref.platform must be one of: lark, telegram' });
+          return;
+        }
+        if (typeof root_key !== 'string') {
+          res.status(400).json({ error: 'context_ref.root_key must be a string' });
+          return;
+        }
       }
 
       if (executor_model !== undefined && executor === undefined) {
@@ -55,6 +77,8 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         submitted_at: new Date().toISOString(),
         ...(typeof executor === 'string' ? { executor } : {}),
         ...(typeof executor_model === 'string' ? { executor_model } : {}),
+        ...(session_id !== undefined ? { session_id } : {}),
+        ...(context_ref !== undefined ? { context_ref } : {}),
         ...(task_source ? { task_source } : {}),
       };
       const buffered = await rabbitmq.publish(task);

@@ -143,6 +143,45 @@ export const telegramMessagesTable = sqliteTable(
   }),
 );
 
+export const sessionsTable = sqliteTable(
+  'sessions',
+  {
+    sessionId: text('session_id').primaryKey(),
+    taskType: text('task_type').notNull(),
+    executor: text('executor'),
+    executorModel: text('executor_model'),
+    status: text('status').notNull(),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+    endedAtMs: integer('ended_at_ms'),
+  },
+  (table) => ({
+    statusUpdatedAtIdx: index('idx_sessions_status_updated_at').on(table.status, sql`${table.updatedAtMs} DESC`),
+  }),
+);
+
+export const sessionPlatformLinksTable = sqliteTable(
+  'session_platform_links',
+  {
+    sessionId: text('session_id')
+      .notNull()
+      .references(() => sessionsTable.sessionId),
+    platform: text('platform').notNull(),
+    externalThreadKey: text('external_thread_key').notNull(),
+    createdAtMs: integer('created_at_ms').notNull(),
+    updatedAtMs: integer('updated_at_ms').notNull(),
+    endedAtMs: integer('ended_at_ms'),
+  },
+  (table) => ({
+    pk: primaryKey({ columns: [table.sessionId, table.platform] }),
+    platformExternalThreadKeyUnique: uniqueIndex('session_platform_links_platform_external_thread_key_unique').on(
+      table.platform,
+      table.externalThreadKey,
+    ),
+    sessionIdIdx: index('idx_session_platform_links_session_id').on(table.sessionId),
+  }),
+);
+
 export const sessionBridgesTable = sqliteTable(
   'session_bridges',
   {
@@ -176,6 +215,8 @@ export const sqliteSchema = {
   larkMessagesTable,
   telegramThreadsTable,
   telegramMessagesTable,
+  sessionsTable,
+  sessionPlatformLinksTable,
   sessionBridgesTable,
 };
 

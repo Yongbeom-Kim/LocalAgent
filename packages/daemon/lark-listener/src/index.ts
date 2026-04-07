@@ -1,10 +1,18 @@
-import { assertExpectedSchemaVersion, createLogger, createSqliteClient, LarkHistoryRepository } from '@local-agent/shared';
+import {
+  assertExpectedSchemaVersion,
+  createLogger,
+  createSqliteClient,
+  LarkHistoryRepository,
+  SessionPlatformLinkRepository,
+  SessionRepository,
+} from '@local-agent/shared';
 import { WSClient, EventDispatcher } from '@larksuiteoapi/node-sdk';
 import { loadLarkListenerConfig } from './config';
 import { TaskSubmitter } from './adapters/task-submitter';
 import { LarkReactor } from './adapters/lark-reactor';
 import { LarkReplier } from './adapters/lark-replier';
 import { LarkOpenApiMessageMetadataResolver } from './adapters/lark-message-metadata-resolver';
+import { LarkSessionResolver } from './adapters/lark-session-resolver';
 import { MessageHandler } from './message-handler';
 import { DedupMap } from './services/dedup';
 
@@ -26,7 +34,22 @@ async function main() {
   });
   await assertExpectedSchemaVersion(sqliteClient.db, config.expectedSchemaVersion);
   const larkHistoryRepository = new LarkHistoryRepository(sqliteClient.db);
-  const handler = new MessageHandler(submitter, reactor, replier, dedup, metadataResolver, larkHistoryRepository);
+  const sessionRepository = new SessionRepository(sqliteClient.db);
+  const sessionPlatformLinkRepository = new SessionPlatformLinkRepository(sqliteClient.db);
+  const sessionResolver = new LarkSessionResolver(
+    larkHistoryRepository,
+    sessionRepository,
+    sessionPlatformLinkRepository,
+  );
+  const handler = new MessageHandler(
+    submitter,
+    reactor,
+    replier,
+    dedup,
+    metadataResolver,
+    sessionResolver,
+    larkHistoryRepository,
+  );
 
   const wsClient = new WSClient({
     appId: config.appId,

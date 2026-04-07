@@ -2,6 +2,7 @@ import {
   buildApiAuthHeaders,
   createLogger,
   resolveApiClientToken,
+  type TaskContextRef,
   type TaskPhaseEventSubmission,
   type TaskSubmission,
   type TaskSource,
@@ -14,6 +15,11 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+export interface CanonicalTaskSubmitOptions {
+  sessionId?: string;
+  contextRef?: TaskContextRef;
+}
+
 export class TaskSubmitter {
   private readonly apiUrl: string;
   private readonly apiAuthToken?: string;
@@ -23,28 +29,22 @@ export class TaskSubmitter {
     this.apiAuthToken = resolveApiClientToken({ explicitToken: apiAuthToken, env: process.env });
   }
 
-  /**
-   * Submit a task to the API. Returns the task_id on success, null on failure.
-   */
   async submit(
     taskType: string,
     payload: string,
     taskSource?: TaskSource,
     executor?: string,
     executorModel?: string,
+    options: CanonicalTaskSubmitOptions = {},
   ): Promise<string | null> {
-    // Listener should avoid routing knobs for normalized inbound messages.
-    if (taskType === 'lark_inbound') {
-      executor = undefined;
-      executorModel = undefined;
-    }
-
     const body: TaskSubmission = {
       task_type: taskType,
       payload,
       ...(executor !== undefined ? { executor } : {}),
       ...(executorModel !== undefined ? { executor_model: executorModel } : {}),
       ...(taskSource ? { task_source: taskSource } : {}),
+      ...(options.sessionId ? { session_id: options.sessionId } : {}),
+      ...(options.contextRef ? { context_ref: options.contextRef } : {}),
     };
 
     for (let attempt = 1; attempt <= DEFAULT_MAX_RETRIES; attempt++) {
@@ -74,7 +74,7 @@ export class TaskSubmitter {
         logger.info({ task_id: data.task_id }, 'Task submitted');
         return data.task_id;
       } catch (err) {
-        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        const delayMs = 1000 * Math.pow(2, attempt - 1);
         logger.warn({ attempt, err, delayMs }, 'Task submission failed, retrying');
         if (attempt < DEFAULT_MAX_RETRIES) {
           await sleep(delayMs);

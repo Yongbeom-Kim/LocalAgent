@@ -121,23 +121,54 @@ services:
       - task-enrichment-daemon
       - full
 
-  telegram-result-daemon:
+  telegram-inbound-daemon:
     build:
       context: .
-      dockerfile: packages/daemon/telegram-result/Dockerfile
+      dockerfile: packages/daemon/telegram-inbound/Dockerfile
     environment:
       API_URL: http://api:3000
       POLL_INTERVAL_MS: "5000"
       LOG_LEVEL: info
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
-      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID}
+      TELEGRAM_FORUM_GROUP_ID: ${TELEGRAM_FORUM_GROUP_ID}
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+    volumes:
+      - local-agent-db:/data
     depends_on:
       rabbitmq:
         condition: service_healthy
       api:
         condition: service_started
+      migrator:
+        condition: service_completed_successfully
     profiles:
-      - telegram-result-daemon
+      - telegram-inbound-daemon
+      - full
+
+  telegram-outbound-daemon:
+    build:
+      context: .
+      dockerfile: packages/daemon/telegram-outbound/Dockerfile
+    environment:
+      API_URL: http://api:3000
+      POLL_INTERVAL_MS: "5000"
+      LOG_LEVEL: info
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      TELEGRAM_FORUM_GROUP_ID: ${TELEGRAM_FORUM_GROUP_ID}
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "1"
+    volumes:
+      - local-agent-db:/data
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      api:
+        condition: service_started
+      migrator:
+        condition: service_completed_successfully
+    profiles:
+      - telegram-outbound-daemon
       - full
 
   lark-listener-daemon:

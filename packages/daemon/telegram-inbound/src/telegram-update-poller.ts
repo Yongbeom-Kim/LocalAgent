@@ -4,13 +4,13 @@ import {
   isValidTelegramTopicTaskSource,
   normalizeTelegramInboundContent,
   type TaskSource,
-  type TelegramTopicTaskSource,
 } from '@local-agent/shared';
 import { TelegramPhasePublisher } from './adapters/telegram-phase-publisher';
+import type { TelegramSessionResolver } from './adapters/telegram-session-resolver';
 import { TelegramTaskSubmitter } from './adapters/telegram-task-submitter';
 import { TelegramTopicManager } from './adapters/telegram-topic-manager';
 
-const logger = createLogger('telegram-daemon:update-poller');
+const logger = createLogger('telegram-inbound:update-poller');
 const TELEGRAM_INBOUND_TASK_TYPE = 'telegram_inbound';
 const NON_FORUM_GROUP_REASON = 'This Telegram group does not support forum topics. Please use a forum-enabled group.';
 const MISSING_TOPIC_REASON = 'Telegram messages must be sent inside a forum topic.';
@@ -53,6 +53,7 @@ export class TelegramUpdatePoller {
     private readonly topicManager: Pick<TelegramTopicManager, 'getUpdates' | 'getChat'>,
     private readonly taskSubmitter: TelegramTaskSubmitter,
     private readonly phasePublisher: TelegramPhasePublisher,
+    private readonly sessionResolver: TelegramSessionResolver,
   ) {}
 
   async pollOnce(): Promise<void> {
@@ -137,16 +138,36 @@ export class TelegramUpdatePoller {
         : { is_normalizable: false as const }),
     };
 
-    const taskId = await this.taskSubmitter.submit(TELEGRAM_INBOUND_TASK_TYPE, JSON.stringify(envelope), taskSource);
+    const resolved = await this.sessionResolver.resolve(envelope);
+    if (resolved.kind === 'duplicate') {
+      return;
+    }
+    if (resolved.kind === 'rejected') {
+      await this.publishSyntheticFailure(taskSource, resolved.reason);
+      return;
+    }
+
+    const taskId = await this.taskSubmitter.submit(
+      resolved.task.taskType,
+      resolved.task.payload,
+      resolved.task.taskSource,
+      resolved.task.executor,
+      resolved.task.executorModel,
+      {
+        sessionId: resolved.task.sessionId,
+        contextRef: resolved.task.contextRef,
+      },
+    );
     if (!taskId) {
-      logger.error({ update_id: update.update_id, message_id: messageId }, 'Failed to submit telegram inbound task');
+      logger.error({ update_id: update.update_id, message_id: messageId }, 'Failed to submit telegram canonical task');
       return;
     }
 
     await this.phasePublisher.publishReceived({
       taskId,
-      taskType: TELEGRAM_INBOUND_TASK_TYPE,
-      taskSource,
+      taskType: resolved.task.taskType,
+      taskSource: resolved.task.taskSource,
+      sessionId: resolved.task.sessionId,
     });
   }
 
@@ -163,10 +184,6 @@ export class TelegramUpdatePoller {
       taskSource,
       reason,
     });
-  }
-
-  private isTelegramTopicTaskSource(taskSource: TaskSource): taskSource is TelegramTopicTaskSource {
-    return taskSource.source === 'telegram' && 'topic_id' in taskSource;
   }
 
   private isBotAuthored(message: TelegramMessage): boolean {
