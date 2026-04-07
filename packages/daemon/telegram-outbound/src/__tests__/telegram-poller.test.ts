@@ -55,7 +55,7 @@ describe('TelegramPoller', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     const notifier = new TelegramNotifier('bot123:ABC', '-100456789');
-    poller = new TelegramPoller('http://localhost:3000', 'telegram-messages', notifier);
+    poller = new TelegramPoller('http://localhost:3000', 'telegram-messages', notifier, 'secret');
   });
 
   afterEach(() => {
@@ -76,9 +76,12 @@ describe('TelegramPoller', () => {
 
       await poller.pollOnce();
 
-      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages');
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages', {
+        headers: { Authorization: 'Bearer secret' },
+      });
       expect(mockNotify).toHaveBeenCalledWith(sampleResult);
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/res-1/ack', {
+        headers: { Authorization: 'Bearer secret' },
         method: 'POST',
       });
     });
@@ -111,6 +114,7 @@ describe('TelegramPoller', () => {
         text: '*Status:* queued',
       });
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/evt-1/ack', {
+        headers: { Authorization: 'Bearer secret' },
         method: 'POST',
       });
     });
@@ -130,6 +134,7 @@ describe('TelegramPoller', () => {
 
       expect(mockNotifyMirror).toHaveBeenCalledWith(sampleMirror);
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/mirror-1/ack', {
+        headers: { Authorization: 'Bearer secret' },
         method: 'POST',
       });
     });

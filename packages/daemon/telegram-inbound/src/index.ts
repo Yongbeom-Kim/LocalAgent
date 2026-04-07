@@ -47,8 +47,8 @@ async function main() {
     sessionPlatformLinkRepository,
   );
 
-  const taskSubmitter = new TelegramTaskSubmitter(config.apiUrl);
-  const phasePublisher = new TelegramPhasePublisher(config.apiUrl);
+  const taskSubmitter = new TelegramTaskSubmitter(config.apiUrl, config.apiAuthToken);
+  const phasePublisher = new TelegramPhasePublisher(config.apiUrl, config.apiAuthToken);
   const updatePoller = new TelegramUpdatePoller(
     config.telegramForumGroupId,
     topicManager,
