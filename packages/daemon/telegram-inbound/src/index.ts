@@ -1,4 +1,5 @@
 import {
+  SessionBridgeRepository,
   SessionPlatformLinkRepository,
   SessionRepository,
   TelegramHistoryRepository,
@@ -41,10 +42,12 @@ async function main() {
   const telegramHistoryRepository = new TelegramHistoryRepository(sqliteClient.db);
   const sessionRepository = new SessionRepository(sqliteClient.db);
   const sessionPlatformLinkRepository = new SessionPlatformLinkRepository(sqliteClient.db);
+  const sessionBridgeRepository = new SessionBridgeRepository(sqliteClient.db);
   const sessionResolver = new TelegramSessionResolver(
     telegramHistoryRepository,
     sessionRepository,
     sessionPlatformLinkRepository,
+    sessionBridgeRepository,
   );
 
   const taskSubmitter = new TelegramTaskSubmitter(config.apiUrl);

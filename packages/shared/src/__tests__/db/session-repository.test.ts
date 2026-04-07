@@ -105,6 +105,32 @@ describe('SessionRepository', () => {
       client.close();
     }
   });
+
+  it('deletes a canonical session row', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({ dbPath: join(tempDir, 'history.sqlite') });
+
+    try {
+      await bootstrapSessionsTable(client.connection);
+      const repository = new SessionRepository(client.db);
+
+      await repository.upsertSession({
+        sessionId: 'session-delete',
+        taskType: 'ops',
+        status: 'active',
+        createdAtMs: 1000,
+        updatedAtMs: 1000,
+      });
+
+      await repository.deleteSessionById('session-delete');
+
+      expect(await repository.getSessionById('session-delete')).toBeNull();
+    } finally {
+      client.close();
+    }
+  });
 });
 
 async function bootstrapSessionsTable(connection: Awaited<ReturnType<typeof createSqliteClient>>['connection']): Promise<void> {

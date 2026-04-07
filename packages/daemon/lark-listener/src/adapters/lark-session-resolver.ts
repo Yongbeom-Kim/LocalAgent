@@ -1,5 +1,6 @@
 import {
   generateSessionId,
+  SessionBridgeRepository,
   SessionPlatformLinkRepository,
   SessionRepository,
   type LarkHistoryRepository,
@@ -36,6 +37,7 @@ export class LarkSessionResolver {
     private readonly larkHistoryRepository: LarkHistoryWriter,
     private readonly sessionRepository: SessionRepository,
     private readonly sessionPlatformLinkRepository: SessionPlatformLinkRepository,
+    private readonly sessionBridgeRepository?: Pick<SessionBridgeRepository, 'upsertSessionBridge'>,
   ) {}
 
   async resolve(params: {
@@ -90,6 +92,25 @@ export class LarkSessionResolver {
       updatedAtMs: envelope.occurred_at_ms,
       endedAtMs: null,
     });
+
+    const telegramLink = await this.sessionPlatformLinkRepository.getLinkBySessionAndPlatform(sessionId, 'telegram');
+    if (telegramLink && this.sessionBridgeRepository) {
+      const [telegramChatId, telegramTopicId] = telegramLink.externalThreadKey.split(':', 2);
+      if (telegramChatId && telegramTopicId) {
+        await this.sessionBridgeRepository.upsertSessionBridge({
+          sessionId,
+          larkRootMessageId: envelope.root_message_id,
+          telegramChatId,
+          telegramTopicId,
+          createdAtMs: Math.min(
+            existingLink?.createdAtMs ?? envelope.occurred_at_ms,
+            telegramLink.createdAtMs,
+          ),
+          updatedAtMs: Math.max(envelope.occurred_at_ms, telegramLink.updatedAtMs),
+          endedAtMs: null,
+        });
+      }
+    }
 
     await this.larkHistoryRepository.upsertLarkThreadState({
       rootMessageId: envelope.root_message_id,

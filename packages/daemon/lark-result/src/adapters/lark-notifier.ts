@@ -1,6 +1,8 @@
 import {
   MirrorTaskEvent,
   SessionBridgeRepository,
+  SessionPlatformLinkRepository,
+  SessionRepository,
   TaskResult,
   createLogger,
   LarkHistoryRepository,
@@ -41,6 +43,11 @@ export class LarkNotifier {
     private readonly sessionBridgeRepository?: Pick<
       SessionBridgeRepository,
       'getBridgeBySessionId' | 'markBridgeEnded' | 'deleteBridgeBySessionId'
+    >,
+    private readonly sessionRepository?: Pick<SessionRepository, 'markSessionEnded' | 'deleteSessionById'>,
+    private readonly sessionPlatformLinkRepository?: Pick<
+      SessionPlatformLinkRepository,
+      'markLinksEnded' | 'deleteLinksBySessionId'
     >,
   ) {}
 
@@ -255,6 +262,10 @@ export class LarkNotifier {
 
   private async cleanupTerminalSessionRows(sessionId: string, endedAtMs: number): Promise<void> {
     await this.larkHistoryRepository?.deleteLarkRowsBySessionId(sessionId);
+    await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
+    await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
+    await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
+    await this.sessionRepository?.deleteSessionById(sessionId);
 
     if (!this.sessionBridgeRepository) {
       return;

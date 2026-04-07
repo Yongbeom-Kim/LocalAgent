@@ -3,6 +3,7 @@ import {
   createLogger,
   createSqliteClient,
   LarkHistoryRepository,
+  SessionBridgeRepository,
   SessionPlatformLinkRepository,
   SessionRepository,
 } from '@local-agent/shared';
@@ -36,10 +37,12 @@ async function main() {
   const larkHistoryRepository = new LarkHistoryRepository(sqliteClient.db);
   const sessionRepository = new SessionRepository(sqliteClient.db);
   const sessionPlatformLinkRepository = new SessionPlatformLinkRepository(sqliteClient.db);
+  const sessionBridgeRepository = new SessionBridgeRepository(sqliteClient.db);
   const sessionResolver = new LarkSessionResolver(
     larkHistoryRepository,
     sessionRepository,
     sessionPlatformLinkRepository,
+    sessionBridgeRepository,
   );
   const handler = new MessageHandler(
     submitter,

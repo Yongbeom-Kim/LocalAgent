@@ -54,6 +54,14 @@ describe('TelegramNotifier', () => {
     markBridgeEnded: ReturnType<typeof vi.fn>;
     deleteBridgeBySessionId: ReturnType<typeof vi.fn>;
   };
+  let sessionRepository: {
+    markSessionEnded: ReturnType<typeof vi.fn>;
+    deleteSessionById: ReturnType<typeof vi.fn>;
+  };
+  let sessionPlatformLinkRepository: {
+    markLinksEnded: ReturnType<typeof vi.fn>;
+    deleteLinksBySessionId: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -72,11 +80,21 @@ describe('TelegramNotifier', () => {
       markBridgeEnded: vi.fn().mockResolvedValue(undefined),
       deleteBridgeBySessionId: vi.fn().mockResolvedValue(undefined),
     };
+    sessionRepository = {
+      markSessionEnded: vi.fn().mockResolvedValue(undefined),
+      deleteSessionById: vi.fn().mockResolvedValue(undefined),
+    };
+    sessionPlatformLinkRepository = {
+      markLinksEnded: vi.fn().mockResolvedValue(undefined),
+      deleteLinksBySessionId: vi.fn().mockResolvedValue(undefined),
+    };
     notifier = new TelegramNotifier(
       'bot123:ABC',
       '-100456789',
       telegramHistoryRepository as any,
       sessionBridgeRepository as any,
+      sessionRepository as any,
+      sessionPlatformLinkRepository as any,
     );
   });
 
@@ -196,6 +214,10 @@ describe('TelegramNotifier', () => {
       }));
       expect(telegramHistoryRepository.markTelegramThreadEnded).toHaveBeenCalledWith('session-end-1', expect.any(Number));
       expect(telegramHistoryRepository.deleteTelegramRowsBySessionId).toHaveBeenCalledWith('session-end-1');
+      expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session-end-1', expect.any(Number));
+      expect(sessionPlatformLinkRepository.deleteLinksBySessionId).toHaveBeenCalledWith('session-end-1');
+      expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session-end-1', expect.any(Number));
+      expect(sessionRepository.deleteSessionById).toHaveBeenCalledWith('session-end-1');
       expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session-end-1');
       expect(sessionBridgeRepository.markBridgeEnded).toHaveBeenCalledWith('session-end-1', expect.any(Number));
       expect(sessionBridgeRepository.deleteBridgeBySessionId).toHaveBeenCalledWith('session-end-1');
@@ -216,6 +238,10 @@ describe('TelegramNotifier', () => {
 
       expect(telegramHistoryRepository.markTelegramThreadEnded).toHaveBeenCalledWith('session-end-2', expect.any(Number));
       expect(telegramHistoryRepository.deleteTelegramRowsBySessionId).toHaveBeenCalledWith('session-end-2');
+      expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session-end-2', expect.any(Number));
+      expect(sessionPlatformLinkRepository.deleteLinksBySessionId).toHaveBeenCalledWith('session-end-2');
+      expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session-end-2', expect.any(Number));
+      expect(sessionRepository.deleteSessionById).toHaveBeenCalledWith('session-end-2');
       expect(sessionBridgeRepository.getBridgeBySessionId).toHaveBeenCalledWith('session-end-2');
       expect(sessionBridgeRepository.markBridgeEnded).not.toHaveBeenCalled();
       expect(sessionBridgeRepository.deleteBridgeBySessionId).not.toHaveBeenCalled();

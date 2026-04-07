@@ -17,6 +17,7 @@ describe('LarkSessionResolver', () => {
   let larkHistoryRepository: any;
   let sessionRepository: any;
   let sessionPlatformLinkRepository: any;
+  let sessionBridgeRepository: any;
   let resolver: LarkSessionResolver;
 
   beforeEach(() => {
@@ -29,9 +30,16 @@ describe('LarkSessionResolver', () => {
     sessionRepository = { upsertSession: vi.fn().mockResolvedValue(undefined) };
     sessionPlatformLinkRepository = {
       getLinkByPlatformThread: vi.fn().mockResolvedValue(null),
+      getLinkBySessionAndPlatform: vi.fn().mockResolvedValue(null),
       upsertLink: vi.fn().mockResolvedValue(undefined),
     };
-    resolver = new LarkSessionResolver(larkHistoryRepository, sessionRepository, sessionPlatformLinkRepository);
+    sessionBridgeRepository = { upsertSessionBridge: vi.fn().mockResolvedValue(undefined) };
+    resolver = new LarkSessionResolver(
+      larkHistoryRepository,
+      sessionRepository,
+      sessionPlatformLinkRepository,
+      sessionBridgeRepository,
+    );
   });
 
   it('creates a new canonical session for root entrypoints', async () => {
@@ -86,6 +94,7 @@ describe('LarkSessionResolver', () => {
       platform: 'lark',
       externalThreadKey: 'om_root1',
     }));
+    expect(sessionBridgeRepository.upsertSessionBridge).not.toHaveBeenCalled();
   });
 
   it('reuses the mapped session for thread follow-up messages', async () => {
@@ -190,6 +199,60 @@ describe('LarkSessionResolver', () => {
     expect(result).toEqual({
       kind: 'rejected',
       reason: 'Thread session is not ready yet. Retry after the root message is processed.',
+    });
+  });
+
+  it('restores session bridge rows when the telegram side already exists', async () => {
+    sessionPlatformLinkRepository.getLinkBySessionAndPlatform.mockResolvedValueOnce({
+      sessionId: 'sess-new',
+      platform: 'telegram',
+      externalThreadKey: '-100123:77',
+      createdAtMs: 1,
+      updatedAtMs: 4,
+      endedAtMs: null,
+    });
+
+    await resolver.resolve({
+      envelope: {
+        platform: 'lark',
+        schema_version: 1,
+        message_id: 'om_root1',
+        root_message_id: 'om_root1',
+        thread_id: null,
+        chat_type: 'p2p',
+        sender_open_id: 'ou_1',
+        sender_type: 'user',
+        message_type: 'text',
+        raw_content: '{"text":"/task code_review claude sonnet review this"}',
+        normalized_text: '/task code_review claude sonnet review this',
+        mentions: [],
+        is_normalizable: true,
+        occurred_at_ms: 5,
+      },
+      classification: {
+        kind: 'accepted',
+        shouldMaterializeRootState: true,
+        envelope: undefined as any,
+        task: {
+          task_id: 'lark:om_root1',
+          task_type: 'code_review',
+          payload: 'review this',
+          submitted_at: new Date(5).toISOString(),
+          executor: 'claude',
+          executor_model: 'sonnet',
+          task_source: { source: 'lark', message_id: 'om_root1' },
+        },
+      },
+    });
+
+    expect(sessionBridgeRepository.upsertSessionBridge).toHaveBeenCalledWith({
+      sessionId: 'sess-new',
+      larkRootMessageId: 'om_root1',
+      telegramChatId: '-100123',
+      telegramTopicId: '77',
+      createdAtMs: 1,
+      updatedAtMs: 5,
+      endedAtMs: null,
     });
   });
 });

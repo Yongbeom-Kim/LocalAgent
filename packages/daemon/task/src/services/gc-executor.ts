@@ -7,6 +7,8 @@ import {
   createLogger,
   LarkHistoryRepository,
   SessionBridgeRepository,
+  SessionPlatformLinkRepository,
+  SessionRepository,
   TelegramHistoryRepository,
   createSqliteClient,
   loadSqliteConfig,
@@ -54,6 +56,8 @@ const deleteRowsBySessionIdFromDb: DeleteRowsBySessionId = async (sessionId: str
 
   try {
     const larkRepository = new LarkHistoryRepository(client.db);
+    const sessionRepository = new SessionRepository(client.db);
+    const sessionPlatformLinkRepository = new SessionPlatformLinkRepository(client.db);
 
     try {
       const telegramRepository = new TelegramHistoryRepository(client.db);
@@ -67,6 +71,8 @@ const deleteRowsBySessionIdFromDb: DeleteRowsBySessionId = async (sessionId: str
     }
 
     await larkRepository.deleteLarkRowsBySessionId(sessionId);
+    await sessionPlatformLinkRepository.deleteLinksBySessionId(sessionId);
+    await sessionRepository.deleteSessionById(sessionId);
   } finally {
     client.close();
   }

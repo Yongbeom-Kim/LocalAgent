@@ -1,5 +1,7 @@
 import {
   SessionBridgeRepository,
+  SessionPlatformLinkRepository,
+  SessionRepository,
   TelegramHistoryRepository,
   type MirrorTaskEvent,
   TaskResult,
@@ -37,6 +39,11 @@ export class TelegramNotifier {
     private readonly sessionBridgeRepository?: Pick<
       SessionBridgeRepository,
       'getBridgeBySessionId' | 'getBridgeByTelegramTopic' | 'markBridgeEnded' | 'deleteBridgeBySessionId'
+    >,
+    private readonly sessionRepository?: Pick<SessionRepository, 'markSessionEnded' | 'deleteSessionById'>,
+    private readonly sessionPlatformLinkRepository?: Pick<
+      SessionPlatformLinkRepository,
+      'markLinksEnded' | 'deleteLinksBySessionId'
     >,
   ) {
     this.apiBase = `${TELEGRAM_API_BASE}${botToken}`;
@@ -219,6 +226,10 @@ export class TelegramNotifier {
   private async cleanupTerminalSessionRows(sessionId: string, endedAtMs: number): Promise<void> {
     await this.telegramHistoryRepository?.markTelegramThreadEnded(sessionId, endedAtMs);
     await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
+    await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
+    await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
+    await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
+    await this.sessionRepository?.deleteSessionById(sessionId);
 
     if (!this.sessionBridgeRepository) {
       return;

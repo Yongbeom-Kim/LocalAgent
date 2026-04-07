@@ -17,6 +17,7 @@ describe('TelegramSessionResolver', () => {
   let telegramHistoryRepository: any;
   let sessionRepository: any;
   let sessionPlatformLinkRepository: any;
+  let sessionBridgeRepository: any;
   let resolver: TelegramSessionResolver;
 
   beforeEach(() => {
@@ -30,12 +31,15 @@ describe('TelegramSessionResolver', () => {
     sessionRepository = { upsertSession: vi.fn().mockResolvedValue(undefined) };
     sessionPlatformLinkRepository = {
       getLinkByPlatformThread: vi.fn().mockResolvedValue(null),
+      getLinkBySessionAndPlatform: vi.fn().mockResolvedValue(null),
       upsertLink: vi.fn().mockResolvedValue(undefined),
     };
+    sessionBridgeRepository = { upsertSessionBridge: vi.fn().mockResolvedValue(undefined) };
     resolver = new TelegramSessionResolver(
       telegramHistoryRepository,
       sessionRepository,
       sessionPlatformLinkRepository,
+      sessionBridgeRepository,
     );
   });
 
@@ -73,6 +77,7 @@ describe('TelegramSessionResolver', () => {
       platform: 'telegram',
       externalThreadKey: '-100456789:42',
     }));
+    expect(sessionBridgeRepository.upsertSessionBridge).not.toHaveBeenCalled();
   });
 
   it('reuses the mapped session_id for topic follow-up messages', async () => {
@@ -125,6 +130,42 @@ describe('TelegramSessionResolver', () => {
         sessionId: 'sess-1',
         contextRef: { platform: 'telegram', root_key: '-100456789:42' },
       },
+    });
+  });
+
+  it('restores session bridge rows when the lark side already exists', async () => {
+    sessionPlatformLinkRepository.getLinkBySessionAndPlatform.mockResolvedValue({
+      sessionId: 'sess-new',
+      platform: 'lark',
+      externalThreadKey: 'om_root_1',
+      createdAtMs: 1,
+      updatedAtMs: 3,
+      endedAtMs: null,
+    });
+
+    await resolver.resolve({
+      platform: 'telegram',
+      schema_version: 1,
+      chat_id: '-100456789',
+      topic_id: '42',
+      message_id: '10',
+      sender_id: '7',
+      sender_is_bot: false,
+      message_type: 'text',
+      raw_content: '/task deploy claude sonnet ship it',
+      normalized_text: '/task deploy claude sonnet ship it',
+      is_normalizable: true,
+      occurred_at_ms: 5,
+    });
+
+    expect(sessionBridgeRepository.upsertSessionBridge).toHaveBeenCalledWith({
+      sessionId: 'sess-new',
+      larkRootMessageId: 'om_root_1',
+      telegramChatId: '-100456789',
+      telegramTopicId: '42',
+      createdAtMs: 1,
+      updatedAtMs: 5,
+      endedAtMs: null,
     });
   });
 });

@@ -1,6 +1,7 @@
 import {
   classifyTelegramInboundEnvelope,
   generateSessionId,
+  SessionBridgeRepository,
   SessionPlatformLinkRepository,
   SessionRepository,
   type TaskContextRef,
@@ -41,6 +42,7 @@ export class TelegramSessionResolver {
     private readonly telegramHistoryRepository: TelegramHistoryWriter,
     private readonly sessionRepository: SessionRepository,
     private readonly sessionPlatformLinkRepository: SessionPlatformLinkRepository,
+    private readonly sessionBridgeRepository?: Pick<SessionBridgeRepository, 'upsertSessionBridge'>,
   ) {}
 
   async resolve(envelope: TelegramInboundEnvelope): Promise<TelegramSessionResolutionResult> {
@@ -117,6 +119,23 @@ export class TelegramSessionResolver {
       updatedAtMs: envelope.occurred_at_ms,
       endedAtMs: null,
     });
+
+    const larkLink = await this.sessionPlatformLinkRepository.getLinkBySessionAndPlatform(sessionId, 'lark');
+    if (larkLink && this.sessionBridgeRepository) {
+      await this.sessionBridgeRepository.upsertSessionBridge({
+        sessionId,
+        larkRootMessageId: larkLink.externalThreadKey,
+        telegramChatId: envelope.chat_id,
+        telegramTopicId: envelope.topic_id,
+        createdAtMs: Math.min(
+          existingLink?.createdAtMs ?? envelope.occurred_at_ms,
+          larkLink.createdAtMs,
+        ),
+        updatedAtMs: Math.max(envelope.occurred_at_ms, larkLink.updatedAtMs),
+        endedAtMs: null,
+      });
+    }
+
     await this.telegramHistoryRepository.upsertTelegramThreadState({
       chatId: envelope.chat_id,
       topicId: envelope.topic_id,
