@@ -1,8 +1,8 @@
 export const PHASE_REACTION_BY_PHASE = {
-  received: 'OnIt',
-  enriching: 'Eye',
-  queued: 'Hourglass',
-  executing: 'Runner',
+  received: 'OK',
+  enriching: 'Typing',
+  queued: 'OneSecond',
+  executing: 'OnIt',
   completed: null,
 } as const;
 

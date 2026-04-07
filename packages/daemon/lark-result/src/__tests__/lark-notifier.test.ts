@@ -519,7 +519,7 @@ describe('LarkNotifier', () => {
             items: [
               {
                 reaction_id: 'react-1',
-                reaction_type: { emoji_type: 'OnIt' },
+                reaction_type: { emoji_type: 'OK' },
                 operator: { open_id: 'ou_bot' },
               },
             ],
@@ -592,7 +592,7 @@ describe('LarkNotifier', () => {
               items: [
                 {
                   reaction_id: 'react-1',
-                  reaction_type: { emoji_type: 'OnIt' },
+                  reaction_type: { emoji_type: 'OK' },
                   operator: { open_id: 'ou_bot' },
                 },
               ],
@@ -646,7 +646,7 @@ describe('LarkNotifier', () => {
               items: [
                 {
                   reaction_id: 'react-phase-user',
-                  reaction_type: { emoji_type: 'OnIt' },
+                  reaction_type: { emoji_type: 'OK' },
                   operator: { open_id: 'ou_user' },
                 },
                 {
@@ -656,7 +656,7 @@ describe('LarkNotifier', () => {
                 },
                 {
                   reaction_id: 'react-phase-bot',
-                  reaction_type: { emoji_type: 'Runner' },
+                  reaction_type: { emoji_type: 'OnIt' },
                   operator: { open_id: 'ou_bot' },
                 },
               ],
@@ -751,12 +751,12 @@ describe('LarkNotifier', () => {
               items: [
                 {
                   reaction_id: 'react-1',
-                  reaction_type: { emoji_type: 'OnIt' },
+                  reaction_type: { emoji_type: 'OK' },
                   operator: { open_id: 'ou_bot' },
                 },
                 {
                   reaction_id: 'react-2',
-                  reaction_type: { emoji_type: 'Runner' },
+                  reaction_type: { emoji_type: 'OnIt' },
                   operator: { open_id: 'ou_bot' },
                 },
               ],
