@@ -43,13 +43,30 @@ export class SessionRepository {
       .onConflictDoUpdate({
         target: sessionsTable.sessionId,
         set: {
-          taskType: params.taskType,
-          executor: params.executor ?? null,
-          executorModel: params.executorModel ?? null,
-          status: params.status,
+          taskType: sql`CASE
+            WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.taskType}
+            ELSE ${sessionsTable.taskType}
+          END`,
+          executor: sql`CASE
+            WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.executor ?? null}
+            ELSE ${sessionsTable.executor}
+          END`,
+          executorModel: sql`CASE
+            WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.executorModel ?? null}
+            ELSE ${sessionsTable.executorModel}
+          END`,
+          status: sql`CASE
+            WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.status}
+            ELSE ${sessionsTable.status}
+          END`,
           createdAtMs: sql`MIN(${sessionsTable.createdAtMs}, ${params.createdAtMs})`,
-          updatedAtMs: params.updatedAtMs,
-          endedAtMs: params.endedAtMs ?? null,
+          updatedAtMs: sql`MAX(${sessionsTable.updatedAtMs}, ${params.updatedAtMs})`,
+          endedAtMs: sql`CASE
+            WHEN ${params.endedAtMs ?? null} IS NULL THEN ${sessionsTable.endedAtMs}
+            WHEN ${sessionsTable.endedAtMs} IS NULL THEN ${params.endedAtMs ?? null}
+            WHEN ${params.endedAtMs ?? null} > ${sessionsTable.endedAtMs} THEN ${params.endedAtMs ?? null}
+            ELSE ${sessionsTable.endedAtMs}
+          END`,
         },
       });
   }

@@ -1,4 +1,4 @@
-import { type MirrorTaskEvent, TaskResult, createLogger } from '@local-agent/shared';
+import { buildApiAuthHeaders, type MirrorTaskEvent, TaskResult, createLogger } from '@local-agent/shared';
 import { TelegramNotifier } from './adapters/telegram-notifier';
 
 const logger = createLogger('telegram-daemon:poller');
@@ -22,11 +22,14 @@ export class TelegramPoller {
     private readonly apiUrl: string,
     private readonly queueName: string,
     private readonly notifier: TelegramNotifier,
+    private readonly apiAuthToken?: string,
   ) {}
 
   async pollOnce(): Promise<void> {
     try {
-      const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`);
+      const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`, {
+        headers: buildApiAuthHeaders(this.apiAuthToken),
+      });
 
       if (res.status === 204) {
         logger.debug('No results available');
@@ -177,6 +180,7 @@ export class TelegramPoller {
     try {
       const ackRes = await fetch(`${this.apiUrl}/results/${this.queueName}/${id}/ack`, {
         method: 'POST',
+        headers: buildApiAuthHeaders(this.apiAuthToken),
       });
       if (ackRes.status !== 200) {
         logger.warn({ id, status: ackRes.status }, `${label} ACK failed`);

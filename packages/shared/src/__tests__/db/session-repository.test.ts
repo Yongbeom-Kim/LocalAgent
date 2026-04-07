@@ -105,6 +105,53 @@ describe('SessionRepository', () => {
       client.close();
     }
   });
+
+  it('ignores stale session updates that arrive out of order', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({ dbPath: join(tempDir, 'history.sqlite') });
+
+    try {
+      await bootstrapSessionsTable(client.connection);
+      const repository = new SessionRepository(client.db);
+
+      await repository.upsertSession({
+        sessionId: 'session-3',
+        taskType: 'deploy',
+        executor: 'cursor',
+        executorModel: 'auto',
+        status: 'ended',
+        createdAtMs: 100,
+        updatedAtMs: 300,
+        endedAtMs: 300,
+      });
+
+      await repository.upsertSession({
+        sessionId: 'session-3',
+        taskType: 'thread_reply',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        createdAtMs: 200,
+        updatedAtMs: 150,
+        endedAtMs: null,
+      });
+
+      expect(await repository.getSessionById('session-3')).toEqual({
+        sessionId: 'session-3',
+        taskType: 'deploy',
+        executor: 'cursor',
+        executorModel: 'auto',
+        status: 'ended',
+        createdAtMs: 100,
+        updatedAtMs: 300,
+        endedAtMs: 300,
+      });
+    } finally {
+      client.close();
+    }
+  });
 });
 
 async function bootstrapSessionsTable(connection: Awaited<ReturnType<typeof createSqliteClient>>['connection']): Promise<void> {

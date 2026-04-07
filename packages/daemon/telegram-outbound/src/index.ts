@@ -47,7 +47,12 @@ async function main() {
     sessionPlatformLinkRepository,
   );
 
-  const poller = new TelegramPoller(config.apiUrl, DEFAULT_TELEGRAM_QUEUE_NAME, statefulNotifier);
+  const poller = new TelegramPoller(
+    config.apiUrl,
+    DEFAULT_TELEGRAM_QUEUE_NAME,
+    statefulNotifier,
+    config.apiAuthToken,
+  );
   poller.start(config.pollIntervalMs);
 
   const shutdown = () => {
