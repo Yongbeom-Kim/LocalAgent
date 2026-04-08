@@ -1,0 +1,30 @@
+{
+  "name": "@local-agent/task-scheduler",
+  "version": "0.0.1",
+  "private": true,
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "nodemon --config ../../../nodemon.json --watch src --watch ../../shared/src src/index.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "@local-agent/shared": "workspace:*",
+    "cron-parser": "~5.4.0",
+    "js-yaml": "~4.1.0",
+    "uuid": "~9.0.1"
+  },
+  "devDependencies": {
+    "@types/js-yaml": "~4.0.9",
+    "@types/node": "~20.17.0",
+    "@types/uuid": "~9.0.8",
+    "nodemon": "~3.1.0",
+    "rimraf": "~5.0.0",
+    "ts-node": "~10.9.0",
+    "typescript": "~5.7.0",
+    "vitest": "~1.6.0"
+  }
+}

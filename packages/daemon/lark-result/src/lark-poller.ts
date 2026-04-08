@@ -106,9 +106,11 @@ export class LarkPoller {
               },
               'Ignoring regressive phase event',
             );
-          } else {
+          } else if (phaseEvent.context_ref?.platform === 'lark' || (phaseEvent.task_source?.source === 'lark' && phaseEvent.task_source.message_id)) {
             await this.phaseNotifier.notify(phaseEvent);
             this.recordPhase(phaseEvent);
+          } else {
+            await this.notifier.notifyPhase(phaseEvent as never);
           }
         } catch (err) {
           logger.warn(

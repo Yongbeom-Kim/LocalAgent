@@ -54,7 +54,7 @@ Copy `.env.example` before starting anything. Service endpoint variables are req
 | `TASK_DAEMON_DISABLE_MACHINE_LOCK` | unset | No; test/debug only |
 | `TASK_DAEMON_STATUS_URL` | Example: `http://127.0.0.1:7070` | Yes for `task-enrichment` |
 | `LOCAL_AGENT_DB_PATH` | Example: `/tmp/local-agent.sqlite` | Yes for `task`, `task-enrichment`, `lark-listener`, `lark-result`, `migrator` |
-| `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` | `10` | Recommended for non-migrator services |
+| `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` | `13` | Recommended for non-migrator services |
 | `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | Provided by your Lark app | Yes for `lark-listener` and `lark-result` |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_FORUM_GROUP_ID` | Provided by your Telegram bot/forum group | Yes for Telegram daemons |
 

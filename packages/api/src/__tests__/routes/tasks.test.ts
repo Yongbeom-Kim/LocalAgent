@@ -38,11 +38,15 @@ const mockRabbitMQ = {
   ack: vi.fn(),
 };
 
+const mockSessionRepository = {
+  upsertSession: vi.fn().mockResolvedValue(undefined),
+};
+
 function buildApp() {
   const app = express();
   app.use(express.json());
   app.use(createApiAuthMiddleware({ enabled: true, token: 'secret' }));
-  app.use('/tasks', createTaskRoutes(mockRabbitMQ as any));
+  app.use('/tasks', createTaskRoutes(mockRabbitMQ as any, mockSessionRepository as any));
   return app;
 }
 
@@ -51,7 +55,11 @@ function authedRequest(req: Test) {
 }
 
 describe('POST /tasks', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockRabbitMQ.publish.mockResolvedValue(true);
+    mockSessionRepository.upsertSession.mockResolvedValue(undefined);
+  });
 
   it('returns 401 when authorization header is missing', async () => {
     const app = buildApp();
@@ -82,6 +90,76 @@ describe('POST /tasks', () => {
       executor: 'claude',
       executor_model: 'sonnet',
     });
+    expect(mockSessionRepository.upsertSession).not.toHaveBeenCalled();
+  });
+
+  it('accepts additive session fallback metadata and persists a canonical session row', async () => {
+    const app = buildApp();
+
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      executor: 'claude',
+      executor_model: 'sonnet',
+      session_id: 'session-123',
+      session: {
+        fallbackSeedText: 'hello',
+        fallbackOrigin: 'scheduler',
+        fallbackTitleHint: 'Morning review',
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.session_id).toBe('session-123');
+    expect(mockRabbitMQ.publish).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: 'session-123',
+    }));
+    expect(mockSessionRepository.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-123',
+      taskType: 'generic',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      fallbackSeedText: 'hello',
+      fallbackOrigin: 'scheduler',
+      fallbackTitleHint: 'Morning review',
+      createdAtMs: expect.any(Number),
+      updatedAtMs: expect.any(Number),
+      endedAtMs: null,
+    }));
+  });
+
+  it('returns 400 when fallback metadata is malformed', async () => {
+    const app = buildApp();
+
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      session_id: 'session-123',
+      session: {
+        fallbackSeedText: 42,
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('session.fallbackSeedText must be a string if provided');
+    expect(mockSessionRepository.upsertSession).not.toHaveBeenCalled();
+  });
+
+  it('returns 400 when session metadata is present without session_id', async () => {
+    const app = buildApp();
+
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      session: {
+        fallbackSeedText: 'hello',
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('session_id is required when session metadata is provided');
+    expect(mockSessionRepository.upsertSession).not.toHaveBeenCalled();
   });
 
   it('returns 201 and preserves canonical session_id/context_ref fields', async () => {
@@ -143,6 +221,7 @@ describe('POST /tasks', () => {
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'Server busy, try again later' });
     expect(mockRabbitMQ.publish).toHaveBeenCalledTimes(1);
+    expect(mockSessionRepository.upsertSession).not.toHaveBeenCalled();
   });
 
   it('returns 503 when task publish cannot reconnect to RabbitMQ', async () => {
@@ -488,7 +567,6 @@ describe('POST /tasks', () => {
 
     expect(res.status).toBe(201);
   });
-
 });
 
 describe('GET /tasks/next', () => {

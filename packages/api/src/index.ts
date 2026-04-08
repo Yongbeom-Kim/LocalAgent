@@ -1,13 +1,32 @@
-import { loadApiConfig, loadApiAuthConfig, createLogger } from '@local-agent/shared';
+import {
+  assertExpectedSchemaVersion,
+  createLogger,
+  createSqliteClient,
+  loadApiAuthConfig,
+  loadApiConfig,
+  loadSqliteConfig,
+  SessionRepository,
+} from '@local-agent/shared';
 import { RabbitMQService } from './services/rabbitmq';
 import { createApp } from './app';
 
 async function main() {
   const config = loadApiConfig();
   const auth = loadApiAuthConfig();
+  const sqliteConfig = loadSqliteConfig();
   const logger = createLogger('api', config.logLevel);
 
   const rabbitmq = new RabbitMQService(config.rabbitmqUrl, config.queueName);
+  const sqliteClient = await createSqliteClient(sqliteConfig);
+
+  try {
+    await assertExpectedSchemaVersion(sqliteClient.db, sqliteConfig.expectedSchemaVersion);
+  } catch (error) {
+    sqliteClient.close();
+    throw error;
+  }
+
+  const sessionRepository = new SessionRepository(sqliteClient.db);
 
   let retries = 0;
   const maxRetries = 10;
@@ -25,11 +44,12 @@ async function main() {
   }
 
   if (retries >= maxRetries) {
+    sqliteClient.close();
     logger.fatal('Could not connect to RabbitMQ after max retries');
     process.exit(1);
   }
 
-  const app = createApp(rabbitmq, auth);
+  const app = createApp(rabbitmq, auth, sessionRepository);
 
   const server = app.listen(config.port, () => {
     logger.info({ port: config.port }, 'API server started');
@@ -39,6 +59,7 @@ async function main() {
     logger.info('Shutting down...');
     server.close();
     await rabbitmq.close();
+    sqliteClient.close();
     process.exit(0);
   };
 

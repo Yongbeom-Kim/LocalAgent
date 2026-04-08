@@ -30,11 +30,16 @@ describe('LarkNotifier', () => {
     deleteBridgeBySessionId: ReturnType<typeof vi.fn>;
   };
   let sessionRepository: {
+    getSessionById: ReturnType<typeof vi.fn>;
     markSessionEnded: ReturnType<typeof vi.fn>;
     deleteSessionById: ReturnType<typeof vi.fn>;
     listDescendantSessionIds: ReturnType<typeof vi.fn>;
   };
   let sessionPlatformLinkRepository: {
+    getActiveLinkBySessionAndPlatform: ReturnType<typeof vi.fn>;
+    claimPendingLink: ReturnType<typeof vi.fn>;
+    activateClaimedLink: ReturnType<typeof vi.fn>;
+    releaseExpiredOrFailedClaim: ReturnType<typeof vi.fn>;
     markLinksEnded: ReturnType<typeof vi.fn>;
     deleteLinksBySessionId: ReturnType<typeof vi.fn>;
     getLinkBySessionIdAndPlatform: ReturnType<typeof vi.fn>;
@@ -42,6 +47,7 @@ describe('LarkNotifier', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetch.mockReset();
     tokenProvider = {
       getTenantAccessToken: vi.fn().mockResolvedValue('token-abc'),
     };
@@ -51,11 +57,26 @@ describe('LarkNotifier', () => {
       deleteBridgeBySessionId: vi.fn().mockResolvedValue(undefined),
     };
     sessionRepository = {
+      getSessionById: vi.fn().mockResolvedValue(null),
       markSessionEnded: vi.fn().mockResolvedValue(undefined),
       deleteSessionById: vi.fn().mockResolvedValue(undefined),
       listDescendantSessionIds: vi.fn().mockResolvedValue([]),
     };
     sessionPlatformLinkRepository = {
+      getActiveLinkBySessionAndPlatform: vi.fn().mockResolvedValue(null),
+      claimPendingLink: vi.fn().mockResolvedValue({
+        sessionId: 'session-fallback',
+        platform: 'lark',
+        externalThreadKey: null,
+        linkStatus: 'pending',
+        claimToken: 'claim-token',
+        claimExpiresAtMs: 123456,
+        createdAtMs: 100,
+        updatedAtMs: 100,
+        endedAtMs: null,
+      }),
+      activateClaimedLink: vi.fn().mockResolvedValue(true),
+      releaseExpiredOrFailedClaim: vi.fn().mockResolvedValue(true),
       markLinksEnded: vi.fn().mockResolvedValue(undefined),
       deleteLinksBySessionId: vi.fn().mockResolvedValue(undefined),
       getLinkBySessionIdAndPlatform: vi.fn().mockResolvedValue(null),
@@ -74,6 +95,177 @@ describe('LarkNotifier', () => {
       deleteLarkRowsBySessionId: vi.fn().mockResolvedValue(undefined),
     };
   }
+
+  it('creates and reuses a fallback root thread for non-lark results', async () => {
+    const repository = createRepositoryMocks();
+    sessionPlatformLinkRepository.claimPendingLink.mockImplementation(async (params) => ({
+      sessionId: params.sessionId,
+      platform: params.platform,
+      externalThreadKey: null,
+      linkStatus: 'pending',
+      claimToken: params.claimToken,
+      claimExpiresAtMs: params.claimExpiresAtMs,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+      endedAtMs: null,
+    }));
+    sessionRepository.getSessionById.mockResolvedValue({
+      sessionId: 'session-fallback',
+      taskType: 'generic',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 10,
+      updatedAtMs: 10,
+      endedAtMs: null,
+      fallbackSeedText: 'Seed text',
+      fallbackOrigin: 'scheduler',
+      fallbackTitleHint: 'hint',
+    });
+
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+      sessionRepository as any,
+      sessionPlatformLinkRepository as any,
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_seed_1' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_1' } }) });
+
+    await dbNotifier.notify(createResult({
+      session_id: 'session-fallback',
+      task_source: { source: 'telegram', chat_id: '-1001', topic_id: '42', message_id: '99' },
+    } as any));
+
+    expect(sessionPlatformLinkRepository.claimPendingLink).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-fallback',
+      platform: 'lark',
+    }));
+    expect(sessionPlatformLinkRepository.activateClaimedLink).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'session-fallback',
+      platform: 'lark',
+      externalThreadKey: 'om_seed_1',
+    }));
+    expect(repository.upsertLarkThreadState).toHaveBeenCalledWith(expect.objectContaining({
+      rootMessageId: 'om_seed_1',
+      sessionId: 'session-fallback',
+    }));
+    expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'om_seed_1',
+      metadataJson: expect.stringContaining('fallback_seed'),
+    }));
+    expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'om_reply_1',
+      rootMessageId: 'om_seed_1',
+      sessionId: 'session-fallback',
+      metadataJson: expect.stringContaining('"event_kind":"reply"'),
+    }));
+
+    vi.clearAllMocks();
+    repository.getLarkThreadByRootMessageId.mockResolvedValue({
+      rootMessageId: 'om_seed_1',
+      threadId: null,
+      sessionId: 'session-fallback',
+      source: 'scheduler',
+      chatType: null,
+      taskType: 'generic',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 10,
+      updatedAtMs: 10,
+      endedAtMs: null,
+    });
+    sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform.mockResolvedValue({
+      sessionId: 'session-fallback',
+      platform: 'lark',
+      externalThreadKey: 'om_seed_1',
+      linkStatus: 'active',
+      claimToken: null,
+      claimExpiresAtMs: null,
+      createdAtMs: 10,
+      updatedAtMs: 10,
+      endedAtMs: null,
+    });
+    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_2' } }) });
+
+    await dbNotifier.notify(createResult({
+      session_id: 'session-fallback',
+      task_source: { source: 'telegram', chat_id: '-1001', topic_id: '42', message_id: '99' },
+    } as any));
+
+    expect(sessionPlatformLinkRepository.claimPendingLink).not.toHaveBeenCalled();
+    expect(mockFetch).toHaveBeenCalledWith(
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_seed_1/reply',
+      expect.any(Object),
+    );
+  });
+
+  it('posts phase updates into a lazily created fallback thread', async () => {
+    const repository = createRepositoryMocks();
+    sessionPlatformLinkRepository.claimPendingLink.mockImplementation(async (params) => ({
+      sessionId: params.sessionId,
+      platform: params.platform,
+      externalThreadKey: null,
+      linkStatus: 'pending',
+      claimToken: params.claimToken,
+      claimExpiresAtMs: params.claimExpiresAtMs,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+      endedAtMs: null,
+    }));
+    sessionRepository.getSessionById.mockResolvedValue({
+      sessionId: 'session-phase',
+      taskType: 'generic',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 10,
+      updatedAtMs: 10,
+      endedAtMs: null,
+      fallbackSeedText: 'Seed phase',
+      fallbackOrigin: 'scheduler',
+      fallbackTitleHint: null,
+    });
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+      sessionRepository as any,
+      sessionPlatformLinkRepository as any,
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_seed_phase' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_phase_reply' } }) });
+
+    await dbNotifier.notifyPhase({
+      event_kind: 'phase',
+      event_id: 'evt-1',
+      emitted_at: '2026-04-08T00:00:00.000Z',
+      task_id: 'task-1',
+      session_id: 'session-phase',
+      task_type: 'generic',
+      phase: 'queued',
+      task_source: { source: 'telegram', chat_id: '-1001', topic_id: '42', message_id: '99' } as any,
+    });
+
+    expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'om_phase_reply',
+      rootMessageId: 'om_seed_phase',
+      metadataJson: expect.stringContaining('"event_kind":"phase"'),
+      normalizedText: 'Status: queued',
+    }));
+  });
 
   it('persists outbound lark replies after successful send', async () => {
     const repository = createRepositoryMocks();
@@ -618,7 +810,7 @@ describe('LarkNotifier', () => {
     expect(body.msg_type).toBe('text');
   });
 
-  it('sends DM when task_source is not present (fallback)', async () => {
+  it('sends DM when task_source is not present and no fallback thread can be resolved', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,

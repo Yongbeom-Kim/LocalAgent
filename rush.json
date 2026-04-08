@@ -37,6 +37,10 @@
       "projectFolder": "packages/daemon/task-enrichment"
     },
     {
+      "packageName": "@local-agent/task-scheduler",
+      "projectFolder": "packages/daemon/task-scheduler"
+    },
+    {
       "packageName": "@local-agent/cli",
       "projectFolder": "packages/cli"
     },

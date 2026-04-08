@@ -145,6 +145,12 @@ export function isValidTaskContextRef(value: unknown): value is TaskContextRef {
   );
 }
 
+export interface TaskSessionMetadata {
+  fallbackSeedText?: string;
+  fallbackOrigin?: string;
+  fallbackTitleHint?: string;
+}
+
 export function isValidExecutorPreferences(
   executors: unknown,
 ): executors is ExecutorPreference[] {
@@ -176,6 +182,7 @@ export interface TaskSubmission {
   // Optional explicit execution target. When omitted, routing may derive or generate one.
   session_id?: string;
   // Optional reporting-channel anchor used for shared root/child fanout flows.
+  session?: TaskSessionMetadata;
   context_ref?: TaskContextRef;
   task_source?: TaskSource;
 }

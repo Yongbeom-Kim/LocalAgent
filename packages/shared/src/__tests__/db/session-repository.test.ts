@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe('SessionRepository', () => {
-  it('creates and updates canonical sessions without platform ids', async () => {
+  it('creates and updates canonical sessions with fallback metadata', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-db-test-'));
     tempDirs.push(tempDir);
 
@@ -30,6 +30,8 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAtMs: 100,
         updatedAtMs: 100,
+        fallbackSeedText: 'daily summary payload',
+        fallbackOrigin: 'scheduler',
       });
 
       expect(await repository.getSessionById('session-1')).toEqual({
@@ -42,6 +44,9 @@ describe('SessionRepository', () => {
         createdAtMs: 100,
         updatedAtMs: 100,
         endedAtMs: null,
+        fallbackSeedText: 'daily summary payload',
+        fallbackOrigin: 'scheduler',
+        fallbackTitleHint: null,
       });
 
       await repository.upsertSession({
@@ -53,6 +58,9 @@ describe('SessionRepository', () => {
         createdAtMs: 200,
         updatedAtMs: 300,
         endedAtMs: 300,
+        fallbackSeedText: 'daily summary payload v2',
+        fallbackOrigin: 'canonical-task',
+        fallbackTitleHint: 'Daily Summary',
       });
 
       expect(await repository.getSessionById('session-1')).toEqual({
@@ -65,6 +73,9 @@ describe('SessionRepository', () => {
         createdAtMs: 100,
         updatedAtMs: 300,
         endedAtMs: 300,
+        fallbackSeedText: 'daily summary payload v2',
+        fallbackOrigin: 'canonical-task',
+        fallbackTitleHint: 'Daily Summary',
       });
     } finally {
       client.close();
@@ -103,13 +114,16 @@ describe('SessionRepository', () => {
         createdAtMs: 1000,
         updatedAtMs: 1200,
         endedAtMs: 1200,
+        fallbackSeedText: null,
+        fallbackOrigin: null,
+        fallbackTitleHint: null,
       });
     } finally {
       client.close();
     }
   });
 
-  it('ignores stale session updates that arrive out of order', async () => {
+  it('ignores stale session updates that arrive out of order for fallback metadata too', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-db-test-'));
     tempDirs.push(tempDir);
 
@@ -128,6 +142,9 @@ describe('SessionRepository', () => {
         createdAtMs: 100,
         updatedAtMs: 300,
         endedAtMs: 300,
+        fallbackSeedText: 'ship production',
+        fallbackOrigin: 'scheduler',
+        fallbackTitleHint: 'Prod Deploy',
       });
 
       await repository.upsertSession({
@@ -139,6 +156,9 @@ describe('SessionRepository', () => {
         createdAtMs: 200,
         updatedAtMs: 150,
         endedAtMs: null,
+        fallbackSeedText: 'stale payload',
+        fallbackOrigin: 'canonical-task',
+        fallbackTitleHint: 'Stale Deploy',
       });
 
       expect(await repository.getSessionById('session-3')).toEqual({
@@ -151,6 +171,9 @@ describe('SessionRepository', () => {
         createdAtMs: 100,
         updatedAtMs: 300,
         endedAtMs: 300,
+        fallbackSeedText: 'ship production',
+        fallbackOrigin: 'scheduler',
+        fallbackTitleHint: 'Prod Deploy',
       });
     } finally {
       client.close();
@@ -194,6 +217,9 @@ describe('SessionRepository', () => {
         createdAtMs: 150,
         updatedAtMs: 150,
         endedAtMs: null,
+        fallbackSeedText: null,
+        fallbackOrigin: null,
+        fallbackTitleHint: null,
       });
     } finally {
       client.close();
@@ -266,6 +292,9 @@ describe('SessionRepository', () => {
         createdAtMs: 120,
         updatedAtMs: 200,
         endedAtMs: 200,
+        fallbackSeedText: null,
+        fallbackOrigin: null,
+        fallbackTitleHint: null,
       });
 
       expect(await repository.getSessionById('child-session')).toEqual({
@@ -278,6 +307,9 @@ describe('SessionRepository', () => {
         createdAtMs: 120,
         updatedAtMs: 200,
         endedAtMs: 200,
+        fallbackSeedText: null,
+        fallbackOrigin: null,
+        fallbackTitleHint: null,
       });
     } finally {
       client.close();
@@ -349,6 +381,9 @@ async function bootstrapSessionsTable(connection: Awaited<ReturnType<typeof crea
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
       ended_at_ms INTEGER,
+      fallback_seed_text TEXT,
+      fallback_origin TEXT,
+      fallback_title_hint TEXT,
       FOREIGN KEY (parent_session_id) REFERENCES sessions(session_id)
     )
   `);

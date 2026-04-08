@@ -15,6 +15,7 @@ COPY packages/daemon/lark-result/package.json packages/daemon/lark-result/packag
 COPY packages/daemon/telegram-inbound/package.json packages/daemon/telegram-inbound/package.json
 COPY packages/daemon/telegram-outbound/package.json packages/daemon/telegram-outbound/package.json
 COPY packages/daemon/task-enrichment/package.json packages/daemon/task-enrichment/package.json
+COPY packages/daemon/task-scheduler/package.json packages/daemon/task-scheduler/package.json
 COPY packages/daemon/lark-listener/package.json packages/daemon/lark-listener/package.json
 COPY packages/cli/package.json packages/cli/package.json
 COPY packages/migrator/package.json packages/migrator/package.json

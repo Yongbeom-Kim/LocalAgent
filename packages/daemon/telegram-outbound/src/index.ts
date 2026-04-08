@@ -10,7 +10,7 @@ import {
   DEFAULT_TELEGRAM_QUEUE_NAME,
 } from '@local-agent/shared';
 import { TelegramPoller } from './telegram-poller';
-import { TelegramNotifier } from './adapters/telegram-notifier';
+import { TelegramNotifier, TelegramTopicManager } from './adapters/telegram-notifier';
 
 async function main() {
   const config = loadTelegramDaemonConfig();
@@ -45,6 +45,7 @@ async function main() {
     sessionBridgeRepository,
     sessionRepository,
     sessionPlatformLinkRepository,
+    new TelegramTopicManager(config.telegramBotToken),
   );
 
   const poller = new TelegramPoller(

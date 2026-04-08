@@ -58,8 +58,16 @@
   - Migration assertions for new session columns.
 - Modify: `LocalAgent/packages/api/src/routes/tasks.ts`
   - Accept and validate optional fallback metadata on canonical task submission.
+- Modify: `LocalAgent/packages/api/src/app.ts`
+  - Thread session persistence into task routes.
+- Modify: `LocalAgent/packages/api/src/index.ts`
+  - Initialize SQLite/session repository and pass it into the app.
+- Modify: `LocalAgent/packages/api/package.json`
+  - Ensure API runtime has the sqlite client dependency surface it now uses indirectly through shared DB helpers.
 - Modify: `LocalAgent/packages/api/src/__tests__/routes/tasks.test.ts`
   - Route coverage for new optional fields.
+- Modify: `LocalAgent/docker-compose.yml`
+  - Add API DB env once `/tasks` persists fallback metadata.
 - Modify: `LocalAgent/packages/daemon/lark-result/src/index.ts`
   - Inject session repository access needed for fallback anchor resolution.
 - Modify: `LocalAgent/packages/daemon/lark-result/src/adapters/lark-notifier.ts`
@@ -78,6 +86,12 @@
   - Telegram fallback tests.
 - Create or Modify: `LocalAgent/packages/shared/src/platform-fallback-seed.ts`
   - Optional shared helper for fallback seed truncation/normalization if needed.
+- Modify: `LocalAgent/packages/shared/src/db/session-platform-link-repository.ts`
+  - Add explicit claim/activation APIs for outbound fallback ownership.
+- Modify: `LocalAgent/packages/shared/src/__tests__/db/session-platform-link-repository.test.ts`
+  - Cover pending-claim, activation, expiry, and contention behavior.
+- Create: `LocalAgent/packages/migrator/src/migrations/0005_session_platform_link_claims.sql`
+  - Add claim-state columns for outbound fallback reservation.
 
 ### Task 1: Add the Scheduler Package Skeleton and Compose Wiring
 
@@ -270,6 +284,7 @@ git commit -m "feat(session): persist fallback delivery metadata"
 Add tests asserting `/tasks`:
 - accepts an optional additive session fallback metadata object;
 - rejects malformed fallback metadata types;
+- requires `session_id` when fallback metadata is present;
 - remains backward compatible for callers that do not send the new fields.
 
 - [ ] **Step 2: Run the `/tasks` route test to verify failure**
@@ -296,7 +311,18 @@ Concrete wiring suggestion (so implementers do not get stuck):
 - In `LocalAgent/packages/api/src/index.ts`, create a sqlite client via `createSqliteClient(loadSqliteConfig())` and assert schema version like other daemons.
 - Create a `SessionRepository` from that db.
 - Thread that repository through `createApp(...)` and into `createTaskRoutes(...)`.
-- In `POST /tasks`, require `session_id` if `req.body.session?.fallbackSeedText` is present, then `upsertSession({ sessionId, fallbackSeedText, fallbackOrigin, fallbackTitleHint, ... })` before publishing.
+- In `POST /tasks`, require `session_id` if `req.body.session?.fallbackSeedText` is present.
+- Materialize the canonical session row at intake time with explicit values:
+  - `sessionId = req.body.session_id`
+  - `taskType = req.body.task_type`
+  - `executor` / `executorModel` from the request if present
+  - `status = 'active'`
+  - `createdAtMs` and `updatedAtMs` from the intake timestamp
+  - fallback metadata fields from `req.body.session`
+- Update API runtime/config surfaces accordingly:
+  - `createApp(...)` and route tests now accept a `SessionRepository` dependency
+  - `docker-compose.yml` must set `LOCAL_AGENT_DB_PATH` and `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` for `api`
+  - API shutdown must close the sqlite client
 
 - [ ] **Step 5: Run the `/tasks` route test to verify it passes**
 
@@ -306,7 +332,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit the `/tasks` intake contract update**
 
 ```bash
-git add LocalAgent/packages/shared/src/types.ts LocalAgent/packages/shared/src/index.ts LocalAgent/packages/api/src/routes/tasks.ts LocalAgent/packages/api/src/__tests__/routes/tasks.test.ts
+git add LocalAgent/packages/shared/src/types.ts LocalAgent/packages/shared/src/index.ts LocalAgent/packages/api/package.json LocalAgent/packages/api/src/app.ts LocalAgent/packages/api/src/index.ts LocalAgent/packages/api/src/routes/tasks.ts LocalAgent/packages/api/src/__tests__/routes/tasks.test.ts LocalAgent/docker-compose.yml
 git commit -m "feat(api): accept fallback metadata on canonical tasks"
 ```
 
@@ -393,9 +419,11 @@ Concrete approach (recommended):
 
 Update the notifier path to:
 - prefer explicit `task_source` thread behavior when present;
-- otherwise check `session_platform_links` for an existing Lark anchor;
-- otherwise create a new top-level message using `fallbackSeedText`;
-- persist the new Lark root/thread state and Lark session-platform link using an upsert/transaction keyed by `(session_id, platform)` so concurrent deliveries do not create duplicate anchors;
+- otherwise check `session_platform_links` for an existing active Lark anchor;
+- otherwise acquire a durable Lark fallback claim for `(session_id, 'lark')` before any external API call;
+- only the claim owner may create a new top-level message using `fallbackSeedText`;
+- persist the new Lark root/thread state and promote the Lark session-platform link from `pending` to `active` after the external anchor exists;
+- competing workers must re-read the link row instead of creating a second anchor;
 - send the triggering phase/result as an in-thread reply.
 
 Phase delivery requirement (from design): the first outbound event for a session may be a phase event. Ensure the chosen implementation delivers phase updates for sessions without `task_source` by posting a message into the lazily created fallback thread.
@@ -413,6 +441,59 @@ git commit -m "feat(lark): lazily create fallback root threads"
 ```
 
 ### Task 7: Implement Lazy Telegram Topic Creation on Fallback Delivery
+
+Before touching platform notifiers, add the shared claim-state support that both platforms depend on.
+
+**Files:**
+- Modify: `LocalAgent/packages/shared/src/db/schema.ts`
+- Modify: `LocalAgent/packages/shared/src/db/session-platform-link-repository.ts`
+- Modify: `LocalAgent/packages/shared/src/__tests__/db/session-platform-link-repository.test.ts`
+- Create: `LocalAgent/packages/migrator/src/migrations/0005_session_platform_link_claims.sql`
+- Modify: `LocalAgent/packages/migrator/src/migrations/meta/_journal.json`
+- Modify: `LocalAgent/packages/migrator/src/__tests__/migrate.test.ts`
+
+- [ ] **Step 1: Add failing tests for claim-based link reservation**
+
+Cover:
+- claiming a missing `(session_id, platform)` row as `pending` with a `claim_token`;
+- preventing another worker from stealing a non-expired claim;
+- allowing takeover after expiry;
+- activating a claim into a final `external_thread_key`;
+- preserving uniqueness on active `(platform, external_thread_key)` rows.
+
+- [ ] **Step 2: Run shared and migrator tests to verify failure**
+
+Run: `pnpm --dir LocalAgent --filter @local-agent/shared test -- src/__tests__/db/session-platform-link-repository.test.ts`
+Run: `pnpm --dir LocalAgent --filter @local-agent/migrator test -- src/__tests__/migrate.test.ts`
+Expected: FAIL because claim-state support does not exist yet.
+
+- [ ] **Step 3: Implement claim-state schema and repository APIs**
+
+Add repository methods that make ownership explicit, for example:
+- `claimPendingLink(...)`
+- `getActiveLinkBySessionAndPlatform(...)`
+- `activateClaimedLink(...)`
+- `releaseExpiredOrFailedClaim(...)`
+
+Model `session_platform_links` as:
+- `link_status` in `pending | active | ended`
+- nullable `external_thread_key` while pending
+- `claim_token` and `claim_expires_at_ms` for ownership and recovery.
+
+- [ ] **Step 4: Run shared and migrator tests to verify they pass**
+
+Run: `pnpm --dir LocalAgent --filter @local-agent/shared test -- src/__tests__/db/session-platform-link-repository.test.ts`
+Run: `pnpm --dir LocalAgent --filter @local-agent/migrator test -- src/__tests__/migrate.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Commit shared claim-state support**
+
+```bash
+git add LocalAgent/packages/shared/src/db/schema.ts LocalAgent/packages/shared/src/db/session-platform-link-repository.ts LocalAgent/packages/shared/src/__tests__/db/session-platform-link-repository.test.ts LocalAgent/packages/migrator/src/migrations/0005_session_platform_link_claims.sql LocalAgent/packages/migrator/src/migrations/meta/_journal.json LocalAgent/packages/migrator/src/__tests__/migrate.test.ts
+git commit -m "feat(session): add claim-based platform link reservation"
+```
+
+### Task 8: Implement Lazy Telegram Topic Creation on Fallback Delivery
 
 **Files:**
 - Modify: `LocalAgent/packages/daemon/telegram-outbound/src/index.ts`
@@ -444,8 +525,12 @@ Implementation note (current code reality): `TelegramNotifier.resolveDestination
 
 Update the notifier path to:
 - preserve existing explicit topic behavior when `task_source` provides it;
-- otherwise check `session_platform_links` for a Telegram anchor;
-- otherwise create a forum topic, post the seed message, persist topic/thread/link state using an upsert/transaction keyed by `(session_id, platform)` so concurrent deliveries do not create duplicate topics, and then post the triggering phase/result into that topic.
+- otherwise check `session_platform_links` for an active Telegram anchor;
+- otherwise acquire a durable Telegram fallback claim for `(session_id, 'telegram')` before any external API call;
+- only the claim owner may create a forum topic and seed message;
+- promote the claimed link to `active` only after the topic exists and thread state is persisted;
+- competing workers must wait for or re-read the active link instead of creating duplicate topics;
+- then post the triggering phase/result into that topic.
 
 - [ ] **Step 5: Run the Telegram notifier test to verify it passes**
 
@@ -459,7 +544,7 @@ git add LocalAgent/packages/daemon/telegram-outbound/src/index.ts LocalAgent/pac
 git commit -m "feat(telegram): lazily create fallback forum topics"
 ```
 
-### Task 8: Run Cross-Package Regression Tests and Verify Compose Wiring
+### Task 9: Run Cross-Package Regression Tests and Verify Compose Wiring
 
 **Files:**
 - Modify as needed based on failures discovered in verification.
@@ -491,7 +576,7 @@ Expected: PASS.
 - [ ] **Step 4: Smoke-check compose configuration**
 
 Run: `docker compose -f LocalAgent/docker-compose.yml config`
-Expected: PASS and includes the new `task-scheduler` service.
+Expected: PASS and includes the new `task-scheduler` service plus API DB env required for `/tasks` session persistence.
 
 - [ ] **Step 5: Commit final verification fixes if needed**
 
