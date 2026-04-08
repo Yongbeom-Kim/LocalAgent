@@ -153,6 +153,92 @@ describe('LarkSessionResolver', () => {
         contextRef: { platform: 'lark', root_key: 'om_root1' },
       },
     });
+    expect(sessionRepository.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-existing',
+    }));
+    expect(sessionRepository.upsertSession.mock.calls[0][0].parentSessionId).toBeUndefined();
+  });
+
+  it('keeps the reporting-channel root session when child attachments already exist', async () => {
+    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValueOnce([
+      {
+        sessionId: 'root-session',
+        platform: 'lark',
+        externalThreadKey: 'om_root_shared',
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        endedAtMs: null,
+      },
+      {
+        sessionId: 'child-session',
+        platform: 'lark',
+        externalThreadKey: 'om_root_shared',
+        createdAtMs: 2,
+        updatedAtMs: 2,
+        endedAtMs: null,
+      },
+    ]);
+    larkHistoryRepository.getLarkThreadByRootMessageId.mockResolvedValueOnce({
+      rootMessageId: 'om_root_shared',
+      threadId: 'omt_shared',
+      rootSessionId: 'root-session',
+      sessionId: 'root-session',
+      source: 'lark',
+      chatType: 'group',
+      taskType: 'code_review',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      endedAtMs: null,
+    });
+
+    const result = await resolver.resolve({
+      envelope: {
+        platform: 'lark',
+        schema_version: 1,
+        message_id: 'om_reply_root',
+        root_message_id: 'om_root_shared',
+        thread_id: 'omt_shared',
+        chat_type: 'group',
+        sender_open_id: 'ou_1',
+        sender_type: 'user',
+        message_type: 'text',
+        raw_content: '{"text":"follow up on root"}',
+        normalized_text: 'follow up on root',
+        mentions: [],
+        is_normalizable: true,
+        occurred_at_ms: 3,
+      },
+      classification: {
+        kind: 'accepted',
+        shouldMaterializeRootState: false,
+        envelope: undefined as any,
+        task: {
+          task_id: 'lark:om_reply_root',
+          task_type: 'thread_reply',
+          payload: 'follow up on root',
+          submitted_at: new Date(3).toISOString(),
+          task_source: { source: 'lark', message_id: 'om_reply_root' },
+        },
+      },
+    });
+
+    expect(result).toEqual({
+      kind: 'accepted',
+      task: {
+        taskType: 'thread_reply',
+        payload: 'follow up on root',
+        taskSource: { source: 'lark', message_id: 'om_reply_root' },
+        sessionId: 'root-session',
+        contextRef: { platform: 'lark', root_key: 'om_root_shared' },
+      },
+    });
+    expect(sessionPlatformLinkRepository.upsertLink).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'root-session',
+      externalThreadKey: 'om_root_shared',
+    }));
   });
 
   it('rejects thread follow-up messages when the root session does not exist yet', async () => {

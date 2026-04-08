@@ -283,6 +283,58 @@ describe('SessionRepository', () => {
       client.close();
     }
   });
+
+  it('lists descendant session ids breadth-first from the stored lineage', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({ dbPath: join(tempDir, 'history.sqlite') });
+
+    try {
+      await bootstrapSessionsTable(client.connection);
+      const repository = new SessionRepository(client.db);
+
+      await repository.upsertSession({
+        sessionId: 'root-session',
+        taskType: 'coding',
+        status: 'active',
+        createdAtMs: 100,
+        updatedAtMs: 100,
+      });
+      await repository.upsertSession({
+        sessionId: 'child-a',
+        parentSessionId: 'root-session',
+        taskType: 'coding',
+        status: 'active',
+        createdAtMs: 110,
+        updatedAtMs: 110,
+      });
+      await repository.upsertSession({
+        sessionId: 'child-b',
+        parentSessionId: 'root-session',
+        taskType: 'coding',
+        status: 'active',
+        createdAtMs: 120,
+        updatedAtMs: 120,
+      });
+      await repository.upsertSession({
+        sessionId: 'grandchild-a1',
+        parentSessionId: 'child-a',
+        taskType: 'coding',
+        status: 'active',
+        createdAtMs: 130,
+        updatedAtMs: 130,
+      });
+
+      expect(await repository.listDescendantSessionIds('root-session')).toEqual([
+        'child-a',
+        'child-b',
+        'grandchild-a1',
+      ]);
+    } finally {
+      client.close();
+    }
+  });
 });
 
 async function bootstrapSessionsTable(connection: Awaited<ReturnType<typeof createSqliteClient>>['connection']): Promise<void> {

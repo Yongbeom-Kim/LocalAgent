@@ -189,6 +189,40 @@ describe('TaskPoller', () => {
       });
     });
 
+    it('publishes phase events with context_ref for child-session jobs', async () => {
+      const job = createJob({
+        context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+      });
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job) })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ result_id: 'res-1' }) });
+
+      await poller.pollOnce();
+      await poller.drain();
+
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(1, job, 'executing');
+      expect(mockPhasePublish).toHaveBeenNthCalledWith(2, job, 'completed');
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/results', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: 'Bearer secret',
+        },
+        body: JSON.stringify({
+          ...mockResultSubmission,
+          task_type: job.task_type,
+          session_id: job.session_id,
+          context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+        }),
+      });
+    });
+
     it('still posts result after early ack even if result POST fails', async () => {
       const job = createJob();
 

@@ -12,6 +12,7 @@ export class TaskPhasePublisher {
     const body: TaskPhaseEventSubmission = {
       task_id: job.task_id,
       session_id: job.session_id,
+      ...(job.context_ref ? { context_ref: job.context_ref } : {}),
       task_type: job.task_type,
       phase,
       ...(job.task_source ? { task_source: job.task_source } : {}),

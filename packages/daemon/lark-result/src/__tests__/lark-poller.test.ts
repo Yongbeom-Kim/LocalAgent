@@ -111,6 +111,40 @@ describe('LarkPoller', () => {
       });
     });
 
+    it('dispatches child-session lark phase events using context_ref anchors', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({
+            event_kind: 'phase',
+            event: {
+              event_id: 'evt-child-phase',
+              task_id: 'task-child-123',
+              session_id: 'child-session',
+              context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+              phase: 'queued',
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      expect(mockPhaseNotify).toHaveBeenCalledWith(expect.objectContaining({
+        event_id: 'evt-child-phase',
+        session_id: 'child-session',
+        context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+        phase: 'queued',
+      }));
+      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/lark-messages/evt-child-phase/ack', {
+        method: 'POST',
+        headers: authHeaders,
+      });
+    });
+
     it('ignores obvious phase regressions while still acking', async () => {
       mockFetch
         .mockResolvedValueOnce({

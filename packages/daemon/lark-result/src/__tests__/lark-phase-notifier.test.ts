@@ -172,6 +172,39 @@ describe('LarkPhaseNotifier', () => {
     expect(repository.appendLarkPhaseReactionAttempt).not.toHaveBeenCalled();
   });
 
+  it('uses context_ref as the reply anchor for child-session lark phase events', async () => {
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { reaction_id: 'react-new' } }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve({ code: 0, data: { open_id: 'ou_bot', items: [] } }),
+      });
+
+    await notifier.notify({
+      event_id: 'evt-child-1',
+      task_id: 'task-child-1',
+      phase: 'queued',
+      session_id: 'child-session',
+      context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+    });
+
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      1,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_root_shared/reactions',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(repository.appendLarkPhaseReactionAttempt).toHaveBeenCalledWith(
+      'om_root_shared',
+      expect.objectContaining({
+        phase: 'queued',
+        event_id: 'evt-child-1',
+      }),
+    );
+  });
+
   it('records a failure marker when reaction updates fail', async () => {
     mockFetch
       .mockResolvedValueOnce({

@@ -562,6 +562,10 @@ describe('EnrichmentPoller', () => {
 describe('EnrichmentPoller with ThreadContextFetcher', () => {
   let poller: EnrichmentPoller;
   let mockThreadFetcher: { fetchThreadContext: ReturnType<typeof vi.fn> };
+  let mockSessionRepository: {
+    listDescendantSessionIds: ReturnType<typeof vi.fn>;
+    upsertSession: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -575,6 +579,10 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     vi.mocked(TaskPhasePublisher).mockClear();
     const service = new EnrichmentService() as any;
     mockThreadFetcher = { fetchThreadContext: vi.fn() };
+    mockSessionRepository = {
+      listDescendantSessionIds: vi.fn().mockResolvedValue([]),
+      upsertSession: vi.fn().mockResolvedValue(undefined),
+    };
     poller = new EnrichmentPoller(
       'http://localhost:3000',
       'http://task-daemon:7070',
@@ -1369,6 +1377,10 @@ describe('TelegramThreadContextFetcher', () => {
 describe('EnrichmentPoller canonical ingress flow', () => {
   let poller: EnrichmentPoller;
   let mockThreadFetcher: { fetchThreadContext: ReturnType<typeof vi.fn> };
+  let mockSessionRepository: {
+    listDescendantSessionIds: ReturnType<typeof vi.fn>;
+    upsertSession: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -1382,6 +1394,10 @@ describe('EnrichmentPoller canonical ingress flow', () => {
     vi.mocked(TaskPhasePublisher).mockClear();
     const service = new EnrichmentService() as any;
     mockThreadFetcher = { fetchThreadContext: vi.fn() };
+    mockSessionRepository = {
+      listDescendantSessionIds: vi.fn().mockResolvedValue([]),
+      upsertSession: vi.fn().mockResolvedValue(undefined),
+    };
     poller = new EnrichmentPoller(
       'http://localhost:3000',
       'http://task-daemon:7070',
@@ -1443,7 +1459,10 @@ describe('EnrichmentPoller canonical ingress flow', () => {
       undefined,
       'daemon-token',
       undefined,
-      { telegramThreadContextFetcher: telegramThreadContextFetcher as any },
+      {
+        telegramThreadContextFetcher: telegramThreadContextFetcher as any,
+        sessionRepository: mockSessionRepository as any,
+      },
     );
 
     mockFetch
@@ -1457,5 +1476,112 @@ describe('EnrichmentPoller canonical ingress flow', () => {
     expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/results', expect.objectContaining({
       body: expect.stringContaining('"event_kind":"mirror"'),
     }));
+  });
+
+  it('keeps explicit child session ids on telegram topics and persists root lineage', async () => {
+    const task = createTask({
+      task_type: 'code_review',
+      payload: 'review child session',
+      session_id: 'child-session',
+      context_ref: { platform: 'telegram', root_key: '-100:42' },
+      task_source: { source: 'telegram', chat_id: '-100', topic_id: '42', message_id: '10' },
+    });
+    const jobSubmission = createJobSubmission({
+      payload: 'review child session',
+      session_id: 'child-session',
+      context_ref: { platform: 'telegram', root_key: '-100:42' },
+    });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+
+    const telegramThreadContextFetcher = {
+      fetchThreadContext: vi.fn().mockResolvedValue({
+        kind: 'thread',
+        threadContext: 'user: root asks\nassistant: root answer',
+        inheritedTaskType: 'code_review',
+        inheritedSessionId: 'root-session',
+        inheritedExecutor: 'claude',
+        inheritedExecutorModel: 'sonnet',
+      }),
+    };
+    poller = new EnrichmentPoller(
+      'http://localhost:3000',
+      'http://task-daemon:7070',
+      new EnrichmentService() as any,
+      mockThreadFetcher as unknown as ThreadContextFetcher,
+      undefined,
+      'daemon-token',
+      undefined,
+      {
+        telegramThreadContextFetcher: telegramThreadContextFetcher as any,
+        sessionRepository: mockSessionRepository as any,
+      },
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
+    expect(telegramThreadContextFetcher.fetchThreadContext).toHaveBeenCalledWith('-100', '42');
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: 'child-session',
+      context_ref: { platform: 'telegram', root_key: '-100:42' },
+    }), 'child-session', 'user: root asks\nassistant: root answer');
+    expect(mockSessionRepository.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'child-session',
+      parentSessionId: 'root-session',
+      taskType: 'code_review',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+    }));
+    expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...buildApiAuthHeaders('daemon-token') },
+      body: JSON.stringify(jobSubmission),
+    });
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      task_id: 'task-123',
+      session_id: 'child-session',
+      context_ref: { platform: 'telegram', root_key: '-100:42' },
+    }), 'queued');
+  });
+
+  it('publishes queued phase events with context_ref for explicit child-session work', async () => {
+    const task = createTask({
+      task_type: 'code_review',
+      payload: 'review child session',
+      session_id: 'child-session',
+      context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+      task_source: { source: 'lark', message_id: 'om_child_task' },
+    });
+    const jobSubmission = createJobSubmission({
+      payload: 'review child session',
+      session_id: 'child-session',
+      context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+    });
+    mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
+    mockThreadFetcher.fetchThreadContext.mockResolvedValue({ kind: 'not_thread' });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1', ...jobSubmission }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) });
+
+    await poller.pollOnce();
+
+    expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({
+      session_id: 'child-session',
+      context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+    }), 'child-session', undefined);
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(1, task, 'enriching');
+    expect(mockPhasePublish).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      task_id: 'task-123',
+      session_id: 'child-session',
+      context_ref: { platform: 'lark', root_key: 'om_root_shared' },
+    }), 'queued');
   });
 });

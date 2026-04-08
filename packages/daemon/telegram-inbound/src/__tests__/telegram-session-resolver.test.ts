@@ -126,5 +126,73 @@ describe('TelegramSessionResolver', () => {
         contextRef: { platform: 'telegram', root_key: '-100456789:42' },
       },
     });
+    expect(sessionRepository.upsertSession).toHaveBeenCalledWith(expect.objectContaining({
+      sessionId: 'sess-1',
+    }));
+    expect(sessionRepository.upsertSession.mock.calls[0][0].parentSessionId).toBeUndefined();
+  });
+
+  it('keeps the reporting-channel root session when child attachments exist on the same topic', async () => {
+    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValue([
+      {
+        sessionId: 'root-session',
+        platform: 'telegram',
+        externalThreadKey: '-100456789:42',
+        createdAtMs: 1,
+        updatedAtMs: 1,
+        endedAtMs: null,
+      },
+      {
+        sessionId: 'child-session',
+        platform: 'telegram',
+        externalThreadKey: '-100456789:42',
+        createdAtMs: 2,
+        updatedAtMs: 2,
+        endedAtMs: null,
+      },
+    ]);
+    telegramHistoryRepository.getTelegramThreadByTopic.mockResolvedValue({
+      chatId: '-100456789',
+      topicId: '42',
+      rootSessionId: 'root-session',
+      sessionId: 'root-session',
+      source: 'telegram',
+      taskType: 'deploy',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      seedMessageId: '9',
+      statusMessageId: null,
+      metadataJson: null,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      endedAtMs: null,
+    });
+
+    const result = await resolver.resolve({
+      platform: 'telegram',
+      schema_version: 1,
+      chat_id: '-100456789',
+      topic_id: '42',
+      message_id: '12',
+      sender_id: '7',
+      sender_is_bot: false,
+      message_type: 'text',
+      raw_content: 'follow up on root',
+      normalized_text: 'follow up on root',
+      is_normalizable: true,
+      occurred_at_ms: 3,
+    });
+
+    expect(result).toEqual({
+      kind: 'accepted',
+      task: {
+        taskType: 'thread_reply',
+        payload: 'follow up on root',
+        taskSource: { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '12' },
+        sessionId: 'root-session',
+        contextRef: { platform: 'telegram', root_key: '-100456789:42' },
+      },
+    });
   });
 });

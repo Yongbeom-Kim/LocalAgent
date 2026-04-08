@@ -1,6 +1,7 @@
 import {
   LarkHistoryRepository,
   createLogger,
+  type TaskContextRef,
 } from '@local-agent/shared';
 import {
   getPhaseReactionTypes,
@@ -37,6 +38,8 @@ interface LarkReactionItem {
 export interface TaskPhaseEventLike {
   event_id?: string;
   task_id?: string;
+  session_id?: string;
+  context_ref?: TaskContextRef;
   phase: string;
   task_source?: {
     source: string;
@@ -93,11 +96,11 @@ export class LarkPhaseNotifier {
       return;
     }
 
-    if (event.task_source?.source !== 'lark' || !event.task_source.message_id) {
+    const messageId = this.resolveMessageId(event);
+    if (!messageId) {
       return;
     }
 
-    const messageId = event.task_source.message_id;
     const nowIso = new Date().toISOString();
     const reaction = getReactionForPhase(event.phase);
     const action: LarkPhaseReactionAction = reaction ? 'set' : 'clear';
@@ -165,6 +168,18 @@ export class LarkPhaseNotifier {
         'Failed to apply lark phase reaction update',
       );
     }
+  }
+
+  private resolveMessageId(event: TaskPhaseEventLike): string | null {
+    if (event.task_source?.source === 'lark' && event.task_source.message_id) {
+      return event.task_source.message_id;
+    }
+
+    if (event.context_ref?.platform === 'lark') {
+      return event.context_ref.root_key;
+    }
+
+    return null;
   }
 
   async clearPhaseReactions(
