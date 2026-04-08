@@ -526,6 +526,23 @@ describe('EnrichmentService', () => {
       expect(result.type).toBe('enriched');
     });
 
+    it('loads rules.<task_type>.system_prompt from YAML literal blocks', () => {
+      const dir = mkdtempSync(join(tmpdir(), 'enrichment-system-prompt-'));
+      const configPath = join(dir, 'config.yaml');
+      writeFileSync(
+        configPath,
+        `rules:\n  code_review:\n    system_prompt: |\n      First line.\n      Second line.\n`,
+      );
+
+      const service = EnrichmentService.fromFile(configPath);
+      const result = service.enrich(createTask({ task_type: 'code_review' }), TEST_SESSION_ID);
+
+      expect(result.type).toBe('enriched');
+      expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe(
+        `${GLOBAL_SYSTEM_PROMPT}\n\nFirst line.\nSecond line.`,
+      );
+    });
+
     it('loads cleanup rule from builtin config with builtin executor', () => {
       const configPath = new URL('../../config/builtin.yaml', import.meta.url).pathname;
       const service = EnrichmentService.fromFile(configPath);
@@ -912,5 +929,15 @@ describe('system_prompt passthrough', () => {
     expect((result as { type: 'enriched'; job: JobSubmission }).job.system_prompt).toBe(
       `${GLOBAL_SYSTEM_PROMPT}\n\nBe concise.`,
     );
+  });
+
+  it('rejects non-string rules.<task_type>.system_prompt values', () => {
+    expect(() => EnrichmentService.fromObject({
+      rules: {
+        code_review: {
+          system_prompt: 123 as unknown as string,
+        },
+      },
+    })).toThrow('Invalid enrichment rule "code_review": system_prompt must be a string when provided.');
   });
 });
