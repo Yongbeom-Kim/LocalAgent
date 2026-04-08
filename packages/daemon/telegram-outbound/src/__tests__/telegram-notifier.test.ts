@@ -298,6 +298,81 @@ describe('TelegramNotifier', () => {
       }));
     });
 
+    it('reuses the canonical fallback topic when activation loses the claim race', async () => {
+      sessionPlatformLinkRepository.claimPendingLink.mockImplementation(async (params) => ({
+        sessionId: params.sessionId,
+        platform: params.platform,
+        externalThreadKey: null,
+        linkStatus: 'pending',
+        claimToken: params.claimToken,
+        claimExpiresAtMs: params.claimExpiresAtMs,
+        createdAtMs: params.nowMs,
+        updatedAtMs: params.nowMs,
+        endedAtMs: null,
+      }));
+      sessionPlatformLinkRepository.activateClaimedLink.mockResolvedValue(false);
+      sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform
+        .mockResolvedValueOnce(null)
+        .mockResolvedValueOnce({
+          sessionId: 'session-123',
+          platform: 'telegram',
+          externalThreadKey: '-100456789:77',
+          linkStatus: 'active',
+          claimToken: null,
+          claimExpiresAtMs: null,
+          createdAtMs: 10,
+          updatedAtMs: 10,
+          endedAtMs: null,
+        });
+      sessionRepository.getSessionById.mockResolvedValue({
+        sessionId: 'session-123',
+        taskType: 'generic',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        endedAtMs: null,
+        fallbackSeedText: 'Seed text',
+        fallbackOrigin: 'scheduler',
+        fallbackTitleHint: 'Morning review',
+      });
+      topicManager.createForumTopic.mockResolvedValue({ message_thread_id: 42, name: 'Seed topic' });
+      telegramHistoryRepository.getTelegramThreadByTopic.mockResolvedValue({
+        chatId: '-100456789',
+        topicId: '77',
+        sessionId: 'session-123',
+        source: 'scheduler',
+        taskType: 'generic',
+        executor: 'claude',
+        executorModel: 'sonnet',
+        status: 'active',
+        seedMessageId: '700',
+        statusMessageId: null,
+        metadataJson: null,
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        endedAtMs: null,
+      });
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 501 } }) })
+        .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 502 } }) });
+
+      await notifier.notifyResult({
+        result: createResult({
+          session_id: 'session-123',
+          task_source: { source: 'lark', message_id: 'om_1' },
+        }),
+      });
+
+      const replyBody = JSON.parse(mockFetch.mock.calls[1][1].body);
+      expect(replyBody.message_thread_id).toBe(77);
+      expect(telegramHistoryRepository.recordOutboundTelegramMessage).toHaveBeenCalledWith(expect.objectContaining({
+        topicId: '77',
+        messageId: '502',
+      }));
+    });
+
     it('sends mirror text without markdown mode', async () => {
       sessionBridgeRepository.getBridgeBySessionId.mockResolvedValue({
         sessionId: 'session-123',

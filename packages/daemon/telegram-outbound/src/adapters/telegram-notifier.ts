@@ -493,13 +493,25 @@ export class TelegramNotifier {
         createdAtMs: nowMs,
       });
 
-      await this.sessionPlatformLinkRepository.activateClaimedLink({
+      const activated = await this.sessionPlatformLinkRepository.activateClaimedLink({
         sessionId: params.sessionId,
         platform: TELEGRAM_PLATFORM,
         claimToken: claim.claimToken,
         externalThreadKey,
         updatedAtMs: nowMs,
       });
+
+      if (!activated) {
+        const reread = await this.sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform(
+          params.sessionId,
+          TELEGRAM_PLATFORM,
+        );
+        if (!reread?.externalThreadKey) {
+          throw new Error(`Failed to activate Telegram fallback topic for session ${params.sessionId}`);
+        }
+
+        return { ...this.parseExternalThreadKey(reread.externalThreadKey), sessionId: params.sessionId };
+      }
 
       return {
         chatId: this.forumGroupId,

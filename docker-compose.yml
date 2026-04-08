@@ -24,6 +24,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      migrator:
+        condition: service_completed_successfully
     profiles:
       - full
 

@@ -267,6 +267,93 @@ describe('LarkNotifier', () => {
     }));
   });
 
+  it('reuses the canonical fallback root when activation loses the claim race', async () => {
+    const repository = createRepositoryMocks();
+    sessionPlatformLinkRepository.claimPendingLink.mockImplementation(async (params) => ({
+      sessionId: params.sessionId,
+      platform: params.platform,
+      externalThreadKey: null,
+      linkStatus: 'pending',
+      claimToken: params.claimToken,
+      claimExpiresAtMs: params.claimExpiresAtMs,
+      createdAtMs: params.nowMs,
+      updatedAtMs: params.nowMs,
+      endedAtMs: null,
+    }));
+    sessionPlatformLinkRepository.activateClaimedLink.mockResolvedValue(false);
+    sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        sessionId: 'session-fallback',
+        platform: 'lark',
+        externalThreadKey: 'om_canonical',
+        linkStatus: 'active',
+        claimToken: null,
+        claimExpiresAtMs: null,
+        createdAtMs: 10,
+        updatedAtMs: 10,
+        endedAtMs: null,
+      });
+    sessionRepository.getSessionById.mockResolvedValue({
+      sessionId: 'session-fallback',
+      taskType: 'generic',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 10,
+      updatedAtMs: 10,
+      endedAtMs: null,
+      fallbackSeedText: 'Seed text',
+      fallbackOrigin: 'scheduler',
+      fallbackTitleHint: 'hint',
+    });
+    repository.getLarkThreadByRootMessageId.mockImplementation(async (rootMessageId: string) => ({
+      rootMessageId,
+      threadId: null,
+      sessionId: 'session-fallback',
+      source: 'scheduler',
+      chatType: null,
+      taskType: 'generic',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 10,
+      updatedAtMs: 10,
+      endedAtMs: null,
+    }));
+
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+      sessionRepository as any,
+      sessionPlatformLinkRepository as any,
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_seed_1' } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_1' } }) });
+
+    await dbNotifier.notify(createResult({
+      session_id: 'session-fallback',
+      task_source: { source: 'telegram', chat_id: '-1001', topic_id: '42', message_id: '99' },
+    } as any));
+
+    expect(sessionPlatformLinkRepository.activateClaimedLink).toHaveBeenCalledTimes(1);
+    expect(mockFetch).toHaveBeenNthCalledWith(
+      2,
+      'https://open.larksuite.com/open-apis/im/v1/messages/om_canonical/reply',
+      expect.any(Object),
+    );
+    expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: 'om_reply_1',
+      rootMessageId: 'om_canonical',
+    }));
+  });
+
   it('persists outbound lark replies after successful send', async () => {
     const repository = createRepositoryMocks();
     const dbNotifier = new LarkNotifier(

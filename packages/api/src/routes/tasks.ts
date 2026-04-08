@@ -124,7 +124,6 @@ export function createTaskRoutes(
         ...(context_ref !== undefined ? { context_ref } : {}),
         ...(task_source ? { task_source } : {}),
       };
-
       if (session !== undefined && typeof session_id === 'string') {
         const sessionMetadata = session as {
           fallbackSeedText?: string;
