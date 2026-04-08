@@ -10,7 +10,7 @@ export class LarkReactor {
   ) {}
 
   /**
-   * Add an "OnIt" emoji reaction to a message. Best-effort — errors are logged and swallowed.
+   * Add an "OK" emoji reaction to a message. Best-effort — errors are logged and swallowed.
    */
   async react(messageId: string): Promise<void> {
     try {
@@ -22,7 +22,7 @@ export class LarkReactor {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ reaction_type: { emoji_type: 'OnIt' } }),
+        body: JSON.stringify({ reaction_type: { emoji_type: 'OK' } }),
       });
 
       const data = (await res.json()) as { code: number; msg?: string };

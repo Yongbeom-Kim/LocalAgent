@@ -13,7 +13,7 @@ describe('LarkReactor', () => {
     reactor = new LarkReactor('app-id', 'app-secret');
   });
 
-  it('fetches tenant token and adds OnIt reaction', async () => {
+  it('fetches tenant token and adds OK reaction', async () => {
     mockFetch
       .mockResolvedValueOnce({
         ok: true,
@@ -46,7 +46,7 @@ describe('LarkReactor', () => {
           'Content-Type': 'application/json',
           Authorization: 'Bearer token-abc',
         },
-        body: JSON.stringify({ reaction_type: { emoji_type: 'OnIt' } }),
+        body: JSON.stringify({ reaction_type: { emoji_type: 'OK' } }),
       }),
     );
   });
