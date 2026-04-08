@@ -75,7 +75,9 @@ export class ThreadContextFetcher {
         sourceMessage.rootMessageId,
       );
 
-      const fencedMessages = applyNewInstanceFence(messages);
+      const rootOwnedMessages = messages.filter((row) => row.sessionId === thread.sessionId);
+
+      const fencedMessages = applyNewInstanceFence(rootOwnedMessages);
       const historyRows = fencedMessages.filter((row) => row.messageId !== messageId);
       const threadContext = formatLarkPromptHistory(historyRows);
 

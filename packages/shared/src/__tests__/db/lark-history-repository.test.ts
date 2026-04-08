@@ -608,7 +608,7 @@ async function bootstrapLarkTables(connection: Awaited<ReturnType<typeof createS
     CREATE TABLE IF NOT EXISTS lark_threads (
       root_message_id TEXT PRIMARY KEY,
       thread_id TEXT UNIQUE,
-      session_id TEXT NOT NULL UNIQUE,
+      root_session_id TEXT NOT NULL UNIQUE,
       source TEXT NOT NULL,
       chat_type TEXT,
       task_type TEXT NOT NULL,

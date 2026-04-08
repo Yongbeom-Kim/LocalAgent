@@ -57,7 +57,11 @@ export class TelegramSessionResolver {
       envelope.chat_id,
       envelope.topic_id,
     );
-    const existingLink = await this.sessionPlatformLinkRepository.getLinkByPlatformThread('telegram', externalThreadKey);
+    const existingLinks = await this.sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey(
+      'telegram',
+      externalThreadKey,
+    );
+    const existingLink = existingLinks[0] ?? null;
     const classification = classifyTelegramInboundEnvelope(
       {
         task_id: `telegram:${envelope.chat_id}:${envelope.message_id}`,
@@ -69,7 +73,7 @@ export class TelegramSessionResolver {
       Boolean(existingLink ?? existingThread),
     );
 
-    let sessionId = existingLink?.sessionId ?? existingThread?.sessionId ?? null;
+    let sessionId = existingThread?.sessionId ?? existingLink?.sessionId ?? null;
     if (!sessionId && classification.kind === 'accepted' && classification.shouldMaterializeRootState) {
       sessionId = generateSessionId();
     }

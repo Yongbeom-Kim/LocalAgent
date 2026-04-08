@@ -14,7 +14,7 @@ afterEach(() => {
 });
 
 describe('SessionBridgeRepository', () => {
-  it('upserts and resolves a session bridge by session_id and telegram topic id', async () => {
+  it('upserts and resolves a session bridge by root_session_id and telegram topic id', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-bridge-db-test-'));
     tempDirs.push(tempDir);
 
@@ -25,7 +25,7 @@ describe('SessionBridgeRepository', () => {
       const repository = new SessionBridgeRepository(client.db);
 
       await repository.upsertSessionBridge({
-        sessionId: 'session-1',
+        rootSessionId: 'session-1',
         larkRootMessageId: 'om_root_1',
         telegramChatId: '-100123',
         telegramTopicId: '42',
@@ -33,11 +33,11 @@ describe('SessionBridgeRepository', () => {
         updatedAtMs: 100,
       });
 
-      expect(await repository.getBridgeBySessionId('session-1')).toEqual(
+      expect(await repository.getBridgeByRootSessionId('session-1')).toEqual(
         expect.objectContaining({ telegramChatId: '-100123', telegramTopicId: '42' }),
       );
       expect(await repository.getBridgeByLarkRootMessageId('om_root_1')).toEqual(
-        expect.objectContaining({ sessionId: 'session-1' }),
+        expect.objectContaining({ rootSessionId: 'session-1' }),
       );
       expect(await repository.getBridgeByTelegramTopic('-100123', '42')).toEqual(
         expect.objectContaining({ larkRootMessageId: 'om_root_1' }),
@@ -47,7 +47,7 @@ describe('SessionBridgeRepository', () => {
     }
   });
 
-  it('deletes bridge rows by session_id', async () => {
+  it('deletes bridge rows by root_session_id', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-bridge-db-test-'));
     tempDirs.push(tempDir);
 
@@ -58,16 +58,16 @@ describe('SessionBridgeRepository', () => {
       const repository = new SessionBridgeRepository(client.db);
 
       await repository.upsertSessionBridge({
-        sessionId: 'session-2',
+        rootSessionId: 'session-2',
         larkRootMessageId: 'om_root_2',
         telegramChatId: '-100123',
         telegramTopicId: '99',
         createdAtMs: 100,
         updatedAtMs: 100,
       });
-      await repository.deleteBridgeBySessionId('session-2');
+      await repository.deleteBridgeByRootSessionId('session-2');
 
-      expect(await repository.getBridgeBySessionId('session-2')).toBeNull();
+      expect(await repository.getBridgeByRootSessionId('session-2')).toBeNull();
     } finally {
       client.close();
     }
@@ -79,7 +79,7 @@ async function bootstrapBridgeTables(connection: Awaited<ReturnType<typeof creat
     CREATE TABLE IF NOT EXISTS lark_threads (
       root_message_id TEXT PRIMARY KEY,
       thread_id TEXT UNIQUE,
-      session_id TEXT NOT NULL UNIQUE,
+      root_session_id TEXT NOT NULL UNIQUE,
       source TEXT NOT NULL,
       chat_type TEXT,
       task_type TEXT NOT NULL,
@@ -96,7 +96,7 @@ async function bootstrapBridgeTables(connection: Awaited<ReturnType<typeof creat
     CREATE TABLE IF NOT EXISTS telegram_threads (
       chat_id TEXT NOT NULL,
       topic_id TEXT NOT NULL,
-      session_id TEXT NOT NULL UNIQUE,
+      root_session_id TEXT NOT NULL UNIQUE,
       source TEXT NOT NULL,
       task_type TEXT NOT NULL,
       executor TEXT NOT NULL,
@@ -116,7 +116,7 @@ async function bootstrapBridgeTables(connection: Awaited<ReturnType<typeof creat
     INSERT INTO lark_threads (
       root_message_id,
       thread_id,
-      session_id,
+      root_session_id,
       source,
       chat_type,
       task_type,
@@ -134,7 +134,7 @@ async function bootstrapBridgeTables(connection: Awaited<ReturnType<typeof creat
     INSERT INTO lark_threads (
       root_message_id,
       thread_id,
-      session_id,
+      root_session_id,
       source,
       chat_type,
       task_type,
@@ -152,7 +152,7 @@ async function bootstrapBridgeTables(connection: Awaited<ReturnType<typeof creat
     INSERT INTO telegram_threads (
       chat_id,
       topic_id,
-      session_id,
+      root_session_id,
       source,
       task_type,
       executor,
@@ -168,7 +168,7 @@ async function bootstrapBridgeTables(connection: Awaited<ReturnType<typeof creat
     INSERT INTO telegram_threads (
       chat_id,
       topic_id,
-      session_id,
+      root_session_id,
       source,
       task_type,
       executor,
@@ -182,7 +182,7 @@ async function bootstrapBridgeTables(connection: Awaited<ReturnType<typeof creat
 
   await connection.execute(`
     CREATE TABLE IF NOT EXISTS session_bridges (
-      session_id TEXT PRIMARY KEY,
+      root_session_id TEXT PRIMARY KEY,
       lark_root_message_id TEXT NOT NULL UNIQUE,
       telegram_chat_id TEXT NOT NULL,
       telegram_topic_id TEXT NOT NULL,

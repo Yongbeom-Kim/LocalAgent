@@ -23,12 +23,15 @@
 - Create: `LocalAgent/packages/migrator/src/migrations/0004_shared_reporting_channel_session_fanout.sql`
 - Modify: `LocalAgent/packages/migrator/src/migrations/meta/_journal.json`
 - Create: `LocalAgent/packages/migrator/src/migrations/0005_sync_schema_version.sql`
+- Modify: `LocalAgent/packages/migrator/src/__tests__/migrate.test.ts`
 - Modify: `LocalAgent/docs/LOCAL_DEVELOPMENT.md`
 
 **Shared contracts and API**
 - Modify: `LocalAgent/packages/shared/src/types.ts`
 - Modify: `LocalAgent/packages/api/src/routes/tasks.ts`
 - Modify: `LocalAgent/packages/api/src/routes/jobs.ts`
+- Modify: `LocalAgent/packages/api/src/__tests__/routes/tasks.test.ts`
+- Modify: `LocalAgent/packages/api/src/__tests__/routes/jobs.test.ts`
 
 **Inbound resolution and enrichment**
 - Modify: `LocalAgent/packages/daemon/lark-listener/src/adapters/lark-session-resolver.ts`
@@ -42,6 +45,8 @@
 - Modify: `LocalAgent/packages/daemon/telegram-outbound/src/adapters/telegram-notifier.ts`
 - Modify: `LocalAgent/packages/daemon/task/src/adapters/cleanup-executor.ts`
 - Modify: `LocalAgent/packages/daemon/task/src/services/gc-executor.ts`
+- Modify: `LocalAgent/packages/shared/src/index.ts`
+- Create: `LocalAgent/packages/shared/src/cleanup.ts`
 
 **CLI**
 - Modify: `LocalAgent/packages/cli/src/commands/submit.ts`
@@ -66,6 +71,10 @@
 - Modify: `LocalAgent/packages/daemon/task-enrichment/src/__tests__/config.test.ts`
 - Modify: `LocalAgent/packages/daemon/telegram-inbound/src/__tests__/config.test.ts`
 - Modify: `LocalAgent/packages/daemon/telegram-outbound/src/__tests__/config.test.ts`
+- Modify: `LocalAgent/packages/migrator/src/__tests__/migrate.test.ts`
+- Create: `LocalAgent/packages/shared/src/__tests__/cleanup.test.ts`
+- Modify: `LocalAgent/packages/daemon/task/src/adapters/__tests__/cleanup-executor.test.ts`
+- Modify: `LocalAgent/packages/daemon/task/src/services/__tests__/gc-executor.test.ts`
 
 ### Task 1: Migrate the schema from single-session ownership to root-owned reporting channels
 
@@ -83,6 +92,7 @@
 - Test: `LocalAgent/packages/daemon/task-enrichment/src/__tests__/config.test.ts`
 - Test: `LocalAgent/packages/daemon/telegram-inbound/src/__tests__/config.test.ts`
 - Test: `LocalAgent/packages/daemon/telegram-outbound/src/__tests__/config.test.ts`
+- Test: `LocalAgent/packages/migrator/src/__tests__/migrate.test.ts`
 
 - [ ] **Step 1: Write the failing schema and repository tests for lineage and multi-attachment**
 
@@ -126,11 +136,13 @@ In `LocalAgent/packages/migrator/src/migrations/0004_shared_reporting_channel_se
 
 This repo uses Drizzle migrations with an explicit journal at `LocalAgent/packages/migrator/src/migrations/meta/_journal.json`. Update it to include the new `0004_shared_reporting_channel_session_fanout` tag and a follow-up `0005_sync_schema_version` tag.
 
-Create `LocalAgent/packages/migrator/src/migrations/0005_sync_schema_version.sql` that updates `__schema_version.version` to `9` (matching the new journal version) so services using `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` can pin correctly.
+Important baseline: the current journal already includes entries through `idx = 3` / `version = "9"`, while `0003_sync_schema_version.sql` still writes DB schema version `8`. Treat `8` as the current runtime schema version before this feature.
+
+Create `LocalAgent/packages/migrator/src/migrations/0005_sync_schema_version.sql` that updates `__schema_version.version` to `10`, and append journal entries so the post-feature runtime schema version is unambiguously `10`.
 
 - [ ] **Step 6: Update schema-version expectations in daemon config tests and docs**
 
-Update tests that hardcode `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '8'` to `'9'`:
+Update tests that hardcode `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '8'` to `'10'`:
 
 - `LocalAgent/packages/daemon/lark-listener/src/__tests__/config.test.ts`
 - `LocalAgent/packages/daemon/lark-result/src/__tests__/config.test.ts`
@@ -138,7 +150,16 @@ Update tests that hardcode `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '8'` to `'9'
 - `LocalAgent/packages/daemon/telegram-inbound/src/__tests__/config.test.ts`
 - `LocalAgent/packages/daemon/telegram-outbound/src/__tests__/config.test.ts`
 
-Update `LocalAgent/docs/LOCAL_DEVELOPMENT.md` to recommend `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` of `9`.
+Update `LocalAgent/docs/LOCAL_DEVELOPMENT.md` to recommend `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` of `10`.
+
+- [ ] **Step 6a: Update migrator coverage for the new schema semantics**
+
+In `LocalAgent/packages/migrator/src/__tests__/migrate.test.ts`, replace the old assertions with coverage that verifies:
+
+- `lark_threads.root_session_id`, `telegram_threads.root_session_id`, and `session_bridges.root_session_id` are the persisted column names;
+- `sessions.parent_session_id` exists and accepts `NULL` for roots plus existing-parent references for children;
+- `session_platform_links` keeps `(session_id, platform)` unique while allowing two different sessions to share the same `(platform, external_thread_key)`;
+- the migration test inserts two sessions attached to the same reporting channel and proves that only the per-session uniqueness constraint remains.
 
 - [ ] **Step 7: Run the focused shared DB tests again**
 
@@ -147,6 +168,9 @@ Run:
 ```bash
 cd LocalAgent/packages/shared
 node ../../common/scripts/install-run-rushx.js test -- src/__tests__/db/session-repository.test.ts src/__tests__/db/session-platform-link-repository.test.ts src/__tests__/db/session-bridge-repository.test.ts
+
+cd ../migrator
+node ../../common/scripts/install-run-rushx.js test -- src/__tests__/migrate.test.ts
 ```
 
 Expected: PASS.
@@ -154,7 +178,7 @@ Expected: PASS.
 - [ ] **Step 8: Commit the schema migration slice**
 
 ```bash
-git add LocalAgent/packages/shared/src/db/schema.ts LocalAgent/packages/migrator/src/migrations/0004_shared_reporting_channel_session_fanout.sql LocalAgent/packages/migrator/src/migrations/0005_sync_schema_version.sql LocalAgent/packages/migrator/src/migrations/meta/_journal.json LocalAgent/docs/LOCAL_DEVELOPMENT.md LocalAgent/packages/shared/src/__tests__/db/session-repository.test.ts LocalAgent/packages/shared/src/__tests__/db/session-platform-link-repository.test.ts LocalAgent/packages/shared/src/__tests__/db/session-bridge-repository.test.ts
+git add LocalAgent/packages/shared/src/db/schema.ts LocalAgent/packages/migrator/src/migrations/0004_shared_reporting_channel_session_fanout.sql LocalAgent/packages/migrator/src/migrations/0005_sync_schema_version.sql LocalAgent/packages/migrator/src/migrations/meta/_journal.json LocalAgent/packages/migrator/src/__tests__/migrate.test.ts LocalAgent/docs/LOCAL_DEVELOPMENT.md LocalAgent/packages/shared/src/__tests__/db/session-repository.test.ts LocalAgent/packages/shared/src/__tests__/db/session-platform-link-repository.test.ts LocalAgent/packages/shared/src/__tests__/db/session-bridge-repository.test.ts
 git commit -m "feat: add reporting channel session fanout schema"
 ```
 
@@ -256,6 +280,8 @@ git commit -m "feat: add lineage-aware reporting channel repositories"
 - Modify: `LocalAgent/packages/api/src/routes/tasks.ts`
 - Modify: `LocalAgent/packages/api/src/routes/jobs.ts`
 - Test: `LocalAgent/packages/shared/src/__tests__/types.test.ts`
+- Test: `LocalAgent/packages/api/src/__tests__/routes/tasks.test.ts`
+- Test: `LocalAgent/packages/api/src/__tests__/routes/jobs.test.ts`
 
 - [ ] **Step 1: Write failing type/validation tests for explicit session plus context submission**
 
@@ -291,7 +317,9 @@ In `LocalAgent/packages/api/src/routes/tasks.ts` and `LocalAgent/packages/api/sr
 
 - preserve existing optionality for backward compatibility;
 - validate `context_ref` structure clearly;
-- reject parent/context mismatches rather than silently correcting them;
+- for `/tasks`, reject malformed or partial reporting-context inputs immediately;
+- for `/jobs`, plumb `context_ref` through the `Job` contract so enriched/internal producers can preserve explicit reporting-channel routing;
+- reject parent/context mismatches at the route or service boundary that has enough information to validate them, rather than silently correcting them;
 - keep `session_id` pass-through when explicitly supplied;
 - avoid introducing behavior that silently rewrites the target session.
 
@@ -302,6 +330,9 @@ Run:
 ```bash
 cd LocalAgent/packages/shared
 node ../../common/scripts/install-run-rushx.js test -- src/__tests__/types.test.ts
+
+cd ../api
+node ../../common/scripts/install-run-rushx.js test -- src/__tests__/routes/tasks.test.ts src/__tests__/routes/jobs.test.ts
 ```
 
 Expected: PASS.
@@ -309,7 +340,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit the contract slice**
 
 ```bash
-git add LocalAgent/packages/shared/src/types.ts LocalAgent/packages/api/src/routes/tasks.ts LocalAgent/packages/api/src/routes/jobs.ts LocalAgent/packages/shared/src/__tests__/types.test.ts
+git add LocalAgent/packages/shared/src/types.ts LocalAgent/packages/api/src/routes/tasks.ts LocalAgent/packages/api/src/routes/jobs.ts LocalAgent/packages/shared/src/__tests__/types.test.ts LocalAgent/packages/api/src/__tests__/routes/tasks.test.ts LocalAgent/packages/api/src/__tests__/routes/jobs.test.ts
 git commit -m "feat: clarify target session and reporting context contract"
 ```
 
@@ -525,8 +556,13 @@ git commit -m "feat: fan out child session results to shared reporting channels"
 - Modify: `LocalAgent/packages/daemon/telegram-outbound/src/adapters/telegram-notifier.ts`
 - Modify: `LocalAgent/packages/daemon/task/src/adapters/cleanup-executor.ts`
 - Modify: `LocalAgent/packages/daemon/task/src/services/gc-executor.ts`
+- Modify: `LocalAgent/packages/shared/src/index.ts`
+- Create: `LocalAgent/packages/shared/src/cleanup.ts`
 - Test: `LocalAgent/packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts`
 - Test: `LocalAgent/packages/daemon/telegram-outbound/src/__tests__/telegram-notifier.test.ts`
+- Test: `LocalAgent/packages/shared/src/__tests__/cleanup.test.ts`
+- Test: `LocalAgent/packages/daemon/task/src/adapters/__tests__/cleanup-executor.test.ts`
+- Test: `LocalAgent/packages/daemon/task/src/services/__tests__/gc-executor.test.ts`
 
 - [ ] **Step 1: Write failing cleanup tests for root-plus-descendants deletion**
 
@@ -567,7 +603,9 @@ Update Lark and Telegram notifier cleanup paths so they:
 Also update the cleanup job itself so it can remove multiple workspaces in one user-visible `/end` reply:
 
 - change cleanup job payload to include the list of session ids in the subtree (JSON is fine);
-- update `CleanupExecutor` to parse this payload and remove all listed session directories.
+- add shared parsing/validation helpers for the cleanup payload in `@local-agent/shared`, export them via `packages/shared/src/index.ts`, and cover them with focused unit tests;
+- update `CleanupExecutor` to parse this payload and remove all listed session directories;
+- keep backward compatibility so legacy cleanup payloads that omit subtree metadata still delete only `job.session_id`.
 
 This preserves the single user-visible `/end` reply while still removing child session workspaces.
 
@@ -579,6 +617,12 @@ In `cleanup-executor.ts` and `gc-executor.ts`:
 - extend DB cleanup helpers so GC can remove stale root-owned reporting-channel state and descendant rows coherently;
 - avoid assuming one reporting channel maps to one session.
 
+Add or update tests that prove:
+
+- cleanup payload parsing accepts the new subtree format and rejects malformed JSON;
+- `CleanupExecutor` removes all listed workspaces and falls back to single-session deletion when subtree metadata is absent;
+- `GcExecutor` cleanup helpers no longer assume `session_bridges` or reporting-channel rows are keyed by arbitrary child-session identity.
+
 - [ ] **Step 5: Run the cleanup-related notifier tests again**
 
 Run:
@@ -589,6 +633,12 @@ node ../../../common/scripts/install-run-rushx.js test -- src/__tests__/lark-not
 
 cd ../telegram-outbound
 node ../../../common/scripts/install-run-rushx.js test -- src/__tests__/telegram-notifier.test.ts
+
+cd ../task
+node ../../../common/scripts/install-run-rushx.js test -- src/adapters/__tests__/cleanup-executor.test.ts src/services/__tests__/gc-executor.test.ts
+
+cd ../../shared
+node ../../common/scripts/install-run-rushx.js test -- src/__tests__/cleanup.test.ts
 ```
 
 Expected: PASS.
@@ -596,7 +646,7 @@ Expected: PASS.
 - [ ] **Step 6: Commit the cleanup slice**
 
 ```bash
-git add LocalAgent/packages/daemon/lark-result/src/adapters/lark-notifier.ts LocalAgent/packages/daemon/telegram-outbound/src/adapters/telegram-notifier.ts LocalAgent/packages/daemon/task/src/adapters/cleanup-executor.ts LocalAgent/packages/daemon/task/src/services/gc-executor.ts LocalAgent/packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts LocalAgent/packages/daemon/telegram-outbound/src/__tests__/telegram-notifier.test.ts
+git add LocalAgent/packages/daemon/lark-result/src/adapters/lark-notifier.ts LocalAgent/packages/daemon/telegram-outbound/src/adapters/telegram-notifier.ts LocalAgent/packages/daemon/task/src/adapters/cleanup-executor.ts LocalAgent/packages/daemon/task/src/services/gc-executor.ts LocalAgent/packages/shared/src/index.ts LocalAgent/packages/shared/src/cleanup.ts LocalAgent/packages/daemon/lark-result/src/__tests__/lark-notifier.test.ts LocalAgent/packages/daemon/telegram-outbound/src/__tests__/telegram-notifier.test.ts LocalAgent/packages/shared/src/__tests__/cleanup.test.ts LocalAgent/packages/daemon/task/src/adapters/__tests__/cleanup-executor.test.ts LocalAgent/packages/daemon/task/src/services/__tests__/gc-executor.test.ts
 git commit -m "feat: clean up full reporting channel session subtree"
 ```
 

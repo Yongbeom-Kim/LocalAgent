@@ -46,6 +46,7 @@ export {
   LARK_INBOUND_SCHEMA_VERSION_V1,
   TELEGRAM_INBOUND_SCHEMA_VERSION_V1,
   type TaskContextRef,
+  isValidTaskContextRef,
   isValidLarkInboundEnvelope,
   isValidTelegramInboundEnvelope,
   type LarkInboundEnvelope,
@@ -183,3 +184,11 @@ export type {
   UpsertSessionPlatformLinkParams,
 } from './db/session-platform-link-repository';
 export type { SessionBridgeRow, UpsertSessionBridgeParams } from './db/session-bridge-repository';
+
+export {
+  CLEANUP_SUBTREE_PAYLOAD_VERSION,
+  buildCleanupSubtreePayload,
+  parseCleanupPayload,
+  type CleanupSubtreePayload,
+  type CleanupPayloadParseResult,
+} from './cleanup';

@@ -5,6 +5,7 @@ import {
   resolveApiClientToken,
   type TaskSubmission,
   type TaskExecutorType,
+  type TaskContextRef,
 } from '@local-agent/shared';
 
 export interface SubmitOptions {
@@ -14,6 +15,9 @@ export interface SubmitOptions {
   model: string;
   apiUrl: string;
   token?: string;
+  sessionId?: string;
+  contextPlatform?: TaskContextRef['platform'];
+  contextRootKey?: string;
   env?: Record<string, string | undefined>;
 }
 
@@ -22,6 +26,29 @@ export interface SubmitResult {
   taskType?: string;
   submittedAt?: string;
   error?: string;
+}
+
+function validateContextOptions(options: Pick<SubmitOptions, 'contextPlatform' | 'contextRootKey'>): string | null {
+  const hasPlatform = options.contextPlatform !== undefined;
+  const hasRootKey = options.contextRootKey !== undefined;
+
+  if (hasPlatform !== hasRootKey) {
+    return 'contextPlatform and contextRootKey must be provided together';
+  }
+
+  if (!hasPlatform) {
+    return null;
+  }
+
+  if (options.contextPlatform !== 'lark' && options.contextPlatform !== 'telegram') {
+    return 'contextPlatform must be either lark or telegram';
+  }
+
+  if (!options.contextRootKey || options.contextRootKey.trim() === '') {
+    return 'contextRootKey must be a non-empty string';
+  }
+
+  return null;
 }
 
 export async function submitTask(options: SubmitOptions): Promise<SubmitResult> {
@@ -38,12 +65,26 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
     };
   }
 
+  const contextValidationError = validateContextOptions(options);
+  if (contextValidationError) {
+    return { success: false, error: contextValidationError };
+  }
+
   const url = `${options.apiUrl.replace(/\/+$/, '')}/tasks`;
   const body: TaskSubmission = {
     task_type: options.type,
     payload: options.payload,
     executor: options.executor,
     executor_model: options.model,
+    ...(options.sessionId ? { session_id: options.sessionId } : {}),
+    ...(options.contextPlatform && options.contextRootKey
+      ? {
+          context_ref: {
+            platform: options.contextPlatform,
+            root_key: options.contextRootKey,
+          },
+        }
+      : {}),
   };
 
   let response: Response;
@@ -95,6 +136,9 @@ export function registerSubmitCommand(
     .requiredOption('-m, --model <string>', 'Executor model')
     .option('-u, --api-url <string>', 'API base URL')
     .option('--token <value>', 'API bearer token')
+    .option('--session-id <value>', 'Explicit target session id')
+    .option('--context-platform <value>', 'Reporting context platform (lark or telegram)')
+    .option('--context-root-key <value>', 'Reporting context root key')
     .action(
       async (opts: {
         payload: string;
@@ -103,26 +147,32 @@ export function registerSubmitCommand(
         model: string;
         apiUrl?: string;
         token?: string;
+        sessionId?: string;
+        contextPlatform?: TaskContextRef['platform'];
+        contextRootKey?: string;
       }) => {
-      const apiUrl = opts.apiUrl ?? process.env.API_URL ?? DEFAULT_API_URL;
+        const apiUrl = opts.apiUrl ?? process.env.API_URL ?? DEFAULT_API_URL;
 
-      const result = await submit({
-        payload: opts.payload,
-        type: opts.type,
-        executor: opts.executor,
-        model: opts.model,
-        apiUrl,
-        token: opts.token,
-      });
+        const result = await submit({
+          payload: opts.payload,
+          type: opts.type,
+          executor: opts.executor,
+          model: opts.model,
+          apiUrl,
+          token: opts.token,
+          ...(opts.sessionId ? { sessionId: opts.sessionId } : {}),
+          ...(opts.contextPlatform ? { contextPlatform: opts.contextPlatform } : {}),
+          ...(opts.contextRootKey ? { contextRootKey: opts.contextRootKey } : {}),
+        });
 
-      if (result.success) {
-        console.log('Task submitted successfully.');
-        console.log(`  Type: ${result.taskType}`);
-        console.log(`  Submitted at: ${result.submittedAt}`);
-      } else {
-        console.error(`Error: Failed to submit task — ${result.error}`);
-        process.exit(1);
-      }
-    },
+        if (result.success) {
+          console.log('Task submitted successfully.');
+          console.log(`  Type: ${result.taskType}`);
+          console.log(`  Submitted at: ${result.submittedAt}`);
+        } else {
+          console.error(`Error: Failed to submit task — ${result.error}`);
+          process.exit(1);
+        }
+      },
     );
 }

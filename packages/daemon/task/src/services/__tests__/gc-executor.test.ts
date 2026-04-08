@@ -209,8 +209,8 @@ describe('GcExecutor', () => {
 
     expect(listStaleSessionIds).toHaveBeenCalledTimes(1);
     expect(listStaleSessionIds).toHaveBeenCalledWith(expect.any(Number));
-    expect(deleteRowsBySessionId).toHaveBeenCalledWith('session-ended-1');
-    expect(deleteRowsBySessionId).toHaveBeenCalledWith('session-active-1');
+    expect(deleteRowsBySessionId).toHaveBeenNthCalledWith(1, 'session-active-1');
+    expect(deleteRowsBySessionId).toHaveBeenNthCalledWith(2, 'session-ended-1');
     expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 2 DB session(s).');
   });
 
@@ -239,6 +239,25 @@ describe('GcExecutor', () => {
     const result = await gcWithDbCleanup.execute(createJob());
 
     expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 1 DB session(s). Errors: 1.');
+  });
+
+  it('deduplicates stale root session cleanup requests returned from db lookups', async () => {
+    const listStaleSessionIds = vi.fn().mockResolvedValue(['shared-root', 'child-session', 'shared-root']);
+    const seen = new Set<string>();
+    const deleteRowsBySessionId = vi.fn(async (sessionId: string) => {
+      if (seen.has(sessionId)) {
+        throw new Error(`duplicate delete for ${sessionId}`);
+      }
+      seen.add(sessionId);
+    });
+    const gcWithDbCleanup = new GcExecutor(listStaleSessionIds, deleteRowsBySessionId);
+
+    const result = await gcWithDbCleanup.execute(createJob());
+
+    expect(deleteRowsBySessionId).toHaveBeenCalledTimes(2);
+    expect(deleteRowsBySessionId).toHaveBeenNthCalledWith(1, 'child-session');
+    expect(deleteRowsBySessionId).toHaveBeenNthCalledWith(2, 'shared-root');
+    expect(result.stdout).toBe('GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 2 DB session(s).');
   });
 
 });

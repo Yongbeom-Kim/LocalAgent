@@ -57,10 +57,12 @@ describe('TelegramNotifier', () => {
   let sessionRepository: {
     markSessionEnded: ReturnType<typeof vi.fn>;
     deleteSessionById: ReturnType<typeof vi.fn>;
+    listDescendantSessionIds: ReturnType<typeof vi.fn>;
   };
   let sessionPlatformLinkRepository: {
     markLinksEnded: ReturnType<typeof vi.fn>;
     deleteLinksBySessionId: ReturnType<typeof vi.fn>;
+    getLinkBySessionIdAndPlatform: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -83,10 +85,12 @@ describe('TelegramNotifier', () => {
     sessionRepository = {
       markSessionEnded: vi.fn().mockResolvedValue(undefined),
       deleteSessionById: vi.fn().mockResolvedValue(undefined),
+      listDescendantSessionIds: vi.fn().mockResolvedValue([]),
     };
     sessionPlatformLinkRepository = {
       markLinksEnded: vi.fn().mockResolvedValue(undefined),
       deleteLinksBySessionId: vi.fn().mockResolvedValue(undefined),
+      getLinkBySessionIdAndPlatform: vi.fn().mockResolvedValue(null),
     };
     notifier = new TelegramNotifier(
       'bot123:ABC',

@@ -13,7 +13,6 @@ const logger = createLogger('telegram-daemon:notifier');
 
 const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
 
-// MarkdownV2 special chars that must be escaped outside code blocks
 const MARKDOWNV2_ESCAPE_REGEX = /([_*\[\]()~`>#+\-=|{}.!\\])/g;
 
 export function escapeMarkdownV2(text: string): string {
@@ -42,11 +41,11 @@ export class TelegramNotifier {
     >,
     private readonly sessionRepository?: Pick<
       SessionRepository,
-      'markSessionEnded' | 'deleteSessionById'
+      'markSessionEnded' | 'deleteSessionById' | 'listDescendantSessionIds' | 'deleteSessionsByIds'
     >,
     private readonly sessionPlatformLinkRepository?: Pick<
       SessionPlatformLinkRepository,
-      'markLinksEnded' | 'deleteLinksBySessionId'
+      'markLinksEnded' | 'deleteLinksBySessionId' | 'deleteLinksBySessionIds' | 'getLinkBySessionIdAndPlatform'
     >,
   ) {
     this.apiBase = `${TELEGRAM_API_BASE}${botToken}`;
@@ -54,7 +53,7 @@ export class TelegramNotifier {
 
   async validate(): Promise<string> {
     const res = await fetch(`${this.apiBase}/getMe`);
-    const data = await res.json() as { ok: boolean; result?: { username: string }; description?: string };
+    const data = (await res.json()) as { ok: boolean; result?: { username: string }; description?: string };
 
     if (!data.ok) {
       throw new Error(`Telegram bot validation failed: ${data.description ?? 'unknown error'}`);
@@ -69,14 +68,11 @@ export class TelegramNotifier {
         await this.sendMessage(result);
         return;
       } catch (err) {
-        logger.warn(
-          { result_id: result.result_id, attempt, err },
-          'Telegram notification attempt failed',
-        );
+        logger.warn({ result_id: result.result_id, attempt, err }, 'Telegram notification attempt failed');
         if (attempt === DEFAULT_TELEGRAM_MAX_RETRIES) {
           logger.error(
             { result_id: result.result_id },
-            `Telegram notification failed after ${DEFAULT_TELEGRAM_MAX_RETRIES} attempts — giving up`,
+            `Telegram notification failed after ${DEFAULT_TELEGRAM_MAX_RETRIES} attempts - giving up`,
           );
         }
       }
@@ -190,20 +186,22 @@ export class TelegramNotifier {
       chatId: params.chatId,
       topicId: params.topicId,
       sessionId: params.result.session_id,
+      contextRef: params.result.context_ref,
     });
 
     if (!destination) {
       return;
     }
 
+    const messageText = this.formatMessage(params.result);
     const messageId = await this.sendMessageToChat({
       chatId: destination.chatId,
       messageThreadId: destination.topicId ? Number(destination.topicId) : undefined,
-      text: this.formatMessage(params.result),
+      text: messageText,
       parseMode: 'MarkdownV2',
     });
 
-    if (!this.telegramHistoryRepository || !destination.topicId || !destination.sessionId) {
+    if (!this.telegramHistoryRepository || !destination.topicId || !params.result.session_id) {
       return;
     }
 
@@ -211,42 +209,95 @@ export class TelegramNotifier {
       chatId: destination.chatId,
       topicId: destination.topicId,
       messageId,
-      sessionId: destination.sessionId,
+      sessionId: params.result.session_id,
       direction: 'outbound',
       senderType: 'bot',
       messageType: 'text',
-      rawContent: this.formatMessage(params.result),
-      normalizedText: this.formatMessage(params.result),
+      rawContent: messageText,
+      normalizedText: messageText,
       metadataJson: JSON.stringify({ event_kind: 'result', result_id: params.result.result_id }),
       createdAtMs: Date.now(),
     });
 
     if (params.result.task_type === 'cleanup') {
-      await this.cleanupTerminalSessionRows(destination.sessionId, Date.now());
+      const cleanupRootSessionId = await this.resolveCleanupRootSessionId(params.result, destination);
+      await this.cleanupTerminalSessionRows(cleanupRootSessionId, Date.now());
     }
   }
 
-  private async cleanupTerminalSessionRows(sessionId: string, endedAtMs: number): Promise<void> {
-    await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
-    await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
-    await this.telegramHistoryRepository?.markTelegramThreadEnded(sessionId, endedAtMs);
-
-    if (!this.sessionBridgeRepository) {
-      await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
-      await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
-      await this.sessionRepository?.deleteSessionById(sessionId);
-      return;
+  private async resolveCleanupRootSessionId(
+    result: TaskResult,
+    destination: { chatId: string; topicId?: string; sessionId?: string },
+  ): Promise<string> {
+    if (destination.topicId) {
+      const thread = await this.telegramHistoryRepository?.getTelegramThreadByTopic(destination.chatId, destination.topicId);
+      if (thread?.rootSessionId) {
+        return thread.rootSessionId;
+      }
     }
 
-    const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(sessionId);
+    if (result.session_id && this.sessionPlatformLinkRepository?.getLinkBySessionIdAndPlatform) {
+      const link = await this.sessionPlatformLinkRepository.getLinkBySessionIdAndPlatform(result.session_id, 'telegram');
+      if (link) {
+        const [chatId, topicId] = link.externalThreadKey.split(':');
+        if (chatId && topicId) {
+          const thread = await this.telegramHistoryRepository?.getTelegramThreadByTopic(chatId, topicId);
+          if (thread?.rootSessionId) {
+            return thread.rootSessionId;
+          }
+        }
+      }
+    }
+
+    return result.session_id ?? destination.sessionId ?? '';
+  }
+
+  private async cleanupTerminalSessionRows(rootSessionId: string, endedAtMs: number): Promise<void> {
+    await this.telegramHistoryRepository?.markTelegramThreadEnded(rootSessionId, endedAtMs);
+
+    const bridge = await this.sessionBridgeRepository?.getBridgeBySessionId(rootSessionId);
     if (bridge) {
-      await this.sessionBridgeRepository.markBridgeEnded(sessionId, endedAtMs);
-      await this.sessionBridgeRepository.deleteBridgeBySessionId(sessionId);
+      await this.sessionBridgeRepository?.markBridgeEnded(rootSessionId, endedAtMs);
     }
 
-    await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
-    await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
-    await this.sessionRepository?.deleteSessionById(sessionId);
+    const descendantSessionIds = this.sessionRepository?.listDescendantSessionIds
+      ? await this.sessionRepository.listDescendantSessionIds(rootSessionId)
+      : [];
+    const sessionIds = [rootSessionId, ...descendantSessionIds];
+
+    for (const sessionId of sessionIds) {
+      await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
+      await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
+    }
+
+    if (bridge) {
+      await this.sessionBridgeRepository?.deleteBridgeBySessionId(rootSessionId);
+    }
+
+    const deleteTelegramRowsBySessionIds = (this.telegramHistoryRepository as { deleteTelegramRowsBySessionIds?: (sessionIds: string[]) => Promise<void> } | undefined)?.deleteTelegramRowsBySessionIds;
+    if (deleteTelegramRowsBySessionIds) {
+      await deleteTelegramRowsBySessionIds(sessionIds);
+    } else {
+      for (const sessionId of sessionIds) {
+        await this.telegramHistoryRepository?.deleteTelegramRowsBySessionId(sessionId);
+      }
+    }
+
+    if (this.sessionPlatformLinkRepository?.deleteLinksBySessionIds) {
+      await this.sessionPlatformLinkRepository.deleteLinksBySessionIds(sessionIds);
+    } else {
+      for (const sessionId of sessionIds) {
+        await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
+      }
+    }
+
+    if (this.sessionRepository?.deleteSessionsByIds) {
+      await this.sessionRepository.deleteSessionsByIds(sessionIds);
+    } else {
+      for (const sessionId of sessionIds) {
+        await this.sessionRepository?.deleteSessionById(sessionId);
+      }
+    }
   }
 
   private async sendMessage(result: TaskResult): Promise<void> {
@@ -270,7 +321,7 @@ export class TelegramNotifier {
       }),
     });
 
-    const data = await res.json() as { ok: boolean; description?: string; result?: { message_id?: number } };
+    const data = (await res.json()) as { ok: boolean; description?: string; result?: { message_id?: number } };
 
     if (!data.ok) {
       throw new Error(`Telegram sendMessage failed: ${data.description ?? 'unknown error'}`);
@@ -283,6 +334,7 @@ export class TelegramNotifier {
     chatId?: string;
     topicId?: string;
     sessionId?: string;
+    contextRef?: { platform: 'lark' | 'telegram'; root_key: string };
   }): Promise<{ chatId: string; topicId?: string; sessionId?: string } | null> {
     if (params.chatId) {
       return {
@@ -290,6 +342,31 @@ export class TelegramNotifier {
         topicId: params.topicId,
         sessionId: params.sessionId,
       };
+    }
+
+    if (params.contextRef?.platform === 'telegram') {
+      const [chatId, topicId] = params.contextRef.root_key.split(':');
+      if (chatId && topicId) {
+        return {
+          chatId,
+          topicId,
+          sessionId: params.sessionId,
+        };
+      }
+    }
+
+    if (params.sessionId && this.sessionPlatformLinkRepository?.getLinkBySessionIdAndPlatform) {
+      const link = await this.sessionPlatformLinkRepository.getLinkBySessionIdAndPlatform(params.sessionId, 'telegram');
+      if (link) {
+        const [chatId, topicId] = link.externalThreadKey.split(':');
+        if (chatId && topicId) {
+          return {
+            chatId,
+            topicId,
+            sessionId: params.sessionId,
+          };
+        }
+      }
     }
 
     if (!params.sessionId || !this.sessionBridgeRepository) {
@@ -311,7 +388,6 @@ export class TelegramNotifier {
   }
 
   private formatMessage(result: TaskResult): string {
-    // Only escape text outside code spans/blocks — inline code renders literally
     const status = escapeMarkdownV2(result.status);
     const exitCode = result.exit_code?.toString() ?? 'N/A';
 
@@ -325,7 +401,6 @@ export class TelegramNotifier {
         snippet = snippet.substring(0, MAX_MESSAGE_CHARS);
         truncated = true;
       }
-      // Code blocks don't need escaping in MarkdownV2
       outputSection = '```\n' + snippet + (truncated ? '\n[truncated]' : '') + '\n```';
     }
 

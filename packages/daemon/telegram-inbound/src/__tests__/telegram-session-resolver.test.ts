@@ -29,7 +29,7 @@ describe('TelegramSessionResolver', () => {
     };
     sessionRepository = { upsertSession: vi.fn().mockResolvedValue(undefined) };
     sessionPlatformLinkRepository = {
-      getLinkByPlatformThread: vi.fn().mockResolvedValue(null),
+      listLinksByPlatformAndExternalThreadKey: vi.fn().mockResolvedValue([]),
       upsertLink: vi.fn().mockResolvedValue(undefined),
     };
     resolver = new TelegramSessionResolver(
@@ -76,14 +76,14 @@ describe('TelegramSessionResolver', () => {
   });
 
   it('reuses the mapped session_id for topic follow-up messages', async () => {
-    sessionPlatformLinkRepository.getLinkByPlatformThread.mockResolvedValue({
+    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValue([{
       sessionId: 'sess-1',
       platform: 'telegram',
       externalThreadKey: '-100456789:42',
       createdAtMs: 1,
       updatedAtMs: 1,
       endedAtMs: null,
-    });
+    }]);
     telegramHistoryRepository.getTelegramThreadByTopic.mockResolvedValue({
       chatId: '-100456789',
       topicId: '42',

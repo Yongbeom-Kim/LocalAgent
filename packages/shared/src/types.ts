@@ -133,6 +133,18 @@ export interface TaskContextRef {
   root_key: string;
 }
 
+export function isValidTaskContextRef(value: unknown): value is TaskContextRef {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  const obj = value as Record<string, unknown>;
+  return (
+    (obj.platform === 'lark' || obj.platform === 'telegram') &&
+    isNonEmptyString(obj.root_key)
+  );
+}
+
 export function isValidExecutorPreferences(
   executors: unknown,
 ): executors is ExecutorPreference[] {
@@ -161,7 +173,9 @@ export interface TaskSubmission {
   payload: string;
   executor?: string;
   executor_model?: string;
+  // Optional explicit execution target. When omitted, routing may derive or generate one.
   session_id?: string;
+  // Optional reporting-channel anchor used for shared root/child fanout flows.
   context_ref?: TaskContextRef;
   task_source?: TaskSource;
 }
@@ -173,7 +187,9 @@ export interface Task {
   executor?: string;
   executor_model?: string;
   submitted_at: string;
+  // Execution target session. This is distinct from the reporting-channel anchor.
   session_id?: string;
+  // Reporting-channel anchor used to route fanout notifications deterministically.
   context_ref?: TaskContextRef;
   task_source?: TaskSource;
 }
@@ -191,6 +207,7 @@ export interface JobSubmission {
   executors: ExecutorPreference[];
   submitted_at: string;
   session_id: string;
+  context_ref?: TaskContextRef;
   system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
@@ -209,6 +226,7 @@ export interface Job {
   submitted_at: string;
   enriched_at: string;
   session_id: string;
+  context_ref?: TaskContextRef;
   system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
   task_source?: TaskSource;
@@ -228,6 +246,7 @@ export interface JobAttempt {
   submitted_at: string;
   enriched_at: string;
   session_id: string;
+  context_ref?: TaskContextRef;
   system_prompt?: string;
   marketplaces?: MarketplaceConfig[];
   skipContinue?: boolean;
@@ -311,6 +330,7 @@ export interface TaskPhaseEventMetadata {
 export interface TaskPhaseEventSubmission {
   task_id: string;
   session_id?: string;
+  context_ref?: TaskContextRef;
   task_type: string;
   phase: TaskPhase;
   task_source?: TaskSource;
@@ -485,6 +505,7 @@ export interface TaskResultSubmission {
   task_id: string;
   task_type: string;
   session_id?: string;
+  context_ref?: TaskContextRef;
   executor?: TaskExecutorType;
   executor_model?: string;
   status: ResultStatus;
@@ -507,6 +528,7 @@ export interface MirrorTaskEventSubmission {
   task_id: string;
   session_id: string;
   task_type: string;
+  context_ref?: TaskContextRef;
   task_source: TaskSource;
   mirror_id: string;
   author_type: 'user';

@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import {
   Task,
+  isValidTaskContextRef,
   isValidTaskSource,
   isControlTaskType,
   isTaskExecutorType,
@@ -41,13 +42,17 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
           return;
         }
 
-        const { platform, root_key } = context_ref as Record<string, unknown>;
-        if (platform !== 'lark' && platform !== 'telegram') {
-          res.status(400).json({ error: 'context_ref.platform must be one of: lark, telegram' });
-          return;
-        }
-        if (typeof root_key !== 'string') {
-          res.status(400).json({ error: 'context_ref.root_key must be a string' });
+        if (!isValidTaskContextRef(context_ref)) {
+          const { platform, root_key } = context_ref as Record<string, unknown>;
+          if (platform !== 'lark' && platform !== 'telegram') {
+            res.status(400).json({ error: 'context_ref.platform must be one of: lark, telegram' });
+            return;
+          }
+          if (typeof root_key !== 'string' || root_key.length === 0) {
+            res.status(400).json({ error: 'context_ref.root_key must be a string' });
+            return;
+          }
+          res.status(400).json({ error: 'context_ref must be a valid reporting channel reference' });
           return;
         }
       }

@@ -1,4 +1,4 @@
-import { asc, eq, lt, sql } from 'drizzle-orm';
+import { asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { LibSQLDatabase } from 'drizzle-orm/libsql';
 import type { LarkInboundEnvelope } from '../types';
 import { larkMessagesTable, larkThreadsTable, type SqliteSchema } from './schema';
@@ -72,6 +72,7 @@ export interface UpsertLarkThreadStateParams {
 export interface LarkThreadRow {
   rootMessageId: string;
   threadId: string | null;
+  rootSessionId: string;
   sessionId: string;
   source: string;
   chatType: string | null;
@@ -108,6 +109,34 @@ export interface LarkPhaseReactionAttempt {
   at: string;
   event_id?: string;
   error?: string;
+}
+
+function toLarkThreadRow(
+  row:
+    | {
+        rootMessageId: string;
+        threadId: string | null;
+        rootSessionId: string;
+        source: string;
+        chatType: string | null;
+        taskType: string;
+        executor: string;
+        executorModel: string;
+        status: string;
+        createdAtMs: number;
+        updatedAtMs: number;
+        endedAtMs: number | null;
+      }
+    | undefined,
+): LarkThreadRow | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    ...row,
+    sessionId: row.rootSessionId,
+  };
 }
 
 export class LarkHistoryRepository {
@@ -199,7 +228,7 @@ export class LarkHistoryRepository {
         .values({
           rootMessageId: envelope.root_message_id,
           threadId: envelope.thread_id ?? null,
-          sessionId: envelope.root_message_id,
+          rootSessionId: envelope.root_message_id,
           source: 'lark',
           chatType: envelope.chat_type,
           taskType: DEFAULT_AUDIT_ONLY_TASK_TYPE,
@@ -281,28 +310,28 @@ export class LarkHistoryRepository {
       .where(eq(larkThreadsTable.threadId, threadId))
       .get();
 
-    return row ?? null;
+    return toLarkThreadRow(row);
   }
 
   async getLarkThreadBySessionId(sessionId: string): Promise<LarkThreadRow | null> {
     const row = await this.db
       .select()
       .from(larkThreadsTable)
-      .where(eq(larkThreadsTable.sessionId, sessionId))
+      .where(eq(larkThreadsTable.rootSessionId, sessionId))
       .get();
 
-    return row ?? null;
+    return toLarkThreadRow(row);
   }
 
   async getStaleLarkSessionIdsBeforeUpdatedAt(cutoffMs: number): Promise<string[]> {
     const rows = await this.db
-      .select({ sessionId: larkThreadsTable.sessionId })
+      .select({ rootSessionId: larkThreadsTable.rootSessionId })
       .from(larkThreadsTable)
       .where(lt(larkThreadsTable.updatedAtMs, cutoffMs))
       // Deterministic ordering for callers/tests; GC semantics don't depend on order.
-      .orderBy(asc(larkThreadsTable.updatedAtMs), asc(larkThreadsTable.sessionId));
+      .orderBy(asc(larkThreadsTable.updatedAtMs), asc(larkThreadsTable.rootSessionId));
 
-    return rows.map((row) => row.sessionId);
+    return rows.map((row) => row.rootSessionId);
   }
 
   async getLarkThreadByRootMessageId(rootMessageId: string): Promise<LarkThreadRow | null> {
@@ -312,7 +341,7 @@ export class LarkHistoryRepository {
       .where(eq(larkThreadsTable.rootMessageId, rootMessageId))
       .get();
 
-    return row ?? null;
+    return toLarkThreadRow(row);
   }
 
   async getLarkMessageByMessageId(messageId: string): Promise<LarkMessageRow | null> {
@@ -343,7 +372,7 @@ export class LarkHistoryRepository {
         updatedAtMs: params.updatedAtMs,
         endedAtMs: null,
       })
-      .where(eq(larkThreadsTable.sessionId, params.sessionId));
+      .where(eq(larkThreadsTable.rootSessionId, params.sessionId));
   }
 
   async markLarkThreadEnded(sessionId: string, endedAtMs: number): Promise<void> {
@@ -354,7 +383,7 @@ export class LarkHistoryRepository {
         endedAtMs,
         updatedAtMs: endedAtMs,
       })
-      .where(eq(larkThreadsTable.sessionId, sessionId));
+      .where(eq(larkThreadsTable.rootSessionId, sessionId));
   }
 
   async upsertLarkThreadState(params: UpsertLarkThreadStateParams): Promise<void> {
@@ -364,7 +393,7 @@ export class LarkHistoryRepository {
         .values({
           rootMessageId: params.rootMessageId,
           threadId: params.threadId,
-          sessionId: params.sessionId,
+          rootSessionId: params.sessionId,
           source: params.source,
           chatType: params.chatType,
           taskType: params.taskType,
@@ -379,7 +408,12 @@ export class LarkHistoryRepository {
           target: larkThreadsTable.rootMessageId,
           set: {
             threadId: sql`COALESCE(excluded.thread_id, ${larkThreadsTable.threadId})`,
-            sessionId: params.sessionId,
+            rootSessionId: sql`CASE
+              WHEN ${larkThreadsTable.status} = ${DEFAULT_AUDIT_ONLY_STATUS}
+                AND ${larkThreadsTable.rootSessionId} = ${params.rootMessageId}
+                THEN ${params.sessionId}
+              ELSE ${larkThreadsTable.rootSessionId}
+            END`,
             source: params.source,
             chatType: sql`COALESCE(excluded.chat_type, ${larkThreadsTable.chatType})`,
             taskType: params.taskType,
@@ -397,7 +431,10 @@ export class LarkHistoryRepository {
           sessionId: params.sessionId,
           threadId: sql`COALESCE(${params.threadId}, ${larkMessagesTable.threadId})`,
         })
-        .where(eq(larkMessagesTable.rootMessageId, params.rootMessageId));
+        .where(
+          sql`${larkMessagesTable.rootMessageId} = ${params.rootMessageId}
+            AND ${larkMessagesTable.sessionId} = ${params.rootMessageId}`,
+        );
     });
   }
 
@@ -445,9 +482,18 @@ export class LarkHistoryRepository {
   }
 
   async deleteLarkRowsBySessionId(sessionId: string): Promise<void> {
+    await this.deleteLarkRowsBySessionIds([sessionId]);
+  }
+
+  async deleteLarkRowsBySessionIds(sessionIds: string[]): Promise<void> {
+    const normalizedSessionIds = [...new Set(sessionIds.filter((sessionId) => sessionId.length > 0))];
+    if (normalizedSessionIds.length === 0) {
+      return;
+    }
+
     await this.db.transaction(async (tx) => {
-      await tx.delete(larkMessagesTable).where(eq(larkMessagesTable.sessionId, sessionId));
-      await tx.delete(larkThreadsTable).where(eq(larkThreadsTable.sessionId, sessionId));
+      await tx.delete(larkMessagesTable).where(inArray(larkMessagesTable.sessionId, normalizedSessionIds));
+      await tx.delete(larkThreadsTable).where(inArray(larkThreadsTable.rootSessionId, normalizedSessionIds));
     });
   }
 

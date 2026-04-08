@@ -28,7 +28,7 @@ describe('LarkSessionResolver', () => {
     };
     sessionRepository = { upsertSession: vi.fn().mockResolvedValue(undefined) };
     sessionPlatformLinkRepository = {
-      getLinkByPlatformThread: vi.fn().mockResolvedValue(null),
+      listLinksByPlatformAndExternalThreadKey: vi.fn().mockResolvedValue([]),
       upsertLink: vi.fn().mockResolvedValue(undefined),
     };
     resolver = new LarkSessionResolver(larkHistoryRepository, sessionRepository, sessionPlatformLinkRepository);
@@ -89,14 +89,14 @@ describe('LarkSessionResolver', () => {
   });
 
   it('reuses the mapped session for thread follow-up messages', async () => {
-    sessionPlatformLinkRepository.getLinkByPlatformThread.mockResolvedValueOnce({
+    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValueOnce([{
       sessionId: 'sess-existing',
       platform: 'lark',
       externalThreadKey: 'om_root1',
       createdAtMs: 1,
       updatedAtMs: 1,
       endedAtMs: null,
-    });
+    }]);
     larkHistoryRepository.getLarkThreadByRootMessageId.mockResolvedValueOnce({
       rootMessageId: 'om_root1',
       threadId: 'omt_1',

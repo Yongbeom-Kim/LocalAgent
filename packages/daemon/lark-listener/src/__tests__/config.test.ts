@@ -26,7 +26,7 @@ describe('loadLarkListenerConfig', () => {
       API_URL: 'http://other:4000',
       API_AUTH_TOKEN: 'test-token',
       LOCAL_AGENT_DB_PATH: '/tmp/other.sqlite',
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '8',
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '10',
       LOG_LEVEL: 'debug',
       DEDUP_TTL_MS: '60000',
     });
@@ -36,7 +36,7 @@ describe('loadLarkListenerConfig', () => {
     expect(config.logLevel).toBe('debug');
     expect(config.dedupTtlMs).toBe(60_000);
     expect(config.dbPath).toBe('/tmp/other.sqlite');
-    expect(config.expectedSchemaVersion).toBe(8);
+    expect(config.expectedSchemaVersion).toBe(10);
   });
 
   it('throws when required env vars are missing', () => {

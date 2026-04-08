@@ -8,6 +8,7 @@ import {
   isValidTaskPhase,
   RESULT_STATUSES,
   DEFAULT_RESULTS_EXCHANGE_NAME,
+  isValidTaskContextRef,
   isValidTaskSource,
   isTaskExecutorType,
   isValidExecutorModel,
@@ -38,6 +39,7 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
           task_source,
           task_type,
           session_id,
+          context_ref,
           executor,
           executor_model,
           metadata,
@@ -61,6 +63,10 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         }
         if (session_id !== undefined && typeof session_id !== 'string') {
           res.status(400).json({ error: 'session_id must be a string if provided' });
+          return;
+        }
+        if (context_ref !== undefined && !isValidTaskContextRef(context_ref)) {
+          res.status(400).json({ error: 'context_ref must be a valid reporting channel reference if provided' });
           return;
         }
         if ((executor === undefined) !== (executor_model === undefined)) {
@@ -112,6 +118,7 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
           emitted_at: new Date().toISOString(),
           ...(task_source ? { task_source } : {}),
           ...(session_id !== undefined ? { session_id } : {}),
+          ...(context_ref !== undefined ? { context_ref } : {}),
           ...(executor !== undefined ? { executor } : {}),
           ...(executor_model !== undefined ? { executor_model } : {}),
           ...(metadata !== undefined ? { metadata } : {}),
@@ -207,6 +214,7 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         task_source,
         task_type,
         session_id,
+        context_ref,
         executor,
         executor_model,
       } = req.body;
@@ -236,6 +244,10 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'session_id must be a string if provided' });
         return;
       }
+      if (context_ref !== undefined && !isValidTaskContextRef(context_ref)) {
+        res.status(400).json({ error: 'context_ref must be a valid reporting channel reference if provided' });
+        return;
+      }
       if ((executor === undefined) !== (executor_model === undefined)) {
         res.status(400).json({ error: 'executor and executor_model must be provided together' });
         return;
@@ -261,6 +273,7 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         completed_at: new Date().toISOString(),
         ...(task_source ? { task_source } : {}),
         ...(session_id !== undefined ? { session_id } : {}),
+        ...(context_ref !== undefined ? { context_ref } : {}),
         ...(executor !== undefined ? { executor } : {}),
         ...(executor_model !== undefined ? { executor_model } : {}),
       };

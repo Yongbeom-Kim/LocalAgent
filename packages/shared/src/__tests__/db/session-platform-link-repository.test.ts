@@ -68,6 +68,43 @@ describe('SessionPlatformLinkRepository', () => {
     }
   });
 
+  it('allows multiple sessions to attach to the same reporting channel key', async () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-link-db-test-'));
+    tempDirs.push(tempDir);
+
+    const client = await createSqliteClient({ dbPath: join(tempDir, 'history.sqlite') });
+
+    try {
+      await bootstrapSessionAndLinkTables(client.connection);
+      const repository = new SessionPlatformLinkRepository(client.db);
+
+      await repository.upsertSessionPlatformLink({
+        sessionId: 'session-1',
+        platform: 'telegram',
+        externalThreadKey: '-100123:42',
+        createdAtMs: 100,
+        updatedAtMs: 100,
+      });
+
+      await repository.upsertSessionPlatformLink({
+        sessionId: 'session-2',
+        platform: 'telegram',
+        externalThreadKey: '-100123:42',
+        createdAtMs: 200,
+        updatedAtMs: 200,
+      });
+
+      const attachedSessions = await client.connection.execute({
+        sql: 'SELECT session_id FROM session_platform_links WHERE platform = ? AND external_thread_key = ? ORDER BY session_id',
+        args: ['telegram', '-100123:42'],
+      });
+
+      expect(attachedSessions.rows.map((row) => row.session_id)).toEqual(['session-1', 'session-2']);
+    } finally {
+      client.close();
+    }
+  });
+
   it('updates and ends per-platform links by canonical session id', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-link-db-test-'));
     tempDirs.push(tempDir);
@@ -135,7 +172,6 @@ async function bootstrapSessionAndLinkTables(
       updated_at_ms INTEGER NOT NULL,
       ended_at_ms INTEGER,
       PRIMARY KEY (session_id, platform),
-      UNIQUE (platform, external_thread_key),
       FOREIGN KEY (session_id) REFERENCES sessions(session_id)
     )
   `);

@@ -214,6 +214,7 @@ export class TaskPoller {
         ...result,
         task_type: job.task_type,
         session_id: job.session_id,
+        ...(job.context_ref ? { context_ref: job.context_ref } : {}),
         ...(job.task_source ? { task_source: job.task_source } : {}),
       };
 

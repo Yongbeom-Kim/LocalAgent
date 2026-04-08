@@ -21,7 +21,7 @@ export const larkThreadsTable = sqliteTable(
   {
     rootMessageId: text('root_message_id').primaryKey(),
     threadId: text('thread_id'),
-    sessionId: text('session_id').notNull(),
+    rootSessionId: text('root_session_id').notNull(),
     source: text('source').notNull(),
     chatType: text('chat_type'),
     taskType: text('task_type').notNull(),
@@ -34,8 +34,8 @@ export const larkThreadsTable = sqliteTable(
   },
   (table) => ({
     threadIdUnique: uniqueIndex('lark_threads_thread_id_unique').on(table.threadId),
-    sessionIdUnique: uniqueIndex('lark_threads_session_id_unique').on(table.sessionId),
-    sessionIdIdx: index('idx_lark_threads_session_id').on(table.sessionId),
+    rootSessionIdUnique: uniqueIndex('lark_threads_root_session_id_unique').on(table.rootSessionId),
+    rootSessionIdIdx: index('idx_lark_threads_root_session_id').on(table.rootSessionId),
     threadIdIdx: index('idx_lark_threads_thread_id').on(table.threadId),
     statusUpdatedAtIdx: index('idx_lark_threads_status_updated_at').on(
       table.status,
@@ -85,7 +85,7 @@ export const telegramThreadsTable = sqliteTable(
   {
     chatId: text('chat_id').notNull(),
     topicId: text('topic_id').notNull(),
-    sessionId: text('session_id').notNull().unique(),
+    rootSessionId: text('root_session_id').notNull().unique(),
     source: text('source').notNull(),
     taskType: text('task_type').notNull(),
     executor: text('executor').notNull(),
@@ -100,7 +100,7 @@ export const telegramThreadsTable = sqliteTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.chatId, table.topicId] }),
-    sessionIdIdx: index('idx_telegram_threads_session_id').on(table.sessionId),
+    rootSessionIdIdx: index('idx_telegram_threads_root_session_id').on(table.rootSessionId),
     statusUpdatedAtIdx: index('idx_telegram_threads_status_updated_at').on(
       table.status,
       sql`${table.updatedAtMs} DESC`,
@@ -147,6 +147,7 @@ export const sessionsTable = sqliteTable(
   'sessions',
   {
     sessionId: text('session_id').primaryKey(),
+    parentSessionId: text('parent_session_id'),
     taskType: text('task_type').notNull(),
     executor: text('executor'),
     executorModel: text('executor_model'),
@@ -156,6 +157,11 @@ export const sessionsTable = sqliteTable(
     endedAtMs: integer('ended_at_ms'),
   },
   (table) => ({
+    parentSessionFk: foreignKey({
+      columns: [table.parentSessionId],
+      foreignColumns: [table.sessionId],
+    }),
+    parentSessionIdIdx: index('idx_sessions_parent_session_id').on(table.parentSessionId),
     statusUpdatedAtIdx: index('idx_sessions_status_updated_at').on(table.status, sql`${table.updatedAtMs} DESC`),
   }),
 );
@@ -174,7 +180,7 @@ export const sessionPlatformLinksTable = sqliteTable(
   },
   (table) => ({
     pk: primaryKey({ columns: [table.sessionId, table.platform] }),
-    platformExternalThreadKeyUnique: uniqueIndex('session_platform_links_platform_external_thread_key_unique').on(
+    platformExternalThreadKeyIdx: index('idx_session_platform_links_platform_external_thread_key').on(
       table.platform,
       table.externalThreadKey,
     ),
@@ -185,7 +191,7 @@ export const sessionPlatformLinksTable = sqliteTable(
 export const sessionBridgesTable = sqliteTable(
   'session_bridges',
   {
-    sessionId: text('session_id').primaryKey(),
+    rootSessionId: text('root_session_id').primaryKey(),
     larkRootMessageId: text('lark_root_message_id').notNull().unique(),
     telegramChatId: text('telegram_chat_id').notNull(),
     telegramTopicId: text('telegram_topic_id').notNull(),
