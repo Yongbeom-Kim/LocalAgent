@@ -46,6 +46,28 @@ interface EnrichmentConfig {
   rules: Record<string, EnrichmentRule>;
 }
 
+function validateRule(ruleKey: string, rule: EnrichmentRule): EnrichmentRule {
+  if (typeof rule !== 'object' || rule === null || Array.isArray(rule)) {
+    throw new Error(`Invalid enrichment rule "${ruleKey}": expected mapping/object.`);
+  }
+
+  if (rule.system_prompt !== undefined && typeof rule.system_prompt !== 'string') {
+    throw new Error(`Invalid enrichment rule "${ruleKey}": system_prompt must be a string when provided.`);
+  }
+
+  return rule;
+}
+
+function validateRules(rules: Record<string, EnrichmentRule>): Record<string, EnrichmentRule> {
+  const validatedRules: Record<string, EnrichmentRule> = {};
+
+  for (const [ruleKey, rule] of Object.entries(rules)) {
+    validatedRules[ruleKey] = validateRule(ruleKey, rule);
+  }
+
+  return validatedRules;
+}
+
 export type EnrichmentResult =
   | { type: 'enriched'; job: JobSubmission }
   | { type: 'rejected'; reason: string };
@@ -56,11 +78,11 @@ export class EnrichmentService {
   static fromFile(filePath: string): EnrichmentService {
     const content = readFileSync(filePath, 'utf-8');
     const config = yaml.load(content) as EnrichmentConfig;
-    return new EnrichmentService(config.rules);
+    return new EnrichmentService(validateRules(config.rules));
   }
 
   static fromObject(config: EnrichmentConfig): EnrichmentService {
-    return new EnrichmentService(config.rules);
+    return new EnrichmentService(validateRules(config.rules));
   }
 
   static fromDirectory(dirPath: string): EnrichmentService {
@@ -88,7 +110,7 @@ export class EnrichmentService {
             `Duplicate rule key '${key}' found in ${file} — already defined in another config file`
           );
         }
-        mergedRules[key] = rule;
+        mergedRules[key] = validateRule(key, rule);
       }
     }
 

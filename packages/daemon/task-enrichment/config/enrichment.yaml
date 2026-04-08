@@ -1,4 +1,8 @@
 rules:
   generic: {}
 
+  xyz:
+    system_prompt: |
+      PROMPT HERE
+
   new_instance: {}
