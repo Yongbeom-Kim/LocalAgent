@@ -3,6 +3,7 @@ import {
   createLogger,
   createSqliteClient,
   LarkHistoryRepository,
+  SessionRepository,
   TelegramHistoryRepository,
 } from '@local-agent/shared';
 import { loadEnrichmentDaemonConfig } from './config';
@@ -39,6 +40,7 @@ async function main() {
 
   const larkHistoryRepository = new LarkHistoryRepository(sqliteClient.db);
   const telegramHistoryRepository = new TelegramHistoryRepository(sqliteClient.db);
+  const sessionRepository = new SessionRepository(sqliteClient.db);
   const threadContextFetcher = new ThreadContextFetcher(larkHistoryRepository);
   const telegramThreadContextFetcher = new TelegramThreadContextFetcher(telegramHistoryRepository);
   logger.info('Thread context enrichment enabled via SQLite');
@@ -53,6 +55,7 @@ async function main() {
     undefined,
     {
       telegramThreadContextFetcher,
+      sessionRepository,
     },
   );
   poller.start(config.pollIntervalMs);

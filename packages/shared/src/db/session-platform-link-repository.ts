@@ -1,4 +1,4 @@
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray } from 'drizzle-orm';
 import type { LibSQLDatabase } from 'drizzle-orm/libsql';
 import { sessionPlatformLinksTable, type SqliteSchema } from './schema';
 
@@ -100,6 +100,14 @@ export class SessionPlatformLinkRepository {
     platform: SessionPlatform,
     externalThreadKey: string,
   ): Promise<SessionPlatformLinkRow | null> {
+    const rows = await this.listLinksByPlatformAndExternalThreadKey(platform, externalThreadKey);
+    return rows[0] ?? null;
+  }
+
+  async listLinksByPlatformAndExternalThreadKey(
+    platform: SessionPlatform,
+    externalThreadKey: string,
+  ): Promise<SessionPlatformLinkRow[]> {
     const row = await this.db
       .select()
       .from(sessionPlatformLinksTable)
@@ -109,9 +117,9 @@ export class SessionPlatformLinkRepository {
           eq(sessionPlatformLinksTable.externalThreadKey, externalThreadKey),
         ),
       )
-      .get();
+      .orderBy(sessionPlatformLinksTable.createdAtMs, sessionPlatformLinksTable.sessionId);
 
-    return toSessionPlatformLinkRow(row);
+    return row.map((entry) => toSessionPlatformLinkRow(entry)).filter((entry): entry is SessionPlatformLinkRow => entry !== null);
   }
 
   async getLinkByPlatformThread(
@@ -141,5 +149,13 @@ export class SessionPlatformLinkRepository {
 
   async deleteLinksBySessionId(sessionId: string): Promise<void> {
     await this.db.delete(sessionPlatformLinksTable).where(eq(sessionPlatformLinksTable.sessionId, sessionId));
+  }
+
+  async deleteLinksBySessionIds(sessionIds: string[]): Promise<void> {
+    if (sessionIds.length === 0) {
+      return;
+    }
+
+    await this.db.delete(sessionPlatformLinksTable).where(inArray(sessionPlatformLinksTable.sessionId, sessionIds));
   }
 }

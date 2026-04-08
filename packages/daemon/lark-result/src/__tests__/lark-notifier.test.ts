@@ -32,10 +32,12 @@ describe('LarkNotifier', () => {
   let sessionRepository: {
     markSessionEnded: ReturnType<typeof vi.fn>;
     deleteSessionById: ReturnType<typeof vi.fn>;
+    listDescendantSessionIds: ReturnType<typeof vi.fn>;
   };
   let sessionPlatformLinkRepository: {
     markLinksEnded: ReturnType<typeof vi.fn>;
     deleteLinksBySessionId: ReturnType<typeof vi.fn>;
+    getLinkBySessionIdAndPlatform: ReturnType<typeof vi.fn>;
   };
 
   beforeEach(() => {
@@ -51,10 +53,12 @@ describe('LarkNotifier', () => {
     sessionRepository = {
       markSessionEnded: vi.fn().mockResolvedValue(undefined),
       deleteSessionById: vi.fn().mockResolvedValue(undefined),
+      listDescendantSessionIds: vi.fn().mockResolvedValue([]),
     };
     sessionPlatformLinkRepository = {
       markLinksEnded: vi.fn().mockResolvedValue(undefined),
       deleteLinksBySessionId: vi.fn().mockResolvedValue(undefined),
+      getLinkBySessionIdAndPlatform: vi.fn().mockResolvedValue(null),
     };
     notifier = new LarkNotifier('app-id', 'app-secret', 'user-123', undefined, tokenProvider);
   });
@@ -66,6 +70,7 @@ describe('LarkNotifier', () => {
       getLarkMessageByMessageId: vi.fn().mockResolvedValue(null),
       getLarkThreadByRootMessageId: vi.fn().mockResolvedValue(null),
       upsertLarkThreadState: vi.fn().mockResolvedValue(undefined),
+      markLarkThreadEnded: vi.fn().mockResolvedValue(undefined),
       deleteLarkRowsBySessionId: vi.fn().mockResolvedValue(undefined),
     };
   }
@@ -191,6 +196,7 @@ describe('LarkNotifier', () => {
     expect(repository.recordOutboundLarkMessage).toHaveBeenCalledWith(expect.objectContaining({
       sessionId: 'session_3',
     }));
+    expect(repository.markLarkThreadEnded).toHaveBeenCalledWith('session_3', expect.any(Number));
     expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session_3', expect.any(Number));
     expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session_3', expect.any(Number));
     expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3');
@@ -240,6 +246,7 @@ describe('LarkNotifier', () => {
       task_source: { source: 'lark', message_id: 'om_root_3b' },
     }));
 
+    expect(repository.markLarkThreadEnded).toHaveBeenCalledWith('session_3b', expect.any(Number));
     expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session_3b', expect.any(Number));
     expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session_3b', expect.any(Number));
     expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3b');
@@ -279,11 +286,59 @@ describe('LarkNotifier', () => {
       task_source: { source: 'lark', message_id: 'om_root_3c' },
     }));
 
+    expect(repository.markLarkThreadEnded).toHaveBeenCalledWith('session_3c', expect.any(Number));
     expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('session_3c', expect.any(Number));
     expect(sessionPlatformLinkRepository.markLinksEnded).toHaveBeenCalledWith('session_3c', expect.any(Number));
     expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('session_3c');
     expect(sessionPlatformLinkRepository.deleteLinksBySessionId).toHaveBeenCalledWith('session_3c');
     expect(sessionRepository.deleteSessionById).toHaveBeenCalledWith('session_3c');
+  });
+
+  it('resolves cleanup to the root session before deleting descendants', async () => {
+    const repository = createRepositoryMocks();
+    repository.getLarkThreadByRootMessageId.mockResolvedValue({
+      rootMessageId: 'om_root_shared',
+      threadId: 'thread-1',
+      rootSessionId: 'root-session',
+      sessionId: 'root-session',
+      source: 'lark',
+      chatType: 'group',
+      taskType: 'code_review',
+      executor: 'claude',
+      executorModel: 'sonnet',
+      status: 'active',
+      createdAtMs: 1,
+      updatedAtMs: 1,
+      endedAtMs: null,
+    });
+    sessionRepository.listDescendantSessionIds.mockResolvedValue(['child-session']);
+    const dbNotifier = new LarkNotifier(
+      'app-id',
+      'app-secret',
+      'user-123',
+      repository,
+      tokenProvider,
+      sessionBridgeRepository,
+      sessionRepository,
+      sessionPlatformLinkRepository,
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { items: [] } }) })
+      .mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ code: 0, data: { message_id: 'om_reply_root' } }) });
+
+    await dbNotifier.notify(createResult({
+      task_type: 'cleanup',
+      session_id: 'child-session',
+      task_source: { source: 'lark', message_id: 'om_root_shared' },
+    }));
+
+    expect(repository.markLarkThreadEnded).toHaveBeenCalledWith('root-session', expect.any(Number));
+    expect(sessionRepository.listDescendantSessionIds).toHaveBeenCalledWith('root-session');
+    expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('root-session', expect.any(Number));
+    expect(sessionRepository.markSessionEnded).toHaveBeenCalledWith('child-session', expect.any(Number));
+    expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('root-session');
+    expect(repository.deleteLarkRowsBySessionId).toHaveBeenCalledWith('child-session');
   });
 
   it('promotes placeholder root thread rows to the real session_id on first successful reply', async () => {

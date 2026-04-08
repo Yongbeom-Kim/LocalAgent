@@ -7,6 +7,8 @@ import {
   createLogger,
   LarkHistoryRepository,
   SessionBridgeRepository,
+  SessionPlatformLinkRepository,
+  SessionRepository,
   TelegramHistoryRepository,
   createSqliteClient,
   loadSqliteConfig,
@@ -54,19 +56,71 @@ const deleteRowsBySessionIdFromDb: DeleteRowsBySessionId = async (sessionId: str
 
   try {
     const larkRepository = new LarkHistoryRepository(client.db);
+    const sessionRepository = new SessionRepository(client.db);
+    const sessionPlatformLinkRepository = new SessionPlatformLinkRepository(client.db);
 
+    let sessionIds = [sessionId];
     try {
-      const telegramRepository = new TelegramHistoryRepository(client.db);
-      const bridgeRepository = new SessionBridgeRepository(client.db);
-      await bridgeRepository.deleteBridgeBySessionId(sessionId);
-      await telegramRepository.deleteTelegramRowsBySessionId(sessionId);
+      sessionIds = [sessionId, ...(await sessionRepository.listDescendantSessionIds(sessionId))];
     } catch (error) {
       if (!isMissingTableError(error)) {
         throw error;
       }
     }
 
-    await larkRepository.deleteLarkRowsBySessionId(sessionId);
+    try {
+      const telegramRepository = new TelegramHistoryRepository(client.db);
+      const deleteTelegramRowsBySessionIds = telegramRepository as TelegramHistoryRepository & {
+        deleteTelegramRowsBySessionIds?: (sessionIds: string[]) => Promise<void>;
+      };
+      if (deleteTelegramRowsBySessionIds.deleteTelegramRowsBySessionIds) {
+        await deleteTelegramRowsBySessionIds.deleteTelegramRowsBySessionIds(sessionIds);
+      } else {
+        for (const staleSessionId of sessionIds) {
+          await telegramRepository.deleteTelegramRowsBySessionId(staleSessionId);
+        }
+      }
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
+
+    try {
+      const bridgeRepository = new SessionBridgeRepository(client.db);
+      await bridgeRepository.deleteBridgeByRootSessionId(sessionId);
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
+
+    try {
+      await sessionPlatformLinkRepository.deleteLinksBySessionIds(sessionIds);
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
+
+    const deleteLarkRowsBySessionIds = larkRepository as LarkHistoryRepository & {
+      deleteLarkRowsBySessionIds?: (sessionIds: string[]) => Promise<void>;
+    };
+    if (deleteLarkRowsBySessionIds.deleteLarkRowsBySessionIds) {
+      await deleteLarkRowsBySessionIds.deleteLarkRowsBySessionIds(sessionIds);
+    } else {
+      for (const staleSessionId of sessionIds) {
+        await larkRepository.deleteLarkRowsBySessionId(staleSessionId);
+      }
+    }
+
+    try {
+      await sessionRepository.deleteSessionsByIds(sessionIds);
+    } catch (error) {
+      if (!isMissingTableError(error)) {
+        throw error;
+      }
+    }
   } finally {
     client.close();
   }
@@ -170,14 +224,15 @@ export class GcExecutor {
       return { deleted: 0, errors: 1 };
     }
 
-    if (staleSessionIds.length === 0) {
+    const uniqueSessionIds = [...new Set(staleSessionIds)].sort();
+    if (uniqueSessionIds.length === 0) {
       return { deleted: 0, errors: 0 };
     }
 
     let deleted = 0;
     let errors = 0;
 
-    for (const sessionId of staleSessionIds) {
+    for (const sessionId of uniqueSessionIds) {
       try {
         await this.deleteRowsBySessionId(sessionId);
         deleted += 1;

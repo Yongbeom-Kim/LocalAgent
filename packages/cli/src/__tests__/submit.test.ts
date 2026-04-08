@@ -116,6 +116,86 @@ describe('submitTask', () => {
     });
   });
 
+  it('includes explicit session_id and context_ref when provided', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        task_id: 'task-123',
+        task_type: 'code_review',
+        submitted_at: '2026-03-26T10:00:00.000Z',
+      }),
+    });
+
+    await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
+      sessionId: 'session-123',
+      contextPlatform: 'lark',
+      contextRootKey: 'om_root_123',
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: 'Bearer test-token',
+      },
+      body: JSON.stringify({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
+        session_id: 'session-123',
+        context_ref: {
+          platform: 'lark',
+          root_key: 'om_root_123',
+        },
+      }),
+    });
+  });
+
+  it('rejects partial context options before sending the request', async () => {
+    const result = await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
+      contextPlatform: 'lark',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'contextPlatform and contextRootKey must be provided together',
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
+  it('rejects invalid context platforms before sending the request', async () => {
+    const result = await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
+      contextPlatform: 'discord' as 'lark',
+      contextRootKey: 'root-1',
+    });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'contextPlatform must be either lark or telegram',
+    });
+    expect(mockFetch).not.toHaveBeenCalled();
+  });
+
   it('sends Authorization bearer header from explicit token', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -473,6 +553,52 @@ describe('registerSubmitCommand', () => {
       model: 'sonnet',
       apiUrl: DEFAULT_API_URL,
       token: 'explicit-token',
+    });
+  });
+
+  it('passes explicit session and reporting context flags through the command wiring', async () => {
+    const submitTaskSpy = vi.fn().mockResolvedValue({
+      success: true,
+      taskType: 'generic',
+      submittedAt: '2026-03-26T10:00:00.000Z',
+    });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+    const program = new Command();
+    submitModule.registerSubmitCommand(program, submitTaskSpy);
+
+    await program.parseAsync(
+      [
+        'submit',
+        '--payload',
+        'test prompt',
+        '--type',
+        'generic',
+        '--executor',
+        'claude',
+        '--model',
+        'sonnet',
+        '--session-id',
+        'session-123',
+        '--context-platform',
+        'telegram',
+        '--context-root-key',
+        '-100456789:42',
+      ],
+      {
+        from: 'user',
+      },
+    );
+
+    expect(submitTaskSpy).toHaveBeenCalledWith({
+      payload: 'test prompt',
+      type: 'generic',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: DEFAULT_API_URL,
+      sessionId: 'session-123',
+      contextPlatform: 'telegram',
+      contextRootKey: '-100456789:42',
     });
   });
 

@@ -24,6 +24,11 @@ const LARK_REPLY_URL = (messageId: string) =>
 const MAX_RETRIES = DEFAULT_LARK_MAX_RETRIES;
 const NEW_INSTANCE_MARKER = 'New session instance started.';
 
+interface ReplyDestination {
+  replyMessageId: string;
+  rootMessageId: string;
+}
+
 export class LarkNotifier {
   constructor(
     private readonly appId: string,
@@ -37,6 +42,7 @@ export class LarkNotifier {
       | 'getLarkThreadByRootMessageId'
       | 'getLarkMessagesForThread'
       | 'upsertLarkThreadState'
+      | 'markLarkThreadEnded'
       | 'deleteLarkRowsBySessionId'
     >,
     private readonly tokenProvider: TokenProvider = new LarkTenantTokenProvider(appId, appSecret),
@@ -46,11 +52,11 @@ export class LarkNotifier {
     >,
     private readonly sessionRepository?: Pick<
       SessionRepository,
-      'markSessionEnded' | 'deleteSessionById'
+      'markSessionEnded' | 'deleteSessionById' | 'listDescendantSessionIds' | 'deleteSessionsByIds'
     >,
     private readonly sessionPlatformLinkRepository?: Pick<
       SessionPlatformLinkRepository,
-      'markLinksEnded' | 'deleteLinksBySessionId'
+      'markLinksEnded' | 'deleteLinksBySessionId' | 'getLinkBySessionIdAndPlatform' | 'deleteLinksBySessionIds'
     >,
   ) {}
 
@@ -60,14 +66,11 @@ export class LarkNotifier {
         await this.sendNotification(result);
         return;
       } catch (err) {
-        logger.warn(
-          { result_id: result.result_id, attempt, err },
-          'Lark notification attempt failed',
-        );
+        logger.warn({ result_id: result.result_id, attempt, err }, 'Lark notification attempt failed');
         if (attempt === MAX_RETRIES) {
           logger.error(
             { result_id: result.result_id },
-            `Lark notification failed after ${MAX_RETRIES} attempts — giving up`,
+            `Lark notification failed after ${MAX_RETRIES} attempts - giving up`,
           );
         }
       }
@@ -119,7 +122,7 @@ export class LarkNotifier {
       }),
     });
 
-    const msgData = await msgRes.json() as { code: number; data?: { message_id?: string } };
+    const msgData = (await msgRes.json()) as { code: number; data?: { message_id?: string } };
     if (msgData.code !== 0) {
       throw new Error(`Lark mirror send failed with code ${msgData.code}`);
     }
@@ -146,7 +149,6 @@ export class LarkNotifier {
 
   private async sendNotification(result: TaskResult): Promise<void> {
     const token = await this.tokenProvider.getTenantAccessToken();
-
     const text = [
       ...(result.executor && result.executor_model
         ? [`executor: ${result.executor}`, `model: ${result.executor_model}`]
@@ -160,17 +162,16 @@ export class LarkNotifier {
       result.stdout ? `Output:\n${result.stdout}` : 'No output',
     ].join('\n');
 
+    const destination = await this.resolveReplyDestination(result);
     let msgRes: Response;
 
-    if (result.task_source?.source === 'lark') {
-      await this.clearBotOwnedPhaseReactionsBeforeReply(result.task_source.message_id, token);
-
-      // Reply in thread to the original Lark message
-      msgRes = await fetch(LARK_REPLY_URL(result.task_source.message_id), {
+    if (destination) {
+      await this.clearBotOwnedPhaseReactionsBeforeReply(destination.replyMessageId, token);
+      msgRes = await fetch(LARK_REPLY_URL(destination.replyMessageId), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           msg_type: 'text',
@@ -179,12 +180,11 @@ export class LarkNotifier {
         }),
       });
     } else {
-      // Fallback: send DM to fixed recipient
       msgRes = await fetch(LARK_MESSAGE_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`,
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
           receive_id: this.recipientId,
@@ -194,8 +194,7 @@ export class LarkNotifier {
       });
     }
 
-    const msgData = await msgRes.json() as { code: number; data?: { message_id?: string } };
-
+    const msgData = (await msgRes.json()) as { code: number; data?: { message_id?: string } };
     if (msgData.code !== 0) {
       throw new Error(`Lark message send failed with code ${msgData.code}`);
     }
@@ -208,12 +207,18 @@ export class LarkNotifier {
     text: string,
     messageIdFromResponse?: string,
   ): Promise<void> {
-    if (result.task_source?.source !== 'lark' || !result.session_id || !this.larkHistoryRepository) {
+    if (!result.session_id || !this.larkHistoryRepository) {
       return;
     }
 
-    const sourceMessage = await this.larkHistoryRepository.getLarkMessageByMessageId(result.task_source.message_id);
-    const rootMessageId = sourceMessage?.rootMessageId ?? result.task_source.message_id;
+    const rootMessageId = await this.resolveLarkRootMessageId(result);
+    if (!rootMessageId) {
+      return;
+    }
+
+    const sourceMessage = result.task_source?.source === 'lark'
+      ? await this.larkHistoryRepository.getLarkMessageByMessageId(result.task_source.message_id)
+      : null;
     const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(rootMessageId);
     const createdAtMs = Date.now();
     const eventKind = this.getOutboundEventKind(result);
@@ -259,30 +264,115 @@ export class LarkNotifier {
     }
 
     if (result.task_type === 'cleanup') {
-      await this.cleanupTerminalSessionRows(result.session_id, createdAtMs);
+      const cleanupRootSessionId = await this.resolveCleanupRootSessionId(result, rootMessageId);
+      await this.cleanupTerminalSessionRows(cleanupRootSessionId, createdAtMs);
     }
   }
 
-  private async cleanupTerminalSessionRows(sessionId: string, endedAtMs: number): Promise<void> {
-    await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
-    await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
-
-    if (!this.sessionBridgeRepository) {
-      await this.larkHistoryRepository?.deleteLarkRowsBySessionId(sessionId);
-      await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
-      await this.sessionRepository?.deleteSessionById(sessionId);
-      return;
+  private async resolveReplyDestination(result: TaskResult): Promise<ReplyDestination | null> {
+    const rootMessageId = await this.resolveLarkRootMessageId(result);
+    if (!rootMessageId) {
+      return null;
     }
 
-    const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(sessionId);
+    return {
+      replyMessageId: rootMessageId,
+      rootMessageId,
+    };
+  }
+
+  private async resolveLarkRootMessageId(result: TaskResult): Promise<string | null> {
+    if (result.context_ref?.platform === 'lark') {
+      return result.context_ref.root_key;
+    }
+
+    if (result.task_source?.source === 'lark') {
+      const sourceMessage = await this.larkHistoryRepository?.getLarkMessageByMessageId(result.task_source.message_id);
+      return sourceMessage?.rootMessageId ?? result.task_source.message_id;
+    }
+
+    if (result.session_id && this.sessionPlatformLinkRepository?.getLinkBySessionIdAndPlatform) {
+      const link = await this.sessionPlatformLinkRepository.getLinkBySessionIdAndPlatform(result.session_id, 'lark');
+      if (link) {
+        return link.externalThreadKey;
+      }
+    }
+
+    if (result.session_id && this.sessionBridgeRepository) {
+      const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(result.session_id);
+      if (bridge) {
+        return bridge.larkRootMessageId;
+      }
+    }
+
+    return null;
+  }
+
+  private async resolveCleanupRootSessionId(result: TaskResult, rootMessageId: string): Promise<string> {
+    const thread = await this.larkHistoryRepository?.getLarkThreadByRootMessageId(rootMessageId);
+    if (thread?.rootSessionId) {
+      return thread.rootSessionId;
+    }
+
+    if (result.session_id && this.sessionPlatformLinkRepository?.getLinkBySessionIdAndPlatform) {
+      const link = await this.sessionPlatformLinkRepository.getLinkBySessionIdAndPlatform(result.session_id, 'lark');
+      if (link) {
+        const linkedThread = await this.larkHistoryRepository?.getLarkThreadByRootMessageId(link.externalThreadKey);
+        if (linkedThread?.rootSessionId) {
+          return linkedThread.rootSessionId;
+        }
+      }
+    }
+
+    return result.session_id ?? '';
+  }
+
+  private async cleanupTerminalSessionRows(rootSessionId: string, endedAtMs: number): Promise<void> {
+    await this.larkHistoryRepository?.markLarkThreadEnded?.(rootSessionId, endedAtMs);
+
+    const bridge = await this.sessionBridgeRepository?.getBridgeBySessionId(rootSessionId);
     if (bridge) {
-      await this.sessionBridgeRepository.markBridgeEnded(sessionId, endedAtMs);
-      await this.sessionBridgeRepository.deleteBridgeBySessionId(sessionId);
+      await this.sessionBridgeRepository?.markBridgeEnded(rootSessionId, endedAtMs);
     }
 
-    await this.larkHistoryRepository?.deleteLarkRowsBySessionId(sessionId);
-    await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
-    await this.sessionRepository?.deleteSessionById(sessionId);
+    const descendantSessionIds = this.sessionRepository?.listDescendantSessionIds
+      ? await this.sessionRepository.listDescendantSessionIds(rootSessionId)
+      : [];
+    const sessionIds = [rootSessionId, ...descendantSessionIds];
+
+    for (const sessionId of sessionIds) {
+      await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
+      await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
+    }
+
+    if (bridge) {
+      await this.sessionBridgeRepository?.deleteBridgeBySessionId(rootSessionId);
+    }
+
+    const deleteLarkRowsBySessionIds = (this.larkHistoryRepository as { deleteLarkRowsBySessionIds?: (sessionIds: string[]) => Promise<void> } | undefined)?.deleteLarkRowsBySessionIds;
+    if (deleteLarkRowsBySessionIds) {
+      await deleteLarkRowsBySessionIds(sessionIds);
+    } else {
+      for (const sessionId of sessionIds) {
+        await this.larkHistoryRepository?.deleteLarkRowsBySessionId(sessionId);
+      }
+    }
+
+    if (this.sessionPlatformLinkRepository?.deleteLinksBySessionIds) {
+      await this.sessionPlatformLinkRepository.deleteLinksBySessionIds(sessionIds);
+    } else {
+      for (const sessionId of sessionIds) {
+        await this.sessionPlatformLinkRepository?.deleteLinksBySessionId(sessionId);
+      }
+    }
+
+    if (this.sessionRepository?.deleteSessionsByIds) {
+      await this.sessionRepository.deleteSessionsByIds(sessionIds);
+    } else {
+      for (const sessionId of sessionIds) {
+        await this.sessionRepository?.deleteSessionById(sessionId);
+      }
+    }
   }
 
   private getOutboundEventKind(result: TaskResult): string | null {

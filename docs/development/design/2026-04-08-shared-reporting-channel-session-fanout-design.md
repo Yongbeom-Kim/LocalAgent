@@ -421,6 +421,10 @@ Validation rules:
 - mismatched parent lineage and `context_ref` is a validation error, not a candidate for silent correction;
 - child-session creation must persist explicit platform-link attachments matching that resolved reporting channel.
 
+Contract note:
+
+- `/jobs` must carry `context_ref` alongside `session_id` for enriched and internal child-session work so downstream notifiers can preserve explicit reporting-channel routing without re-deriving it from mutable thread state.
+
 ## 13. Result Routing and Persistence
 
 ### 13.1 Lark results
@@ -495,6 +499,10 @@ GC must also be updated so it can safely remove stale child-session rows and roo
 
 V1 does not need to redesign GC strategy, but every GC path touched by this feature must avoid leaving orphaned child sessions, links, or root channel rows behind.
 
+Implementation note:
+
+- cleanup subtree payloads should use a shared parser/validator in `@local-agent/shared` so the notifier, cleanup executor, and tests all agree on the JSON shape and legacy single-session fallback behavior.
+
 ## 15. CLI Changes
 
 The CLI should be adjusted to support the internal routing contract rather than only the user-facing root-session submission path.
@@ -534,7 +542,9 @@ Minimum required coverage:
 3. thread-context tests proving root-session history excludes child-session output rows and depends on correct root-session message `session_id` backfill;
 4. result notifier tests proving child-session results route to the shared reporting channel while preserving child `session_id` in persisted message rows;
 5. cleanup tests proving `/end` on the reporting channel removes the full rooted subtree;
-6. CLI tests proving explicit `session_id` plus `context_ref` submission is accepted and validated.
+6. API route tests proving `/tasks` and `/jobs` both preserve and validate explicit `session_id` plus `context_ref` submission;
+7. CLI tests proving explicit `session_id` plus `context_ref` submission is accepted and validated;
+8. migrator tests proving the renamed root-session columns, relaxed reporting-channel attachment uniqueness, and runtime schema-version target.
 
 ## 18. Risks and Mitigations
 

@@ -142,7 +142,7 @@ async function bootstrapTelegramTables(connection: Awaited<ReturnType<typeof cre
     CREATE TABLE IF NOT EXISTS telegram_threads (
       chat_id TEXT NOT NULL,
       topic_id TEXT NOT NULL,
-      session_id TEXT NOT NULL UNIQUE,
+      root_session_id TEXT NOT NULL UNIQUE,
       source TEXT NOT NULL,
       task_type TEXT NOT NULL,
       executor TEXT NOT NULL,

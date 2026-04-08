@@ -53,9 +53,13 @@ export class LarkSessionResolver {
     }
 
     const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(envelope.root_message_id);
-    const existingLink = await this.sessionPlatformLinkRepository.getLinkByPlatformThread('lark', envelope.root_message_id);
+    const existingLinks = await this.sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey(
+      'lark',
+      envelope.root_message_id,
+    );
+    const existingLink = existingLinks[0] ?? null;
 
-    let sessionId = existingLink?.sessionId ?? null;
+    let sessionId = existingThread?.sessionId ?? existingLink?.sessionId ?? null;
     if (!sessionId && existingThread && existingThread.status !== 'audit_only') {
       sessionId = existingThread.sessionId;
     }

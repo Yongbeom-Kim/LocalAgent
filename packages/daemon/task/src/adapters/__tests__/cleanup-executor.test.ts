@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from 'node:
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { JobAttempt } from '@local-agent/shared';
+import { JobAttempt, buildCleanupSubtreePayload } from '@local-agent/shared';
 import { ExecutionEnvironment } from '../../services/job-environment';
 import { CleanupExecutor } from '../cleanup-executor';
 
@@ -150,7 +150,7 @@ describe('CleanupExecutor', () => {
     expect(result.stdout).toContain('nothing to remove');
   });
 
-  it('only touches the workspace directory and never opens channel repositories', async () => {
+  it('only touches the workspace directory and never opens channel repositories for legacy payloads', async () => {
     const job = createJobAttempt({ session_id: 'session-only-workspace-001' });
     const sessionDir = join(tempBaseDir, job.session_id);
     mkdirSync(sessionDir, { recursive: true });
@@ -165,5 +165,46 @@ describe('CleanupExecutor', () => {
     expect(directoryExists).toHaveBeenCalledWith(sessionDir);
     expect(removeDirectory).toHaveBeenCalledTimes(1);
     expect(removeDirectory).toHaveBeenCalledWith(sessionDir);
+  });
+
+  it('removes every workspace listed in a subtree cleanup payload', async () => {
+    const rootDir = join(tempBaseDir, 'root-session');
+    const childDir = join(tempBaseDir, 'child-session');
+    mkdirSync(rootDir, { recursive: true });
+    mkdirSync(childDir, { recursive: true });
+
+    const job = createJobAttempt({
+      session_id: 'root-session',
+      payload: buildCleanupSubtreePayload(['root-session', 'child-session']),
+    });
+
+    const executor = new CleanupExecutor(tempBaseDir);
+    const result = await executor.execute(job, createEnv());
+
+    expect(result.status).toBe('success');
+    expect(result.stdout).toContain('Cleanup removed 2 of 2 session workspace(s).');
+    expect(existsSync(rootDir)).toBe(false);
+    expect(existsSync(childDir)).toBe(false);
+  });
+
+  it('returns failure when subtree cleanup payload JSON is malformed', async () => {
+    const job = createJobAttempt({
+      session_id: 'root-session',
+      payload: '{',
+    });
+
+    const executor = new CleanupExecutor(tempBaseDir);
+    const result = await executor.execute(job, createEnv());
+
+    expect(result).toEqual({
+      job_id: 'job-cleanup-001',
+      task_id: 'task-cleanup-001',
+      task_type: 'cleanup',
+      session_id: 'root-session',
+      status: 'failure',
+      exit_code: null,
+      stdout: '',
+      stderr: 'cleanup payload must be valid JSON when subtree metadata is provided',
+    });
   });
 });

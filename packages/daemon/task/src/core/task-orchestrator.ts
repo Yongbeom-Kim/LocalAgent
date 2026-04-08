@@ -156,6 +156,7 @@ export class TaskOrchestrator {
           job_id: job.job_id,
           task_id: job.task_id,
           session_id: job.session_id,
+          context_ref: job.context_ref,
           task_type: job.task_type,
           payload: job.payload,
           history: job.history,

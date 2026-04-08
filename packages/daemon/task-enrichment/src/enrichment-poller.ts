@@ -12,6 +12,8 @@ import {
   type LarkHistoryRepository,
   type TaskExecutorType,
   ROOT_TASK_USAGE_HINT,
+  buildCleanupSubtreePayload,
+  type SessionRepository,
 } from '@local-agent/shared';
 import { EnrichmentService } from './enrichment-service';
 import type { ThreadContextFetcher, ThreadContextResult } from './adapters/thread-context-fetcher';
@@ -48,6 +50,7 @@ type StatusLookupResponse = {
 
 interface BridgeRuntimeOptions {
   telegramThreadContextFetcher?: TelegramThreadContextFetcher;
+  sessionRepository?: Pick<SessionRepository, 'listDescendantSessionIds'>;
 }
 
 type LegacyThreadContextResult = {
@@ -536,10 +539,19 @@ export class EnrichmentPoller {
         logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated or recovered session_id for enrichment');
       }
 
+      const cleanupPayload = await this.buildCleanupPayload(task, threadResult, sessionId);
       const threadHistory = isCleanupTask || threadResult?.kind !== 'thread'
         ? undefined
         : (threadResult.threadContext ?? undefined);
-      const enrichmentResult = this.enrichmentService.enrich({ ...task, session_id: sessionId }, sessionId, threadHistory);
+      const enrichmentResult = this.enrichmentService.enrich(
+        {
+          ...task,
+          session_id: sessionId,
+          ...(cleanupPayload ? { payload: cleanupPayload } : {}),
+        },
+        sessionId,
+        threadHistory,
+      );
 
       if (enrichmentResult.type === 'rejected') {
         logger.warn({ task_id: task.task_id, task_type: task.task_type, reason: enrichmentResult.reason }, 'Enrichment rejected task');
@@ -577,6 +589,22 @@ export class EnrichmentPoller {
 
       logger.error({ err }, 'Enrichment poll error');
     }
+  }
+
+  private async buildCleanupPayload(
+    task: Task,
+    threadResult: ThreadContextResult | undefined,
+    sessionId: string,
+  ): Promise<string | null> {
+    if (task.task_type !== CLEANUP_TASK_TYPE || threadResult?.kind !== 'thread') {
+      return null;
+    }
+
+    const descendantSessionIds = this.bridgeRuntime.sessionRepository
+      ? await this.bridgeRuntime.sessionRepository.listDescendantSessionIds(sessionId)
+      : [];
+
+    return buildCleanupSubtreePayload([sessionId, ...descendantSessionIds]);
   }
 
   private hasThreadScopedSource(task: Task): boolean {

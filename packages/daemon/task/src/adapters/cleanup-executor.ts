@@ -4,6 +4,7 @@ import {
   JobAttempt,
   TaskResultSubmission,
   createLogger,
+  parseCleanupPayload,
 } from '@local-agent/shared';
 import { ExecutorPrecheckResult, TaskExecutor } from '../ports/task-executor';
 import { ExecutionEnvironment } from '../services/job-environment';
@@ -15,7 +16,6 @@ type RemoveDirectory = (path: string) => void;
 type DirectoryExists = (path: string) => boolean;
 
 export class CleanupExecutor implements TaskExecutor {
-  // TODO: DB cleanup ownership across daemons is still architecturally unsatisfying; revisit once canonical session stores are settled.
   constructor(
     private readonly baseDir: string = DEFAULT_SESSION_BASE_DIR,
     private readonly removeDirectory: RemoveDirectory = (path) => fs.rmSync(path, { recursive: true, force: true }),
@@ -27,17 +27,47 @@ export class CleanupExecutor implements TaskExecutor {
   }
 
   async execute(job: JobAttempt, _env: ExecutionEnvironment): Promise<TaskResultSubmission> {
-    const workDir = join(this.baseDir, job.session_id);
-    const workspaceExists = this.directoryExists(workDir);
-    const successMessage = workspaceExists
-      ? `Removed session workspace at ${workDir}`
-      : `Session workspace not found at ${workDir}; nothing to remove`;
+    const cleanupPayload = parseCleanupPayload(job.payload, job.session_id);
+    if (cleanupPayload.kind === 'invalid') {
+      return {
+        job_id: job.job_id,
+        task_id: job.task_id,
+        task_type: job.task_type,
+        session_id: job.session_id,
+        status: 'failure',
+        exit_code: null,
+        stdout: '',
+        stderr: cleanupPayload.reason,
+      };
+    }
 
-    logger.info({ job_id: job.job_id, task_id: job.task_id, task_type: job.task_type, session_id: job.session_id, workDir }, 'Cleaning up session workspace');
+    const workspaces = cleanupPayload.sessionIds.map((sessionId) => ({
+      sessionId,
+      workDir: join(this.baseDir, sessionId),
+    }));
+
+    logger.info(
+      {
+        job_id: job.job_id,
+        task_id: job.task_id,
+        task_type: job.task_type,
+        session_id: job.session_id,
+        cleanup_session_ids: cleanupPayload.sessionIds,
+      },
+      'Cleaning up session workspace subtree',
+    );
 
     try {
-      if (workspaceExists) {
-        this.removeDirectory(workDir);
+      const removed: string[] = [];
+      const missing: string[] = [];
+
+      for (const workspace of workspaces) {
+        if (this.directoryExists(workspace.workDir)) {
+          this.removeDirectory(workspace.workDir);
+          removed.push(workspace.workDir);
+        } else {
+          missing.push(workspace.workDir);
+        }
       }
 
       return {
@@ -47,7 +77,7 @@ export class CleanupExecutor implements TaskExecutor {
         session_id: job.session_id,
         status: 'success',
         exit_code: 0,
-        stdout: successMessage,
+        stdout: this.formatSuccessMessage(cleanupPayload.sessionIds.length, removed, missing),
         stderr: '',
       };
     } catch (error) {
@@ -59,11 +89,10 @@ export class CleanupExecutor implements TaskExecutor {
           task_id: job.task_id,
           task_type: job.task_type,
           session_id: job.session_id,
-          workDir,
-          workspaceExists,
+          cleanup_session_ids: cleanupPayload.sessionIds,
           error: message,
         },
-        'Failed to clean up session workspace',
+        'Failed to clean up session workspace subtree',
       );
 
       return {
@@ -77,5 +106,21 @@ export class CleanupExecutor implements TaskExecutor {
         stderr: message,
       };
     }
+  }
+
+  private formatSuccessMessage(sessionCount: number, removed: string[], missing: string[]): string {
+    if (sessionCount === 1) {
+      if (removed.length === 1) {
+        return `Removed session workspace at ${removed[0]}`;
+      }
+
+      return `Session workspace not found at ${missing[0]}; nothing to remove`;
+    }
+
+    return [
+      `Cleanup removed ${removed.length} of ${sessionCount} session workspace(s).`,
+      ...(removed.length > 0 ? [`Removed: ${removed.join(', ')}`] : []),
+      ...(missing.length > 0 ? [`Missing: ${missing.join(', ')}`] : []),
+    ].join(' ');
   }
 }

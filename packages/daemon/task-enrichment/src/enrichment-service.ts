@@ -184,6 +184,7 @@ export class EnrichmentService {
         ...(history ? { history } : {}),
         executors,
         submitted_at: task.submitted_at,
+        ...(task.context_ref ? { context_ref: task.context_ref } : {}),
         system_prompt: systemPrompt,
         marketplaces: rule.marketplaces,
         ...(task.task_source ? { task_source: task.task_source } : {}),

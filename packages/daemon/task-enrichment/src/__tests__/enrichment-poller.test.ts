@@ -3,6 +3,7 @@ import {
   Task,
   JobSubmission,
   buildApiAuthHeaders,
+  buildCleanupSubtreePayload,
   type LarkInboundEnvelope,
   formatUnknownTaskTypeMessage,
   formatMissingTaskTypeMessage,
@@ -935,7 +936,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({
         task_type: 'cleanup',
-        payload: '',
+        payload: buildCleanupSubtreePayload(['inherited-session-id']),
       }),
       'inherited-session-id',
       undefined,

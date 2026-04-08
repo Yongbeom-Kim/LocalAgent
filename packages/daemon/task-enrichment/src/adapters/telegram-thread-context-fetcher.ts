@@ -20,7 +20,8 @@ export class TelegramThreadContextFetcher {
     }
 
     const messages = await this.telegramHistoryRepository.listTelegramMessagesForTopic(chatId, topicId);
-    const threadContext = formatTelegramPromptHistory(messages);
+    const rootOwnedMessages = messages.filter((row) => row.sessionId === thread.sessionId);
+    const threadContext = formatTelegramPromptHistory(rootOwnedMessages);
 
     return {
       kind: 'thread',

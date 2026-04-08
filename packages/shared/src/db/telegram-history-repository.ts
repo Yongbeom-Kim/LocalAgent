@@ -1,4 +1,4 @@
-import { asc, eq, lt, and, sql } from 'drizzle-orm';
+import { and, asc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { LibSQLDatabase } from 'drizzle-orm/libsql';
 import { telegramMessagesTable, telegramThreadsTable, type SqliteSchema } from './schema';
 
@@ -36,6 +36,7 @@ export interface RecordTelegramMessageParams {
 export interface TelegramThreadRow {
   chatId: string;
   topicId: string;
+  rootSessionId: string;
   sessionId: string;
   source: string;
   taskType: string;
@@ -64,6 +65,36 @@ export interface TelegramMessageRow {
   createdAtMs: number;
 }
 
+function toTelegramThreadRow(
+  row:
+    | {
+        chatId: string;
+        topicId: string;
+        rootSessionId: string;
+        source: string;
+        taskType: string;
+        executor: string;
+        executorModel: string;
+        status: string;
+        seedMessageId: string | null;
+        statusMessageId: string | null;
+        metadataJson: string | null;
+        createdAtMs: number;
+        updatedAtMs: number;
+        endedAtMs: number | null;
+      }
+    | undefined,
+): TelegramThreadRow | null {
+  if (!row) {
+    return null;
+  }
+
+  return {
+    ...row,
+    sessionId: row.rootSessionId,
+  };
+}
+
 export class TelegramHistoryRepository {
   constructor(private readonly db: LibSQLDatabase<SqliteSchema>) {}
 
@@ -73,7 +104,7 @@ export class TelegramHistoryRepository {
       .values({
         chatId: params.chatId,
         topicId: params.topicId,
-        sessionId: params.sessionId,
+        rootSessionId: params.sessionId,
         source: params.source,
         taskType: params.taskType,
         executor: params.executor,
@@ -89,7 +120,7 @@ export class TelegramHistoryRepository {
       .onConflictDoUpdate({
         target: [telegramThreadsTable.chatId, telegramThreadsTable.topicId],
         set: {
-          sessionId: params.sessionId,
+          rootSessionId: sql`COALESCE(${telegramThreadsTable.rootSessionId}, ${params.sessionId})`,
           source: params.source,
           taskType: params.taskType,
           executor: params.executor,
@@ -102,13 +133,7 @@ export class TelegramHistoryRepository {
           endedAtMs: params.endedAtMs ?? null,
         },
       });
-
-    await this.db
-      .update(telegramMessagesTable)
-      .set({ sessionId: params.sessionId, topicId: params.topicId })
-      .where(and(eq(telegramMessagesTable.chatId, params.chatId), eq(telegramMessagesTable.topicId, params.topicId)));
   }
-
   async recordInboundTelegramMessage(params: RecordTelegramMessageParams): Promise<void> {
     await this.recordTelegramMessage(params);
   }
@@ -124,17 +149,17 @@ export class TelegramHistoryRepository {
       .where(and(eq(telegramThreadsTable.chatId, chatId), eq(telegramThreadsTable.topicId, topicId)))
       .get();
 
-    return row ?? null;
+    return toTelegramThreadRow(row);
   }
 
   async getTelegramThreadBySessionId(sessionId: string): Promise<TelegramThreadRow | null> {
     const row = await this.db
       .select()
       .from(telegramThreadsTable)
-      .where(eq(telegramThreadsTable.sessionId, sessionId))
+      .where(eq(telegramThreadsTable.rootSessionId, sessionId))
       .get();
 
-    return row ?? null;
+    return toTelegramThreadRow(row);
   }
 
   async getTelegramMessageByChatAndMessageId(
@@ -173,7 +198,7 @@ export class TelegramHistoryRepository {
         updatedAtMs: params.updatedAtMs,
         endedAtMs: null,
       })
-      .where(eq(telegramThreadsTable.sessionId, params.sessionId));
+      .where(eq(telegramThreadsTable.rootSessionId, params.sessionId));
   }
 
   async markTelegramThreadEnded(sessionId: string, endedAtMs: number): Promise<void> {
@@ -184,23 +209,32 @@ export class TelegramHistoryRepository {
         endedAtMs,
         updatedAtMs: endedAtMs,
       })
-      .where(eq(telegramThreadsTable.sessionId, sessionId));
+      .where(eq(telegramThreadsTable.rootSessionId, sessionId));
   }
 
   async getStaleTelegramSessionIdsBeforeUpdatedAt(cutoffMs: number): Promise<string[]> {
     const rows = await this.db
-      .select({ sessionId: telegramThreadsTable.sessionId })
+      .select({ rootSessionId: telegramThreadsTable.rootSessionId })
       .from(telegramThreadsTable)
       .where(lt(telegramThreadsTable.updatedAtMs, cutoffMs))
-      .orderBy(asc(telegramThreadsTable.updatedAtMs), asc(telegramThreadsTable.sessionId));
+      .orderBy(asc(telegramThreadsTable.updatedAtMs), asc(telegramThreadsTable.rootSessionId));
 
-    return rows.map((row) => row.sessionId);
+    return rows.map((row) => row.rootSessionId);
   }
 
   async deleteTelegramRowsBySessionId(sessionId: string): Promise<void> {
+    await this.deleteTelegramRowsBySessionIds([sessionId]);
+  }
+
+  async deleteTelegramRowsBySessionIds(sessionIds: string[]): Promise<void> {
+    const normalizedSessionIds = [...new Set(sessionIds.filter((sessionId) => sessionId.length > 0))];
+    if (normalizedSessionIds.length === 0) {
+      return;
+    }
+
     await this.db.transaction(async (tx) => {
-      await tx.delete(telegramMessagesTable).where(eq(telegramMessagesTable.sessionId, sessionId));
-      await tx.delete(telegramThreadsTable).where(eq(telegramThreadsTable.sessionId, sessionId));
+      await tx.delete(telegramMessagesTable).where(inArray(telegramMessagesTable.sessionId, normalizedSessionIds));
+      await tx.delete(telegramThreadsTable).where(inArray(telegramThreadsTable.rootSessionId, normalizedSessionIds));
     });
   }
 
