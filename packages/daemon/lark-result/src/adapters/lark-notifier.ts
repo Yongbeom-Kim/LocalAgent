@@ -469,13 +469,31 @@ export class LarkNotifier {
         createdAtMs: nowMs,
       });
 
-      await this.sessionPlatformLinkRepository.activateClaimedLink({
+      const activated = await this.sessionPlatformLinkRepository.activateClaimedLink({
         sessionId: params.sessionId,
         platform: LARK_PLATFORM,
         claimToken: claim.claimToken,
         externalThreadKey: rootMessageId,
         updatedAtMs: nowMs,
       });
+
+      if (!activated) {
+        const reread = await this.sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform(
+          params.sessionId,
+          LARK_PLATFORM,
+        );
+        if (!reread?.externalThreadKey) {
+          throw new Error(`Failed to activate Lark fallback thread for session ${params.sessionId}`);
+        }
+
+        return this.loadPersistedDestination(
+          reread.externalThreadKey,
+          params.sessionId,
+          params.taskType,
+          params.executor,
+          params.executorModel,
+        );
+      }
 
       return {
         rootMessageId,

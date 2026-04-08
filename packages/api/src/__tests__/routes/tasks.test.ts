@@ -127,6 +127,30 @@ describe('POST /tasks', () => {
       updatedAtMs: expect.any(Number),
       endedAtMs: null,
     }));
+    expect(mockSessionRepository.upsertSession.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRabbitMQ.publish.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('returns 500 and does not publish when canonical session persistence fails', async () => {
+    mockSessionRepository.upsertSession.mockRejectedValueOnce(new Error('sqlite write failed'));
+    const app = buildApp();
+
+    const res = await authedRequest(request(app).post('/tasks')).send({
+      task_type: 'generic',
+      payload: 'hello',
+      executor: 'claude',
+      executor_model: 'sonnet',
+      session_id: 'session-123',
+      session: {
+        fallbackSeedText: 'hello',
+        fallbackOrigin: 'scheduler',
+      },
+    });
+
+    expect(res.status).toBe(500);
+    expect(mockSessionRepository.upsertSession).toHaveBeenCalledTimes(1);
+    expect(mockRabbitMQ.publish).not.toHaveBeenCalled();
   });
 
   it('returns 400 when fallback metadata is malformed', async () => {
