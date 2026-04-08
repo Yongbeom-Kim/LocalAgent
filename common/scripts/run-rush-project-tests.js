@@ -12,22 +12,13 @@ function readJson(filePath) {
   return JSON.parse(readFileSync(filePath, 'utf8'));
 }
 
-function getTestProjects() {
+function getRushProjects() {
   const rushConfig = readJson(rushJsonPath);
 
-  return rushConfig.projects
-    .map((project) => {
-      const packageJsonPath = join(repoRoot, project.projectFolder, 'package.json');
-      const packageJson = readJson(packageJsonPath);
-      const testScript = packageJson.scripts && packageJson.scripts.test;
-
-      return {
-        packageName: project.packageName,
-        projectFolder: project.projectFolder,
-        testScript,
-      };
-    })
-    .filter((project) => typeof project.testScript === 'string' && project.testScript.trim().length > 0);
+  return rushConfig.projects.map((project) => ({
+    packageName: project.packageName,
+    projectFolder: project.projectFolder,
+  }));
 }
 
 function runPackageTest(projectFolder) {
@@ -50,14 +41,14 @@ function runPackageTest(projectFolder) {
 }
 
 async function main() {
-  const projects = getTestProjects();
+  const projects = getRushProjects();
 
   if (projects.length === 0) {
-    console.log('No Rush projects define a test script.');
+    console.log('No Rush projects found.');
     process.exit(0);
   }
 
-  console.log('Discovered test projects:');
+  console.log('Running tests for Rush projects:');
   for (const project of projects) {
     console.log(`- ${project.packageName} (${project.projectFolder})`);
   }
