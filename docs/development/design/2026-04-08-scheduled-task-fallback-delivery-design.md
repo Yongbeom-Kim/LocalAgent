@@ -44,7 +44,7 @@ Two concrete design problems need to be solved together:
 
 1. **Persistence path:** fallback seed metadata is persisted via the canonical `/tasks` intake (additive, optional fields) rather than requiring the scheduler daemon to write to the DB directly.
 2. **Naming:** DB columns use `snake_case`; TypeScript fields use `camelCase`.
-3. **Idempotency:** lazy anchor creation is guarded by a uniqueness constraint on `(session_id, platform)` plus transaction/upsert semantics to prevent duplicate anchors under retries or concurrent deliveries.
+3. **Idempotency:** lazy anchor creation must use a durable claim step before external side effects. A daemon first reserves `(session_id, platform)` in persistence, then creates the Lark/Telegram anchor only if it owns that claim, and finally promotes the claim to an active link. This prevents duplicate anchors under retries or concurrent deliveries.
 
 ## Approaches Considered
 
@@ -168,6 +168,17 @@ Add session-level fallback metadata that can be recovered by `session_id`, minim
 
 **Write path:** the scheduler submits this metadata through the canonical `/tasks` request as additive optional fields (for example a `session` object), and the API persists it alongside session creation/update. This avoids coupling the scheduler to DB connectivity and keeps a single authoritative write-path for session data.
 
+At intake time, the API must materialize a canonical session row when fallback metadata is present. The row should use:
+
+- `sessionId = req.body.session_id`;
+- `taskType = req.body.task_type`;
+- `executor` / `executorModel` from the request if present;
+- `status = "active"` for v1 so existing readers can treat scheduled sessions like other live sessions;
+- `createdAtMs` / `updatedAtMs` from the `/tasks` intake timestamp;
+- fallback metadata fields from `req.body.session`.
+
+This keeps the repository contract explicit and avoids placeholder semantics being invented during implementation.
+
 **Guardrails:** schedule YAML must not allow specifying `task_source` or destination/thread/topic identifiers (explicitly out of scope for v1). If present, the scheduler should reject the config at startup.
 
 The scheduler should generate a fresh `session_id` before calling `/tasks` so it can include fallback metadata alongside the canonical submission. Manual or other submitters that want the same lazy fallback behavior can also opt into populating this metadata later without changing the execution pipeline.
@@ -254,11 +265,26 @@ Storing this with the session is preferable to inventing a separate schedule-spe
 
 ### Platform link persistence
 
-No conceptual schema change is required for `session_platform_links`, but the write path expands: links are no longer created only from inbound listeners or bridge setup. Outbound fallback can create the first platform link for a session.
+`session_platform_links` needs to become a claimable state machine instead of a write-only mapping table. Outbound fallback can be the first writer for a session, and it must be able to reserve ownership before it calls an external API.
 
-Add (or confirm) a uniqueness constraint to make lazy creation safe under retries/concurrency:
+Recommended additions:
 
-- `UNIQUE(session_id, platform)` on `session_platform_links`
+- make `external_thread_key` nullable while anchor creation is pending;
+- add `link_status TEXT NOT NULL` with values such as `pending`, `active`, `ended`;
+- add `claim_token TEXT NULL` to identify the worker that currently owns creation;
+- add `claim_expires_at_ms INTEGER NULL` so abandoned claims can be recovered.
+
+Keep these guards:
+
+- `UNIQUE(session_id, platform)` on `session_platform_links`;
+- uniqueness on `(platform, external_thread_key)` only for active rows with a non-null external key.
+
+Creation flow:
+
+1. daemon attempts to insert or take over a `pending` row for `(session_id, platform)` inside a transaction;
+2. only the worker that owns the resulting `claim_token` may create the external anchor;
+3. after success, that worker updates the row to `active` and stores `external_thread_key`;
+4. competing workers re-read the row and wait for the active link instead of creating a second anchor.
 
 ## Runtime Flow
 
@@ -273,14 +299,15 @@ Add (or confirm) a uniqueness constraint to make lazy creation safe under retrie
 ### Lazy fallback delivery
 
 1. Outbound phase/result daemon receives an event with no usable thread/topic info.
-2. Daemon checks for an existing platform link for the session.
+2. Daemon checks for an existing active platform link for the session.
 3. If none exists, daemon reads session fallback metadata.
-4. Daemon creates the platform anchor:
+4. Daemon acquires or observes a durable platform-link claim for `(session_id, platform)`.
+5. The claim owner creates the platform anchor:
    - Lark: top-level message
    - Telegram: forum topic + seed message
-5. Daemon persists platform link + message/thread state.
-6. Daemon posts the current event into the newly created destination.
-7. Future events for the same session reuse that destination.
+6. Daemon persists platform link + message/thread state and promotes the claim to `active`.
+7. Daemon posts the current event into the newly created destination.
+8. Future events for the same session reuse that destination.
 
 ## Failure Handling
 
@@ -293,10 +320,12 @@ Add (or confirm) a uniqueness constraint to make lazy creation safe under retrie
 ### Fallback delivery failures
 
 - If outbound delivery cannot create a Lark root or Telegram topic, it should log and retry according to the existing notifier retry behavior.
-- Fallback creation must be idempotent enough to avoid duplicate anchors on retried delivery and under concurrent deliveries. The preferred strategy is:
-  - perform link creation with a transaction + upsert keyed by `(session_id, platform)`;
-  - on a retryable failure, re-check `session_platform_links` before attempting a second create;
-  - persist the created destination immediately after success (before delivering the triggering phase/result if practical).
+- Fallback creation must reserve ownership before the external create call. The preferred strategy is:
+  - claim `(session_id, platform)` in `session_platform_links` with `link_status = "pending"`, a fresh `claim_token`, and a bounded expiry;
+  - if a competing non-expired claim already exists, stop and re-read until an active link appears or the claim expires;
+  - only the claim owner may call the external platform API;
+  - persist the created destination immediately after success and promote the row to `active` before sending subsequent events;
+  - if external creation fails, clear or expire the claim so a later retry can safely take ownership.
 
 ## Testing Strategy
 

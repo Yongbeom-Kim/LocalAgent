@@ -12,6 +12,9 @@ export interface UpsertSessionParams {
   createdAtMs: number;
   updatedAtMs: number;
   endedAtMs?: number | null;
+  fallbackSeedText?: string | null;
+  fallbackOrigin?: string | null;
+  fallbackTitleHint?: string | null;
 }
 
 export interface SessionRow {
@@ -24,6 +27,9 @@ export interface SessionRow {
   createdAtMs: number;
   updatedAtMs: number;
   endedAtMs: number | null;
+  fallbackSeedText: string | null;
+  fallbackOrigin: string | null;
+  fallbackTitleHint: string | null;
 }
 
 export class SessionRepository {
@@ -42,6 +48,9 @@ export class SessionRepository {
         createdAtMs: params.createdAtMs,
         updatedAtMs: params.updatedAtMs,
         endedAtMs: params.endedAtMs ?? null,
+        fallbackSeedText: params.fallbackSeedText ?? null,
+        fallbackOrigin: params.fallbackOrigin ?? null,
+        fallbackTitleHint: params.fallbackTitleHint ?? null,
       })
       .onConflictDoUpdate({
         target: sessionsTable.sessionId,
@@ -70,6 +79,18 @@ export class SessionRepository {
             WHEN ${sessionsTable.endedAtMs} IS NULL THEN ${params.endedAtMs ?? null}
             WHEN ${params.endedAtMs ?? null} > ${sessionsTable.endedAtMs} THEN ${params.endedAtMs ?? null}
             ELSE ${sessionsTable.endedAtMs}
+          END`,
+          fallbackSeedText: sql`CASE
+            WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.fallbackSeedText ?? null}
+            ELSE ${sessionsTable.fallbackSeedText}
+          END`,
+          fallbackOrigin: sql`CASE
+            WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.fallbackOrigin ?? null}
+            ELSE ${sessionsTable.fallbackOrigin}
+          END`,
+          fallbackTitleHint: sql`CASE
+            WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.fallbackTitleHint ?? null}
+            ELSE ${sessionsTable.fallbackTitleHint}
           END`,
         },
       });

@@ -38,6 +38,8 @@ services:
       QUEUE_NAME: tasks
       PORT: "3000"
       LOG_LEVEL: info
+      LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "13"
     depends_on:
       rabbitmq:
         condition: service_healthy
@@ -56,7 +58,7 @@ services:
       LOG_LEVEL: info
       DEBUG: "${DEBUG:-0}"
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "13"
     volumes:
       - ${HOME}/.claude/.credentials.json:/root/.claude/.credentials.json:ro
       - local-agent-db:/data
@@ -83,7 +85,7 @@ services:
       LARK_APP_SECRET: ${LARK_APP_SECRET}
       LARK_RECIPIENT_ID: ${LARK_RECIPIENT_ID}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "13"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -107,7 +109,7 @@ services:
       TASK_DAEMON_STATUS_URL: http://task-daemon:7070
       LOG_LEVEL: info
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "13"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -121,6 +123,35 @@ services:
       - task-enrichment-daemon
       - full
 
+  task-scheduler:
+    build:
+      context: .
+      dockerfile: packages/daemon/task-scheduler/Dockerfile
+    environment:
+      API_URL: http://api:3000
+      LOG_LEVEL: info
+      SCHEDULER_CONFIG_DIR: /scheduler-config
+      SCHEDULER_ARTIFACTS_DIR: /scheduler-artifacts
+      SCHEDULER_CRONTAB_PATH: /scheduler-artifacts/scheduler.crontab
+      SCHEDULER_CONFIG_SNAPSHOT_PATH: /scheduler-artifacts/config.snapshot.json
+      API_AUTH_TOKEN: ${API_AUTH_TOKEN}
+      API_AUTH_DISABLED: ${API_AUTH_DISABLED:-}
+    command:
+      - sh
+      - -c
+      - node dist/index.js render && supercronic $SCHEDULER_CRONTAB_PATH
+    volumes:
+      - ./packages/daemon/task-scheduler/config:/scheduler-config:ro
+      - scheduler-artifacts:/scheduler-artifacts
+    depends_on:
+      api:
+        condition: service_started
+      migrator:
+        condition: service_completed_successfully
+    profiles:
+      - task-scheduler
+      - full
+
   telegram-inbound-daemon:
     build:
       context: .
@@ -132,7 +163,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_FORUM_GROUP_ID: ${TELEGRAM_FORUM_GROUP_ID}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "13"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -157,7 +188,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       TELEGRAM_FORUM_GROUP_ID: ${TELEGRAM_FORUM_GROUP_ID}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "13"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -181,7 +212,7 @@ services:
       LARK_APP_ID: ${LARK_APP_ID}
       LARK_APP_SECRET: ${LARK_APP_SECRET}
       LOCAL_AGENT_DB_PATH: /data/local-agent.sqlite
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "8"
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: "13"
     volumes:
       - local-agent-db:/data
     depends_on:
@@ -196,3 +227,4 @@ services:
 
 volumes:
   local-agent-db:
+  scheduler-artifacts:

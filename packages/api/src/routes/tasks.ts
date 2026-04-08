@@ -3,6 +3,7 @@ import { v4 as uuidv4 } from 'uuid';
 import {
   Task,
   isValidTaskContextRef,
+  SessionRepository,
   isValidTaskSource,
   isControlTaskType,
   isTaskExecutorType,
@@ -10,12 +11,35 @@ import {
 } from '@local-agent/shared';
 import { RabbitMQService, RabbitMQUnavailableError } from '../services/rabbitmq';
 
-export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
+function validateSessionMetadata(session: unknown): { valid: true } | { valid: false; error: string } {
+  if (typeof session !== 'object' || session === null) {
+    return { valid: false, error: 'session must be an object if provided' };
+  }
+
+  const { fallbackSeedText, fallbackOrigin, fallbackTitleHint } = session as Record<string, unknown>;
+
+  if (fallbackSeedText !== undefined && typeof fallbackSeedText !== 'string') {
+    return { valid: false, error: 'session.fallbackSeedText must be a string if provided' };
+  }
+  if (fallbackOrigin !== undefined && typeof fallbackOrigin !== 'string') {
+    return { valid: false, error: 'session.fallbackOrigin must be a string if provided' };
+  }
+  if (fallbackTitleHint !== undefined && typeof fallbackTitleHint !== 'string') {
+    return { valid: false, error: 'session.fallbackTitleHint must be a string if provided' };
+  }
+
+  return { valid: true };
+}
+
+export function createTaskRoutes(
+  rabbitmq: RabbitMQService,
+  sessionRepository: Pick<SessionRepository, 'upsertSession'>,
+): Router {
   const router = Router();
 
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { task_type, payload, task_source, executor, executor_model, session_id, context_ref } = req.body;
+      const { task_type, payload, task_source, executor, executor_model, session_id, session, context_ref } = req.body;
 
       if (typeof task_type !== 'string') {
         res.status(400).json({ error: 'task_type is required and must be a string' });
@@ -34,6 +58,19 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
       if (session_id !== undefined && typeof session_id !== 'string') {
         res.status(400).json({ error: 'session_id must be a string if provided' });
         return;
+      }
+
+      if (session !== undefined) {
+        const validation = validateSessionMetadata(session);
+        if (!validation.valid) {
+          res.status(400).json({ error: validation.error });
+          return;
+        }
+
+        if (session_id === undefined) {
+          res.status(400).json({ error: 'session_id is required when session metadata is provided' });
+          return;
+        }
       }
 
       if (context_ref !== undefined) {
@@ -75,17 +112,46 @@ export function createTaskRoutes(rabbitmq: RabbitMQService): Router {
         return;
       }
 
+      const intakeAtMs = Date.now();
       const task: Task = {
         task_id: uuidv4(),
         task_type,
         payload,
-        submitted_at: new Date().toISOString(),
+        submitted_at: new Date(intakeAtMs).toISOString(),
         ...(typeof executor === 'string' ? { executor } : {}),
         ...(typeof executor_model === 'string' ? { executor_model } : {}),
         ...(session_id !== undefined ? { session_id } : {}),
         ...(context_ref !== undefined ? { context_ref } : {}),
         ...(task_source ? { task_source } : {}),
       };
+
+      if (session !== undefined && typeof session_id === 'string') {
+        const sessionMetadata = session as {
+          fallbackSeedText?: string;
+          fallbackOrigin?: string;
+          fallbackTitleHint?: string;
+        };
+
+        // Persist scheduler-owned session metadata before enqueue so retries cannot
+        // create duplicate work after a successful publish. This still leaves a
+        // narrow follow-up gap where a publish failure can strand canonical session
+        // state without a queued task; fixing that cleanly would require an outbox
+        // or a dedicated pending/queued intake state.
+        await sessionRepository.upsertSession({
+          sessionId: session_id,
+          taskType: task_type,
+          executor: typeof executor === 'string' ? executor : null,
+          executorModel: typeof executor_model === 'string' ? executor_model : null,
+          status: 'active',
+          createdAtMs: intakeAtMs,
+          updatedAtMs: intakeAtMs,
+          endedAtMs: null,
+          fallbackSeedText: sessionMetadata.fallbackSeedText ?? null,
+          fallbackOrigin: sessionMetadata.fallbackOrigin ?? null,
+          fallbackTitleHint: sessionMetadata.fallbackTitleHint ?? null,
+        });
+      }
+
       const buffered = await rabbitmq.publish(task);
 
       if (!buffered) {

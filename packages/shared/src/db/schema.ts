@@ -155,6 +155,9 @@ export const sessionsTable = sqliteTable(
     createdAtMs: integer('created_at_ms').notNull(),
     updatedAtMs: integer('updated_at_ms').notNull(),
     endedAtMs: integer('ended_at_ms'),
+    fallbackSeedText: text('fallback_seed_text'),
+    fallbackOrigin: text('fallback_origin'),
+    fallbackTitleHint: text('fallback_title_hint'),
   },
   (table) => ({
     parentSessionFk: foreignKey({
@@ -173,7 +176,10 @@ export const sessionPlatformLinksTable = sqliteTable(
       .notNull()
       .references(() => sessionsTable.sessionId),
     platform: text('platform').notNull(),
-    externalThreadKey: text('external_thread_key').notNull(),
+    externalThreadKey: text('external_thread_key'),
+    linkStatus: text('link_status').notNull().default('active'),
+    claimToken: text('claim_token'),
+    claimExpiresAtMs: integer('claim_expires_at_ms'),
     createdAtMs: integer('created_at_ms').notNull(),
     updatedAtMs: integer('updated_at_ms').notNull(),
     endedAtMs: integer('ended_at_ms'),

@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 describe('runMigrations', () => {
-  it('applies the sqlite schema including root-owned reporting channels and session lineage', async () => {
+  it('applies the sqlite schema including session lineage, fallback metadata, and claimable platform links', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-migrator-test-'));
     tempDirs.push(tempDir);
 
@@ -25,8 +25,8 @@ describe('runMigrations', () => {
 
     try {
       const schemaVersion = await client.execute('SELECT version, updated_by FROM __schema_version WHERE id = 1');
-      expect(schemaVersion.rows[0]?.version).toBe(10);
-      expect(schemaVersion.rows[0]?.updated_by).toBe('0005_sync_schema_version');
+      expect(schemaVersion.rows[0]?.version).toBe(13);
+      expect(schemaVersion.rows[0]?.updated_by).toBe('0007_session_platform_link_claims');
 
       const larkThreadColumns = await client.execute("PRAGMA table_info('lark_threads')");
       expect(larkThreadColumns.rows.some((row) => row.name === 'root_session_id')).toBe(true);
@@ -40,8 +40,37 @@ describe('runMigrations', () => {
       expect(bridgeColumns.rows.some((row) => row.name === 'root_session_id')).toBe(true);
       expect(bridgeColumns.rows.some((row) => row.name === 'session_id')).toBe(false);
 
-      const sessionColumns = await client.execute("PRAGMA table_info('sessions')");
-      expect(sessionColumns.rows.some((row) => row.name === 'parent_session_id')).toBe(true);
+      const sessionsColumns = await client.execute("PRAGMA table_info('sessions')");
+      const sessionColumnNames = sessionsColumns.rows.map((row) => String(row.name));
+      expect(sessionColumnNames).toContain('parent_session_id');
+      expect(sessionColumnNames).toContain('fallback_seed_text');
+      expect(sessionColumnNames).toContain('fallback_origin');
+      expect(sessionColumnNames).toContain('fallback_title_hint');
+
+      const sessionPlatformLinkColumns = await client.execute("PRAGMA table_info('session_platform_links')");
+      const sessionPlatformLinkColumnNames = sessionPlatformLinkColumns.rows.map((row) => String(row.name));
+      expect(sessionPlatformLinkColumnNames).toContain('link_status');
+      expect(sessionPlatformLinkColumnNames).toContain('claim_token');
+      expect(sessionPlatformLinkColumnNames).toContain('claim_expires_at_ms');
+
+      const sessionPlatformLinksIndexes = await client.execute("PRAGMA index_list('session_platform_links')");
+      expect(
+        sessionPlatformLinksIndexes.rows.some(
+          (row) => row.name === 'idx_session_platform_links_platform_external_thread_key',
+        ),
+      ).toBe(true);
+      expect(
+        sessionPlatformLinksIndexes.rows.some(
+          (row) => row.name === 'session_platform_links_platform_external_thread_key_unique',
+        ),
+      ).toBe(true);
+
+      const sessionBridgesIndexes = await client.execute("PRAGMA index_list('session_bridges')");
+      expect(
+        sessionBridgesIndexes.rows.some(
+          (row) => row.name === 'session_platform_links_platform_external_thread_key_unique',
+        ),
+      ).toBe(false);
 
       await client.execute({
         sql: `
@@ -71,10 +100,13 @@ describe('runMigrations', () => {
             status,
             created_at_ms,
             updated_at_ms,
-            ended_at_ms
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ended_at_ms,
+            fallback_seed_text,
+            fallback_origin,
+            fallback_title_hint
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        args: ['child-session', 'root-session', 'coding', 'claude', 'sonnet', 'active', 110, 110, null],
+        args: ['child-session', 'root-session', 'coding', 'claude', 'sonnet', 'active', 110, 110, null, 'seed text', 'scheduler', 'Daily summary'],
       });
 
       const lineageRows = await client.execute({
@@ -85,6 +117,15 @@ describe('runMigrations', () => {
         { session_id: 'child-session', parent_session_id: 'root-session' },
         { session_id: 'root-session', parent_session_id: null },
       ]);
+
+      const canonicalSessionLookup = await client.execute({
+        sql: 'SELECT session_id, fallback_seed_text, fallback_origin, fallback_title_hint FROM sessions WHERE session_id = ?',
+        args: ['child-session'],
+      });
+      expect(canonicalSessionLookup.rows[0]?.session_id).toBe('child-session');
+      expect(canonicalSessionLookup.rows[0]?.fallback_seed_text).toBe('seed text');
+      expect(canonicalSessionLookup.rows[0]?.fallback_origin).toBe('scheduler');
+      expect(canonicalSessionLookup.rows[0]?.fallback_title_hint).toBe('Daily summary');
 
       await expect(
         client.execute({
@@ -172,12 +213,15 @@ describe('runMigrations', () => {
             session_id,
             platform,
             external_thread_key,
+            link_status,
+            claim_token,
+            claim_expires_at_ms,
             created_at_ms,
             updated_at_ms,
             ended_at_ms
-          ) VALUES (?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        args: ['root-session', 'lark', 'om_root_1', 100, 100, null],
+        args: ['root-session', 'lark', 'om_root_1', 'active', null, null, 100, 100, null],
       });
 
       await client.execute({
@@ -186,13 +230,30 @@ describe('runMigrations', () => {
             session_id,
             platform,
             external_thread_key,
+            link_status,
+            claim_token,
+            claim_expires_at_ms,
             created_at_ms,
             updated_at_ms,
             ended_at_ms
-          ) VALUES (?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `,
-        args: ['child-session', 'lark', 'om_root_1', 110, 110, null],
+        args: ['child-session', 'telegram', '-100123:42', 'active', null, null, 110, 110, null],
       });
+
+      const larkLinkLookup = await client.execute({
+        sql: 'SELECT external_thread_key, link_status FROM session_platform_links WHERE session_id = ? AND platform = ?',
+        args: ['root-session', 'lark'],
+      });
+      expect(larkLinkLookup.rows[0]?.external_thread_key).toBe('om_root_1');
+      expect(larkLinkLookup.rows[0]?.link_status).toBe('active');
+
+      const telegramLinkLookup = await client.execute({
+        sql: 'SELECT external_thread_key, link_status FROM session_platform_links WHERE session_id = ? AND platform = ?',
+        args: ['child-session', 'telegram'],
+      });
+      expect(telegramLinkLookup.rows[0]?.external_thread_key).toBe('-100123:42');
+      expect(telegramLinkLookup.rows[0]?.link_status).toBe('active');
 
       const sharedLinkRows = await client.execute({
         sql: `
@@ -203,7 +264,23 @@ describe('runMigrations', () => {
         `,
         args: ['lark', 'om_root_1'],
       });
-      expect(sharedLinkRows.rows.map((row) => row.session_id)).toEqual(['child-session', 'root-session']);
+      expect(sharedLinkRows.rows.map((row) => row.session_id)).toEqual(['root-session']);
+
+      await client.execute({
+        sql: `
+          INSERT INTO sessions (
+            session_id,
+            task_type,
+            executor,
+            executor_model,
+            status,
+            created_at_ms,
+            updated_at_ms,
+            ended_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: ['session-2', 'coding', 'claude', 'sonnet', 'active', 200, 200, null],
+      });
 
       await expect(
         client.execute({
@@ -212,26 +289,54 @@ describe('runMigrations', () => {
               session_id,
               platform,
               external_thread_key,
+              link_status,
+              claim_token,
+              claim_expires_at_ms,
               created_at_ms,
               updated_at_ms,
               ended_at_ms
-            ) VALUES (?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
           `,
-          args: ['root-session', 'lark', 'om_root_2', 120, 120, null],
+          args: ['session-2', 'telegram', '-100123:42', 'active', null, null, 200, 200, null],
+        }),
+      ).rejects.toThrow(/UNIQUE constraint failed: session_platform_links\.platform, session_platform_links\.external_thread_key/);
+
+      await expect(
+        client.execute({
+          sql: `
+            INSERT INTO session_platform_links (
+              session_id,
+              platform,
+              external_thread_key,
+              link_status,
+              claim_token,
+              claim_expires_at_ms,
+              created_at_ms,
+              updated_at_ms,
+              ended_at_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          args: ['root-session', 'lark', 'om_root_2', 'active', null, null, 200, 200, null],
         }),
       ).rejects.toThrow(/UNIQUE constraint failed: session_platform_links\.session_id, session_platform_links\.platform/);
 
-      const sessionPlatformLinksIndexes = await client.execute("PRAGMA index_list('session_platform_links')");
-      expect(
-        sessionPlatformLinksIndexes.rows.some(
-          (row) => row.name === 'idx_session_platform_links_platform_external_thread_key',
-        ),
-      ).toBe(true);
-      expect(
-        sessionPlatformLinksIndexes.rows.some(
-          (row) => row.name === 'session_platform_links_platform_external_thread_key_unique',
-        ),
-      ).toBe(false);
+      const pendingInsert = await client.execute({
+        sql: `
+          INSERT INTO session_platform_links (
+            session_id,
+            platform,
+            external_thread_key,
+            link_status,
+            claim_token,
+            claim_expires_at_ms,
+            created_at_ms,
+            updated_at_ms,
+            ended_at_ms
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        args: ['session-2', 'telegram', null, 'pending', 'claim-1', 500, 200, 200, null],
+      });
+      expect(pendingInsert.rowsAffected).toBe(1);
     } finally {
       client.close();
     }

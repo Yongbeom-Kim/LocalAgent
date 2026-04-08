@@ -407,6 +407,23 @@ describe('TaskSubmission routing fields', () => {
       platform: 'lark',
       root_key: 'om_root_123',
     });
+
+    const schedulerTask: TaskSubmission = {
+      task_type: 'code_review',
+      payload: 'daily summary',
+      session_id: 'session-scheduler-1',
+      session: {
+        fallbackSeedText: 'daily summary',
+        fallbackOrigin: 'scheduler',
+        fallbackTitleHint: 'Daily summary',
+      },
+    };
+
+    expect(schedulerTask.session).toEqual({
+      fallbackSeedText: 'daily summary',
+      fallbackOrigin: 'scheduler',
+      fallbackTitleHint: 'Daily summary',
+    });
   });
 
   it('allows control-task submissions without executor fields', () => {
