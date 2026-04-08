@@ -50,7 +50,7 @@ type StatusLookupResponse = {
 
 interface BridgeRuntimeOptions {
   telegramThreadContextFetcher?: TelegramThreadContextFetcher;
-  sessionRepository?: Pick<SessionRepository, 'listDescendantSessionIds'>;
+  sessionRepository?: Pick<SessionRepository, 'listDescendantSessionIds' | 'upsertSession'>;
 }
 
 type LegacyThreadContextResult = {
@@ -529,15 +529,21 @@ export class EnrichmentPoller {
         return;
       }
 
-      const sessionId = threadResult?.kind === 'thread' && threadResult.inheritedSessionId
-        ? threadResult.inheritedSessionId
-        : (task.session_id ?? generateSessionId());
+      const explicitSessionId = task.session_id ?? null;
+      const inheritedSessionId = threadResult?.kind === 'thread'
+        ? (threadResult.inheritedSessionId ?? null)
+        : null;
+      const sessionId = explicitSessionId ?? inheritedSessionId ?? generateSessionId();
 
-      if (threadResult?.kind === 'thread' && threadResult.inheritedSessionId) {
+      if (explicitSessionId) {
+        logger.info({ task_id: task.task_id, explicit_session_id: sessionId }, 'Using explicit session_id for enrichment');
+      } else if (inheritedSessionId) {
         logger.info({ task_id: task.task_id, inherited_session_id: sessionId }, 'Inherited session_id from thread root');
       } else {
         logger.info({ task_id: task.task_id, new_session_id: sessionId }, 'Generated or recovered session_id for enrichment');
       }
+
+      await this.persistExplicitChildSessionLineage(task, threadResult, sessionId);
 
       const cleanupPayload = await this.buildCleanupPayload(task, threadResult, sessionId);
       const threadHistory = isCleanupTask || threadResult?.kind !== 'thread'
@@ -589,6 +595,36 @@ export class EnrichmentPoller {
 
       logger.error({ err }, 'Enrichment poll error');
     }
+  }
+
+  private async persistExplicitChildSessionLineage(
+    task: Task,
+    threadResult: ThreadContextResult | undefined,
+    sessionId: string,
+  ): Promise<void> {
+    if (!task.session_id || !this.bridgeRuntime.sessionRepository || threadResult?.kind !== 'thread') {
+      return;
+    }
+
+    const parentSessionId = threadResult.inheritedSessionId;
+    if (!parentSessionId || parentSessionId === sessionId) {
+      return;
+    }
+
+    const submittedAtMs = Date.parse(task.submitted_at);
+    const timestampMs = Number.isFinite(submittedAtMs) ? submittedAtMs : Date.now();
+
+    await this.bridgeRuntime.sessionRepository.upsertSession({
+      sessionId,
+      parentSessionId,
+      taskType: task.task_type,
+      executor: task.executor ?? threadResult.inheritedExecutor ?? null,
+      executorModel: task.executor_model ?? threadResult.inheritedExecutorModel ?? null,
+      status: 'active',
+      createdAtMs: timestampMs,
+      updatedAtMs: timestampMs,
+      endedAtMs: null,
+    });
   }
 
   private async buildCleanupPayload(
