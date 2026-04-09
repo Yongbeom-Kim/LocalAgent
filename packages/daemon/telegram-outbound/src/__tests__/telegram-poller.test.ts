@@ -198,6 +198,76 @@ describe('TelegramPoller', () => {
       expect(mockNotify).not.toHaveBeenCalled();
     });
 
+    it('bursts on backlog and stops after a 204', async () => {
+      const nextResult: TaskResult = {
+        ...sampleResult,
+        result_id: 'res-2',
+        job_id: 'job-457',
+        task_id: 'task-124',
+      };
+
+      (poller as unknown as { running: boolean }).running = true;
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: sampleResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: nextResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({ status: 204 });
+
+      await poller.runBurstCycle();
+
+      expect(mockNotify).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/telegram-messages', {
+        headers: { Authorization: 'Bearer secret' },
+      });
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results/next/telegram-messages', {
+        headers: { Authorization: 'Bearer secret' },
+      });
+      expect(mockFetch).toHaveBeenNthCalledWith(5, 'http://localhost:3000/results/next/telegram-messages', {
+        headers: { Authorization: 'Bearer secret' },
+      });
+    });
+
+    it('continues the burst after a fetched result even if downstream delivery fails', async () => {
+      const nextResult: TaskResult = {
+        ...sampleResult,
+        result_id: 'res-2',
+        job_id: 'job-457',
+        task_id: 'task-124',
+      };
+
+      (poller as unknown as { running: boolean }).running = true;
+      mockNotify.mockRejectedValueOnce(new Error('delivery failed'));
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: sampleResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: nextResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({ status: 204 });
+
+      await poller.runBurstCycle();
+
+      expect(mockNotify).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results/next/telegram-messages', {
+        headers: { Authorization: 'Bearer secret' },
+      });
+      expect(mockFetch).toHaveBeenNthCalledWith(5, 'http://localhost:3000/results/next/telegram-messages', {
+        headers: { Authorization: 'Bearer secret' },
+      });
+    });
+
     it('handles fetch errors gracefully', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
       await expect(poller.pollOnce()).resolves.toBeUndefined();

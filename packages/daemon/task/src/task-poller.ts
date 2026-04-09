@@ -21,6 +21,11 @@ interface SessionDescriptor {
   queue_name: string;
 }
 
+interface PollPassResult {
+  fetchedWork: boolean;
+  hitCapacity: boolean;
+}
+
 export class TaskPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
@@ -77,18 +82,28 @@ export class TaskPoller {
     return this.activeSessions.size;
   }
 
-  async pollOnce(): Promise<void> {
+  private async pollPass(): Promise<PollPassResult> {
+    let fetchedWork = false;
+
     try {
       const sessions = await this.fetchMessageQueueActiveSessions();
 
       for (const session of sessions) {
         if (this.inFlightJobs.size >= this.maxConcurrency) {
-          this.increasePollInterval();
-          logger.info(
-            { inFlight: this.inFlightJobs.size, maxConcurrency: this.maxConcurrency },
-            'At capacity, backing off',
-          );
-          break;
+          if (!fetchedWork) {
+            this.increasePollInterval();
+            logger.info(
+              { inFlight: this.inFlightJobs.size, maxConcurrency: this.maxConcurrency },
+              'At capacity, backing off',
+            );
+          } else {
+            this.resetPollInterval();
+          }
+
+          return {
+            fetchedWork,
+            hitCapacity: true,
+          };
         }
         if (this.activeSessions.has(session.session_id)) {
           continue;
@@ -99,19 +114,47 @@ export class TaskPoller {
           continue;
         }
 
+        fetchedWork = true;
+        this.resetPollInterval();
         this.activeSessions.add(session.session_id);
         const promise = this.executeJob(job);
         this.inFlightJobs.set(job.job_id, promise);
       }
+
+      return {
+        fetchedWork,
+        hitCapacity: false,
+      };
     } catch (err) {
       if (err instanceof ApiAuthConfigurationError) {
         logger.error({ err }, 'Stopping task poll due to API auth configuration error');
         this.stop();
-        return;
+        return {
+          fetchedWork: false,
+          hitCapacity: false,
+        };
       }
 
       logger.error({ err }, 'Poll error');
+
+      return {
+        fetchedWork: false,
+        hitCapacity: false,
+      };
     }
+  }
+
+  async pollOnce(): Promise<void> {
+    await this.pollPass();
+  }
+
+  async runBurstCycle(): Promise<void> {
+    let continueBurst = false;
+
+    do {
+      const result = await this.pollPass();
+      continueBurst = this.running && result.fetchedWork && !result.hitCapacity;
+    } while (continueBurst);
   }
 
   private async fetchMessageQueueActiveSessions(): Promise<SessionDescriptor[]> {
@@ -282,7 +325,7 @@ export class TaskPoller {
     logger.info({ intervalMs }, 'Starting task poller');
 
     const loop = async () => {
-      await this.pollOnce();
+      await this.runBurstCycle();
       if (this.running) {
         this.timer = setTimeout(loop, this.currentPollInterval);
       }

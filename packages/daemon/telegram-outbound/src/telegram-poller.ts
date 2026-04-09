@@ -14,6 +14,10 @@ interface TaskEventEnvelopeLegacy {
   event_kind: TaskEventKind;
 }
 
+interface PollPassResult {
+  fetchedWork: boolean;
+}
+
 export class TelegramPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
@@ -25,7 +29,7 @@ export class TelegramPoller {
     private readonly apiAuthToken?: string,
   ) {}
 
-  async pollOnce(): Promise<void> {
+  private async pollPass(): Promise<PollPassResult> {
     try {
       const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`, {
         headers: buildApiAuthHeaders(this.apiAuthToken),
@@ -33,12 +37,12 @@ export class TelegramPoller {
 
       if (res.status === 204) {
         logger.debug('No results available');
-        return;
+        return { fetchedWork: false };
       }
 
       if (res.status !== 200) {
         logger.warn({ status: res.status }, 'Unexpected response from API');
-        return;
+        return { fetchedWork: false };
       }
 
       const payload = await res.json() as unknown;
@@ -53,50 +57,77 @@ export class TelegramPoller {
           task_source?: { source?: string; chat_id?: string; topic_id?: string };
         };
 
-        if (phaseEvent.task_source?.source === 'telegram' && phaseEvent.task_source.chat_id) {
-          await this.notifier.notifyStatus({
-            chatId: phaseEvent.task_source.chat_id,
-            topicId: phaseEvent.task_source.topic_id,
-            sessionId: phaseEvent.session_id,
-            text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
-          });
-        } else if (phaseEvent.session_id) {
-          await this.notifier.notifyStatus({
-            sessionId: phaseEvent.session_id,
-            text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
-          });
+        try {
+          if (phaseEvent.task_source?.source === 'telegram' && phaseEvent.task_source.chat_id) {
+            await this.notifier.notifyStatus({
+              chatId: phaseEvent.task_source.chat_id,
+              topicId: phaseEvent.task_source.topic_id,
+              sessionId: phaseEvent.session_id,
+              text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
+            });
+          } else if (phaseEvent.session_id) {
+            await this.notifier.notifyStatus({
+              sessionId: phaseEvent.session_id,
+              text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
+            });
+          }
+        } catch (err) {
+          logger.warn({ event_id: phaseEvent.event_id, task_id: phaseEvent.task_id, phase: phaseEvent.phase, err }, 'Phase event dispatch failed');
         }
 
         await this.ackDelivery(event.id, 'Task event');
-        return;
+        return { fetchedWork: true };
       }
 
       if (event.event_kind === 'mirror') {
         const mirrorEvent = event.event as MirrorTaskEvent;
-        if (mirrorEvent.task_source.source !== 'telegram') {
-          await this.notifier.notifyMirror(mirrorEvent);
+        try {
+          if (mirrorEvent.task_source.source !== 'telegram') {
+            await this.notifier.notifyMirror(mirrorEvent);
+          }
+        } catch (err) {
+          logger.warn({ mirror_id: mirrorEvent.mirror_id, err }, 'Mirror event dispatch failed');
         }
         await this.ackDelivery(event.id, 'Task event');
-        return;
+        return { fetchedWork: true };
       }
 
       const result = event.event as TaskResult;
       logger.info({ result_id: result.result_id, job_id: result.job_id, task_id: result.task_id }, 'Received result');
 
-      if (result.task_source?.source === 'telegram') {
-        await this.notifier.notifyResult({
-          chatId: result.task_source.chat_id,
-          topicId: 'topic_id' in result.task_source ? result.task_source.topic_id : undefined,
-          result,
-        });
-      } else if (result.session_id) {
-        await this.notifier.notifyResult({ result });
-      } else {
-        await this.notifier.notify(result);
+      try {
+        if (result.task_source?.source === 'telegram') {
+          await this.notifier.notifyResult({
+            chatId: result.task_source.chat_id,
+            topicId: 'topic_id' in result.task_source ? result.task_source.topic_id : undefined,
+            result,
+          });
+        } else if (result.session_id) {
+          await this.notifier.notifyResult({ result });
+        } else {
+          await this.notifier.notify(result);
+        }
+      } catch (err) {
+        logger.warn({ result_id: result.result_id, err }, 'Result event dispatch failed');
       }
       await this.ackDelivery(event.id, 'Result');
+      return { fetchedWork: true };
     } catch (err) {
       logger.error({ err }, 'Telegram poll error');
+      return { fetchedWork: false };
+    }
+  }
+
+  async pollOnce(): Promise<void> {
+    await this.pollPass();
+  }
+
+  async runBurstCycle(): Promise<void> {
+    while (this.running) {
+      const { fetchedWork } = await this.pollPass();
+      if (!fetchedWork) {
+        break;
+      }
     }
   }
 
@@ -196,7 +227,7 @@ export class TelegramPoller {
     logger.info({ intervalMs, queueName: this.queueName }, 'Starting telegram poller');
     this.running = true;
     const loop = async () => {
-      await this.pollOnce();
+      await this.runBurstCycle();
       if (this.running) {
         this.timer = setTimeout(loop, intervalMs);
       }

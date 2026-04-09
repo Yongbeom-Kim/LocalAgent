@@ -393,6 +393,54 @@ describe('TaskPoller', () => {
       expect(mockPhasePublish).not.toHaveBeenCalled();
     });
 
+    it('continues the burst after a fetched job even when the immediate ACK fails, then stops on a later empty fetch', async () => {
+      const job = createJob();
+      (poller as unknown as { running: boolean }).running = true;
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job) })
+        .mockResolvedValueOnce({ status: 500, json: () => Promise.resolve({ error: 'ack failed' }) })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ sessions: [{ session_id: 'session-789', queue_name: 'jobs.session.session-789' }] }),
+        })
+        .mockResolvedValueOnce({ status: 204 });
+
+      await poller.runBurstCycle();
+
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/jobs/sessions', expect.anything());
+      expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/jobs/sessions', expect.anything());
+      expect(mockFetch).toHaveBeenNthCalledWith(5, 'http://localhost:3000/jobs/next/session-789', expect.anything());
+      expect(mockClaudeExecute).not.toHaveBeenCalled();
+    });
+
+    it('ends the burst when every job fetch in a pass returns 204', async () => {
+      (poller as unknown as { running: boolean }).running = true;
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({
+            sessions: [
+              { session_id: 'session-1', queue_name: 'jobs.session.session-1' },
+              { session_id: 'session-2', queue_name: 'jobs.session.session-2' },
+            ],
+          }),
+        })
+        .mockResolvedValueOnce({ status: 204 })
+        .mockResolvedValueOnce({ status: 204 });
+
+      await poller.runBurstCycle();
+
+      expect(mockFetch).toHaveBeenCalledTimes(3);
+      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs/next/session-1', expect.anything());
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/jobs/next/session-2', expect.anything());
+    });
+
     it('continues job flow when phase publish fails', async () => {
       const job = createJob();
       mockPhasePublish.mockRejectedValueOnce(new Error('phase unavailable'));
