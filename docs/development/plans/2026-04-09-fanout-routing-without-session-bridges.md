@@ -2,7 +2,7 @@
 
 **Goal:** Remove `session_bridges` and implement explicit `context_ref`-anchored fanout routing for shared Lark and Telegram delivery.
 
-**Architecture:** Keep fanout as transport only while making `context_ref` the required reporting-channel contract on shared-channel phase, result, and mirror events. Persistent routing truth stays in root-session ownership plus `session_platform_links`, and runtime consumers stop inferring cross-platform destinations from bridge rows.
+**Architecture:** Keep fanout as transport only while making `context_ref` the required reporting-channel contract for mirror events and for any phase/result event with `session_id`. Persistent routing truth stays in root-session ownership plus `session_platform_links`, where platform history owns channel ownership semantics and links remain attachment-only.
 
 **Tech Stack:** TypeScript, Rush monorepo, Drizzle ORM, SQLite/libSQL, RabbitMQ, Vitest
 
@@ -11,7 +11,7 @@
 ## File Structure
 
 - `packages/shared/src/types.ts`: tighten event contracts and validators around `context_ref`
-- `packages/api/src/routes/results.ts`: enforce hard-fail validation for shared-channel events missing `context_ref`
+- `packages/api/src/routes/results.ts`: enforce hard-fail validation for mirror events and session-backed phase/result events missing `context_ref`
 - `packages/shared/src/db/schema.ts`: remove `session_bridges` from the shared schema
 - `packages/shared/src/db/session-platform-link-repository.ts`: expose only root-session and platform-link helpers needed after bridge removal
 - `packages/shared/src/db/lark-history-repository.ts`: preserve root ownership on thread rows
@@ -38,8 +38,12 @@ it('requires context_ref for mirror events', () => {
   // mirror payload without context_ref should be invalid
 });
 
-it('exposes helpers that distinguish shared-channel events requiring context_ref', () => {
-  // phase/result/mirror shared-channel payloads must carry a reporting-channel anchor
+it('requires context_ref for phase/result events with session_id', () => {
+  // session-backed lifecycle payloads must carry a reporting-channel anchor
+});
+
+it('allows direct same-platform phase/result events without session_id to omit context_ref', () => {
+  // task_source-addressed direct delivery remains valid
 });
 ```
 
@@ -50,7 +54,7 @@ Expected: FAIL because the current type guards still accept bridge-era payloads 
 
 - [ ] **Step 3: Write minimal implementation**
 
-Update `types.ts` so the shared event validators enforce the new contract shape for shared-channel events and document the rule that `context_ref` is mandatory for fanout-routed delivery.
+Update `types.ts` so the shared event validators enforce the new contract shape: mirror always requires `context_ref`, phase/result require it whenever `session_id` is present, and only direct same-platform events without `session_id` may omit it.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -77,8 +81,12 @@ it('rejects mirror POST /results when context_ref is missing', async () => {
   // POST /results with mirror event and no context_ref returns 400
 });
 
-it('rejects shared-channel phase/result POST /results when context_ref is missing', async () => {
-  // shared-channel lifecycle event without context_ref returns 400
+it('rejects phase/result POST /results when session_id is present and context_ref is missing', async () => {
+  // session-backed lifecycle event without context_ref returns 400
+});
+
+it('accepts direct same-platform phase/result POST /results without context_ref when session_id is omitted', async () => {
+  // task_source-addressed direct delivery remains valid
 });
 ```
 
@@ -92,7 +100,8 @@ Expected: FAIL because the API currently accepts bridge-era events with missing 
 Tighten `results.ts` validation so:
 
 - mirror always requires `context_ref`;
-- phase/result paths reject shared-channel submissions without `context_ref`;
+- phase/result paths require `context_ref` whenever `session_id` is present;
+- phase/result paths allow omitted `context_ref` only when `session_id` is omitted and `task_source` fully addresses same-platform delivery;
 - the error text is explicit that shared-channel routing now requires a reporting-channel anchor.
 
 - [ ] **Step 4: Run test to verify it passes**
@@ -126,6 +135,10 @@ it('publishes queued and rejection events with context_ref for shared-channel wo
 it('publishes task-daemon final results with the original context_ref', async () => {
   // task execution result POST /results preserves reporting-channel anchor
 });
+
+it('publishes enrichment status results with context_ref when session-backed delivery is used', async () => {
+  // status lookup result paths preserve the reporting-channel anchor
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -135,7 +148,7 @@ Expected: FAIL because not every shared-channel publication path currently prese
 
 - [ ] **Step 3: Write minimal implementation**
 
-Update the publishing paths so that every shared-channel phase/result/mirror event includes the correct `context_ref` and there is no dependence on downstream destination inference.
+Update the publishing paths so that every mirror event and every session-backed phase/result event includes the correct `context_ref`, including enrichment status and synthetic failure paths, and there is no dependence on downstream destination inference.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -183,6 +196,7 @@ Expected: FAIL because both consumers still contain bridge-era fallback logic.
 Update both notifiers so they:
 
 - require explicit platform-matching `context_ref` for shared-channel delivery;
+- allow direct same-platform delivery only for events that omit `session_id` and are fully addressed by `task_source`;
 - use platform history only to load metadata and persist messages;
 - never consult `session_bridges` or peer-platform inference for delivery.
 
@@ -216,8 +230,12 @@ it('preserves root ownership on lark and telegram thread rows without session_br
   // child output should not rewrite root ownership
 });
 
-it('resolves routing support from platform links without bridge helpers', async () => {
-  // repository API no longer exports bridge concepts
+it('treats platform links as attachments and preserves platform rows as the ownership source of truth', async () => {
+  // multiple sessions may attach to one channel without making link lookup authoritative for ownership
+});
+
+it('removes singular external-thread ownership helpers from the repository surface', async () => {
+  // repository API no longer exports bridge concepts or first-row ownership helpers
 });
 ```
 
@@ -228,7 +246,7 @@ Expected: FAIL because bridge-era repository assumptions still exist.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Remove `session_bridges` from the shared schema/export surface, delete the bridge repository, and keep only the root-session and platform-link helpers needed by the new model.
+Remove `session_bridges` from the shared schema/export surface, delete the bridge repository, and keep only attachment-oriented platform-link helpers. Ownership-sensitive resolution should remain in platform history repositories, not in singular external-thread link lookups.
 
 - [ ] **Step 4: Run test to verify it passes**
 

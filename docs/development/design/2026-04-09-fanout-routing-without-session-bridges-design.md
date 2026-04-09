@@ -33,7 +33,7 @@ After this feature:
 1. `session_bridges` no longer exists in schema or runtime code;
 2. root-session ownership plus `session_platform_links` becomes the only persistent routing model;
 3. fanout remains the delivery transport for phase, result, and mirror events;
-4. every shared-channel event that expects Lark or Telegram delivery carries explicit `context_ref`;
+4. every fanout-routed event with `session_id` that expects Lark or Telegram delivery carries explicit `context_ref`, while direct source-addressed events remain explicitly scoped;
 5. result consumers hard-fail shared-channel routing when required `context_ref` is missing;
 6. mirror remains a distinct event kind rather than being folded into phase/result;
 7. cleanup and GC delete sessions, links, and per-platform history without any bridge-table path;
@@ -176,7 +176,7 @@ V1 codifies these invariants:
 1. A shared reporting channel still has exactly one root session per platform row.
 2. Cross-platform pairing is derived from the root session's active platform links, not stored in `session_bridges`.
 3. Fanout is transport only; it never becomes the durable source of routing truth.
-4. Any phase/result/mirror event intended for shared-channel delivery must carry `context_ref`.
+4. Any mirror event and any phase/result event with `session_id` must carry `context_ref`.
 5. Consumers hard-fail shared-channel delivery when the event contract is violated.
 6. Mirror remains semantically distinct from phase/result.
 7. Per-platform thread/topic rows preserve root ownership even when child sessions emit output.
@@ -224,7 +224,8 @@ Required semantics:
 
 - root ownership is stable after materialization;
 - child-session output must not rewrite the root owner;
-- platform rows provide metadata for delivery and cleanup, not cross-platform pairing state.
+- platform rows provide metadata for delivery and cleanup, not cross-platform pairing state;
+- platform rows, not `session_platform_links`, decide which session owns a reporting channel.
 
 ### 10.3 Keep `session_platform_links` as the attachment table
 
@@ -234,7 +235,9 @@ Required semantics:
 
 - each session may have at most one link per platform;
 - multiple sessions may attach to the same reporting channel where the broader shared-channel design permits it;
-- root session links provide the derived cross-platform pairing after bridge-table removal.
+- root session links provide the derived cross-platform pairing after bridge-table removal;
+- attachment lookups answer “which channels is this session attached to?” not “which session owns this channel?”;
+- ownership-sensitive resolution must read `lark_threads` / `telegram_threads`, not choose an arbitrary row from `session_platform_links`.
 
 ## 11. Event Contract Changes
 
@@ -242,7 +245,9 @@ Required semantics:
 
 For `phase`, `result`, and `mirror` events:
 
-- if the event is intended for shared-channel delivery, `context_ref` is required;
+- `mirror` always requires `context_ref`;
+- `phase` and `result` require `context_ref` whenever `session_id` is present;
+- `phase` and `result` may omit `context_ref` only for direct same-platform events that omit `session_id` and are fully addressed by `task_source`;
 - `context_ref.platform` identifies the reporting platform anchor;
 - `context_ref.root_key` identifies the platform-specific root reporting-channel key.
 
@@ -259,6 +264,13 @@ Expected behavior:
 
 - invalid events are rejected at the API boundary whenever possible;
 - if an invalid event reaches a consumer, the consumer should log and fail the delivery path instead of guessing.
+
+Operational interpretation:
+
+- `task_source` may address direct same-platform replies and reactions;
+- `context_ref` addresses anchored fanout delivery for session-backed work;
+- `task_source` must never be used to infer a peer-platform destination;
+- `session_platform_links` and platform history may verify metadata and persistence state, but must not be used to guess a missing reporting anchor for delivery.
 
 This is deliberate. The purpose of the cutover is to eliminate implicit routing behavior.
 
@@ -278,9 +290,10 @@ Required behavior:
 
 `POST /results` must be tightened so that:
 
-- `phase` submissions that target shared-channel delivery require valid `context_ref`;
-- `result` submissions that target shared-channel delivery require valid `context_ref`;
 - `mirror` submissions require valid `context_ref`.
+- `phase` submissions with `session_id` require valid `context_ref`;
+- `result` submissions with `session_id` require valid `context_ref`;
+- `phase` and `result` submissions without `session_id` may omit `context_ref` only when `task_source` fully addresses a direct same-platform delivery.
 
 The API remains the first hard gate before fanout publication.
 
@@ -313,6 +326,7 @@ Expected behavior:
 
 - `context_ref.platform === 'lark'` means direct Lark routing;
 - `context_ref.platform === 'telegram'` is not a cue to infer a peer Lark destination through bridge rows;
+- source-addressed direct Lark events without `session_id` may still route from `task_source.message_id`;
 - if a Lark-visible event is intended for the shared Lark channel, the publishing path must already have provided the Lark `context_ref`;
 - platform-specific history repositories are used to load thread metadata and persist output, not to derive missing contract data.
 
@@ -321,6 +335,7 @@ Expected behavior:
 `TelegramNotifier` follows the same rule:
 
 - resolve topic destination from explicit Telegram `context_ref`;
+- allow source-addressed direct Telegram events without `session_id` to route from `task_source`;
 - use platform history and links to verify/persist state;
 - do not infer Telegram routing via `session_bridges` or best-effort peer lookup when the contract is missing.
 
