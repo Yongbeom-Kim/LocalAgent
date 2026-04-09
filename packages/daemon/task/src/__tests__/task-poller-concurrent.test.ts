@@ -306,6 +306,44 @@ describe('TaskPoller Concurrent', () => {
     vi.useRealTimers();
   });
 
+  it('stops the burst at capacity after fetching work and keeps the base interval', async () => {
+    const jobEnv = new JobEnvironment(false);
+    poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 1, 'secret');
+
+    let resolveJob1!: (v: TaskResultSubmission) => void;
+    const job1Promise = new Promise<TaskResultSubmission>((r) => { resolveJob1 = r; });
+    mockClaudeExecute.mockReturnValueOnce(job1Promise);
+
+    const job1 = createJob({ job_id: 'job-1', task_id: 'task-1', session_id: 'session-A' });
+
+    (poller as unknown as { basePollInterval: number }).basePollInterval = 1000;
+    (poller as unknown as { currentPollInterval: number }).currentPollInterval = 1000;
+    (poller as unknown as { running: boolean }).running = true;
+
+    mockFetch
+      .mockResolvedValueOnce({
+        status: 200,
+        json: () => Promise.resolve({
+          sessions: [
+            { session_id: 'session-A', queue_name: 'jobs.session.session-A' },
+            { session_id: 'session-B', queue_name: 'jobs.session.session-B' },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(job1) })
+      .mockResolvedValueOnce(ackOk());
+
+    await poller.runBurstCycle();
+    await new Promise((r) => setTimeout(r, 10));
+
+    expect(mockFetch).toHaveBeenCalledTimes(3);
+    expect((poller as unknown as { currentPollInterval: number }).currentPollInterval).toBe(1000);
+
+    mockFetch.mockResolvedValueOnce(resultOk());
+    resolveJob1(createMockResult('job-1', 'session-A'));
+    await poller.drain();
+  });
+
   it('keeps the next job in a session from starting before the first lock is released', async () => {
     const jobEnv = new JobEnvironment(false);
     poller = new TaskPoller('http://localhost:3000', new TaskOrchestrator(jobEnv), mockSessionLock, 5, 'secret');

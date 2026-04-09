@@ -29,6 +29,10 @@ interface PhaseGuardState {
   updatedAtMs: number;
 }
 
+interface PollPassResult {
+  fetchedWork: boolean;
+}
+
 export class LarkPoller {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private running = false;
@@ -72,7 +76,7 @@ export class LarkPoller {
     throw new ApiAuthConfigurationError(`${context} failed with auth status ${status}`);
   }
 
-  async pollOnce(): Promise<void> {
+  private async pollPass(): Promise<PollPassResult> {
     try {
       const res = await fetch(`${this.apiUrl}/results/next/${this.queueName}`, {
         headers: this.buildApiHeaders(),
@@ -80,14 +84,14 @@ export class LarkPoller {
 
       if (res.status === 204) {
         logger.debug('No results available');
-        return;
+        return { fetchedWork: false };
       }
 
       this.throwIfAuthFailureStatus(res.status, 'GET /results/next/:queue_name', { queue_name: this.queueName });
 
       if (res.status !== 200) {
         logger.warn({ status: res.status }, 'Unexpected response from API');
-        return;
+        return { fetchedWork: false };
       }
 
       const payload = await res.json() as unknown;
@@ -120,7 +124,7 @@ export class LarkPoller {
         } finally {
           await this.ackDelivery(event.id);
         }
-        return;
+        return { fetchedWork: true };
       }
 
       if (event.event_kind === 'mirror') {
@@ -136,7 +140,7 @@ export class LarkPoller {
           await this.ackDelivery(event.id);
         }
 
-        return;
+        return { fetchedWork: true };
       }
 
       const result = event.event as TaskResult;
@@ -148,15 +152,29 @@ export class LarkPoller {
       } finally {
         await this.ackDelivery(event.id);
       }
-      return;
+      return { fetchedWork: true };
     } catch (err) {
       if (err instanceof ApiAuthConfigurationError) {
         logger.error({ err }, 'Stopping lark poll due to API auth configuration error');
         this.stop();
-        return;
+        return { fetchedWork: false };
       }
 
       logger.error({ err }, 'Lark poll error');
+      return { fetchedWork: false };
+    }
+  }
+
+  async pollOnce(): Promise<void> {
+    await this.pollPass();
+  }
+
+  async runBurstCycle(): Promise<void> {
+    while (this.running) {
+      const { fetchedWork } = await this.pollPass();
+      if (!fetchedWork) {
+        break;
+      }
     }
   }
 
@@ -302,7 +320,7 @@ export class LarkPoller {
     logger.info({ intervalMs, queueName: this.queueName }, 'Starting lark poller');
     this.running = true;
     const loop = async () => {
-      await this.pollOnce();
+      await this.runBurstCycle();
       if (this.running) {
         this.timer = setTimeout(loop, intervalMs);
       }

@@ -247,6 +247,56 @@ describe('LarkPoller', () => {
       expect(mockPhaseNotify).not.toHaveBeenCalled();
     });
 
+    it('bursts on backlog and stops after a 204', async () => {
+      const nextResult = { ...sampleResult, result_id: 'res-2', job_id: 'job-457', task_id: 'task-124' };
+      (poller as unknown as { running: boolean }).running = true;
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: sampleResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: nextResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({ status: 204 });
+
+      await poller.runBurstCycle();
+
+      expect(mockNotify).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/results/next/lark-messages', { headers: authHeaders });
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results/next/lark-messages', { headers: authHeaders });
+      expect(mockFetch).toHaveBeenNthCalledWith(5, 'http://localhost:3000/results/next/lark-messages', { headers: authHeaders });
+    });
+
+    it('continues the burst after a fetched result even if notifier delivery fails', async () => {
+      const nextResult = { ...sampleResult, result_id: 'res-2', job_id: 'job-457', task_id: 'task-124' };
+      (poller as unknown as { running: boolean }).running = true;
+      mockNotify.mockRejectedValueOnce(new Error('delivery failed'));
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: sampleResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: nextResult }),
+        })
+        .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+        .mockResolvedValueOnce({ status: 204 });
+
+      await poller.runBurstCycle();
+
+      expect(mockNotify).toHaveBeenCalledTimes(2);
+      expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/results/next/lark-messages', { headers: authHeaders });
+      expect(mockFetch).toHaveBeenNthCalledWith(5, 'http://localhost:3000/results/next/lark-messages', { headers: authHeaders });
+    });
+
     it('handles fetch errors gracefully', async () => {
       mockFetch.mockRejectedValueOnce(new Error('Connection refused'));
       await expect(poller.pollOnce()).resolves.toBeUndefined();

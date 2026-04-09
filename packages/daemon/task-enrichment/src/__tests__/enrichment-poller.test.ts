@@ -188,6 +188,62 @@ describe('EnrichmentPoller', () => {
     expect(mockPhasePublish).not.toHaveBeenCalled();
   });
 
+  it('bursts while /tasks/next keeps returning work and stops on 204', async () => {
+    const task1 = createTask({ task_id: 'task-1', payload: 'Review this 1' });
+    const task2 = createTask({ task_id: 'task-2', payload: 'Review this 2' });
+    const job1 = createJobSubmission({ task_id: 'task-1', payload: 'Review this 1', session_id: 'session-1' });
+    const job2 = createJobSubmission({ task_id: 'task-2', payload: 'Review this 2', session_id: 'session-2' });
+
+    mockGenerateSessionId.mockReturnValueOnce('session-1').mockReturnValueOnce('session-2');
+    mockEnrich
+      .mockReturnValueOnce({ type: 'enriched', job: job1 })
+      .mockReturnValueOnce({ type: 'enriched', job: job2 });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task1) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-1' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task2) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-2' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+      .mockResolvedValueOnce({ status: 204 });
+
+    (poller as unknown as { running: boolean }).running = true;
+    await poller.runBurstCycle();
+
+    expect(mockEnrich).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(1, 'http://localhost:3000/tasks/next', { headers: buildApiAuthHeaders('daemon-token') });
+    expect(mockFetch).toHaveBeenNthCalledWith(4, 'http://localhost:3000/tasks/next', { headers: buildApiAuthHeaders('daemon-token') });
+    expect(mockFetch).toHaveBeenNthCalledWith(7, 'http://localhost:3000/tasks/next', { headers: buildApiAuthHeaders('daemon-token') });
+  });
+
+  it('continues the burst after a fetched task even if downstream job publish fails', async () => {
+    const task1 = createTask({ task_id: 'task-1', payload: 'Review this 1' });
+    const task2 = createTask({ task_id: 'task-2', payload: 'Review this 2' });
+    const job1 = createJobSubmission({ task_id: 'task-1', payload: 'Review this 1', session_id: 'session-1' });
+    const job2 = createJobSubmission({ task_id: 'task-2', payload: 'Review this 2', session_id: 'session-2' });
+
+    mockGenerateSessionId.mockReturnValueOnce('session-1').mockReturnValueOnce('session-2');
+    mockEnrich
+      .mockReturnValueOnce({ type: 'enriched', job: job1 })
+      .mockReturnValueOnce({ type: 'enriched', job: job2 });
+
+    mockFetch
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task1) })
+      .mockResolvedValueOnce({ status: 500, json: () => Promise.resolve({ error: 'job publish failed' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve(task2) })
+      .mockResolvedValueOnce({ status: 201, json: () => Promise.resolve({ job_id: 'job-2' }) })
+      .mockResolvedValueOnce({ status: 200, json: () => Promise.resolve({ acknowledged: true }) })
+      .mockResolvedValueOnce({ status: 204 });
+
+    (poller as unknown as { running: boolean }).running = true;
+    await poller.runBurstCycle();
+
+    expect(mockEnrich).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenNthCalledWith(3, 'http://localhost:3000/tasks/next', { headers: buildApiAuthHeaders('daemon-token') });
+    expect(mockFetch).toHaveBeenNthCalledWith(6, 'http://localhost:3000/tasks/next', { headers: buildApiAuthHeaders('daemon-token') });
+  });
+
   it('publishes failed result and acks task when enrichment rejects (no task_source)', async () => {
     const task = createTask();
     const rejectedResult: EnrichmentResult = {

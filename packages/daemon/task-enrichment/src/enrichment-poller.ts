@@ -184,7 +184,7 @@ export class EnrichmentPoller {
     throw new ApiAuthConfigurationError(`${context} failed with auth status ${status}`);
   }
 
-  async pollOnce(): Promise<void> {
+  private async pollPass(): Promise<{ fetchedWork: boolean }> {
     try {
       const res = await fetch(`${this.apiUrl}/tasks/next`, {
         headers: this.buildOptionalAuthHeaders(),
@@ -194,12 +194,12 @@ export class EnrichmentPoller {
 
       if (res.status === 204) {
         logger.debug('No tasks available');
-        return;
+        return { fetchedWork: false };
       }
 
       if (res.status !== 200) {
         logger.warn({ status: res.status }, 'Unexpected response from API');
-        return;
+        return { fetchedWork: false };
       }
 
       const task = (await res.json()) as Task;
@@ -207,6 +207,7 @@ export class EnrichmentPoller {
 
       await this.publishPhase(task, 'enriching');
 
+      const fetchedWork = { fetchedWork: true };
       const isCleanupTask = task.task_type === CLEANUP_TASK_TYPE;
       const isGcTask = task.task_type === GC_TASK_TYPE;
       const isNewInstanceTask = task.task_type === NEW_INSTANCE_TASK_TYPE;
@@ -220,7 +221,7 @@ export class EnrichmentPoller {
         if (published) {
           await this.ackTask(task.task_id);
         }
-        return;
+        return fetchedWork;
       }
 
       if (this.threadContextFetcher && task.task_source?.source === 'lark') {
@@ -238,7 +239,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         if (isThreadReplyTask && threadResult.kind === 'not_thread') {
@@ -247,7 +248,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         if (isCleanupTask && threadResult.kind === 'not_thread') {
@@ -256,7 +257,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         if (isNewInstanceTask && threadResult.kind === 'not_thread') {
@@ -265,7 +266,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         if (isStatusTask && threadResult.kind === 'not_thread') {
@@ -274,7 +275,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         if (threadResult.kind === 'thread' && !isControlTaskType(task.task_type) && !isThreadReplyTask) {
@@ -286,7 +287,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
       }
 
@@ -309,7 +310,7 @@ export class EnrichmentPoller {
         if (published) {
           await this.ackTask(task.task_id);
         }
-        return;
+        return fetchedWork;
       }
 
       if (isGcTask) {
@@ -334,16 +335,16 @@ export class EnrichmentPoller {
           this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
           if (jobRes.status !== 201) {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for gc task - not acking task');
-            return;
+            return fetchedWork;
           }
           await this.publishPhase({ ...task, session_id: sessionId }, 'queued');
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for gc task - not acking task');
-          return;
+          return fetchedWork;
         }
 
         await this.ackTask(task.task_id);
-        return;
+        return fetchedWork;
       }
 
       if (isNewInstanceTask && !this.hasThreadScopedSource(task)) {
@@ -352,7 +353,7 @@ export class EnrichmentPoller {
         if (published) {
           await this.ackTask(task.task_id);
         }
-        return;
+        return fetchedWork;
       }
 
       if (isNewInstanceTask && threadResult?.kind === 'thread' && !threadResult.inheritedSessionId) {
@@ -361,7 +362,7 @@ export class EnrichmentPoller {
         if (published) {
           await this.ackTask(task.task_id);
         }
-        return;
+        return fetchedWork;
       }
 
       if (isStatusTask) {
@@ -371,7 +372,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         if (!threadResult.inheritedTaskType || !threadResult.inheritedExecutor || !threadResult.inheritedExecutorModel) {
@@ -380,7 +381,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         try {
@@ -396,7 +397,7 @@ export class EnrichmentPoller {
             if (published) {
               await this.ackTask(task.task_id);
             }
-            return;
+            return fetchedWork;
           }
 
           const statusBody = (await statusRes.json()) as StatusLookupResponse;
@@ -404,14 +405,14 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         } catch (statusErr) {
           logger.error({ task_id: task.task_id, err: statusErr }, 'Status lookup request failed');
           const published = await this.publishRejection(task, STATUS_LOOKUP_FAILURE_REASON);
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
       }
 
@@ -432,7 +433,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         enrichmentResult.job.skipContinue = true;
@@ -448,16 +449,16 @@ export class EnrichmentPoller {
           this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
           if (jobRes.status !== 201) {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for new_instance - not acking');
-            return;
+            return fetchedWork;
           }
           await this.publishPhase(task, 'queued');
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for new_instance - not acking');
-          return;
+          return fetchedWork;
         }
 
         await this.ackTask(task.task_id);
-        return;
+        return fetchedWork;
       }
 
       if (isThreadReplyTask && threadResult?.kind === 'thread') {
@@ -472,7 +473,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         const rewrittenTask: Task = {
@@ -496,7 +497,7 @@ export class EnrichmentPoller {
           if (published) {
             await this.ackTask(task.task_id);
           }
-          return;
+          return fetchedWork;
         }
 
         try {
@@ -508,16 +509,16 @@ export class EnrichmentPoller {
           this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
           if (jobRes.status !== 201) {
             logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed for thread_reply rewrite - not acking task');
-            return;
+            return fetchedWork;
           }
           await this.publishPhase(task, 'queued');
         } catch (jobErr) {
           logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed for thread_reply rewrite - not acking task');
-          return;
+          return fetchedWork;
         }
 
         await this.ackTask(task.task_id);
-        return;
+        return fetchedWork;
       }
 
       if (isCleanupTask && threadResult?.kind === 'thread' && !threadResult.inheritedSessionId) {
@@ -526,7 +527,7 @@ export class EnrichmentPoller {
         if (published) {
           await this.ackTask(task.task_id);
         }
-        return;
+        return fetchedWork;
       }
 
       const explicitSessionId = task.session_id ?? null;
@@ -565,7 +566,7 @@ export class EnrichmentPoller {
         if (published) {
           await this.ackTask(task.task_id);
         }
-        return;
+        return fetchedWork;
       }
 
       try {
@@ -577,23 +578,38 @@ export class EnrichmentPoller {
         this.throwIfAuthFailureStatus(jobRes.status, 'POST /jobs', task.task_id);
         if (jobRes.status !== 201) {
           logger.error({ task_id: task.task_id, status: jobRes.status }, 'POST /jobs failed - not acking task');
-          return;
+          return fetchedWork;
         }
         await this.publishPhase({ ...task, session_id: sessionId }, 'queued');
       } catch (jobErr) {
         logger.error({ task_id: task.task_id, err: jobErr }, 'POST /jobs request failed - not acking task');
-        return;
+        return fetchedWork;
       }
 
       await this.ackTask(task.task_id);
+      return fetchedWork;
     } catch (err) {
       if (err instanceof ApiAuthConfigurationError) {
         logger.error({ err }, 'Stopping enrichment poll due to API auth configuration error');
         this.stop();
-        return;
+        return { fetchedWork: false };
       }
 
       logger.error({ err }, 'Enrichment poll error');
+      return { fetchedWork: false };
+    }
+  }
+
+  async pollOnce(): Promise<void> {
+    await this.pollPass();
+  }
+
+  async runBurstCycle(): Promise<void> {
+    while (this.running) {
+      const { fetchedWork } = await this.pollPass();
+      if (!fetchedWork) {
+        break;
+      }
     }
   }
 
@@ -762,7 +778,7 @@ export class EnrichmentPoller {
     logger.info({ intervalMs }, 'Starting enrichment poller');
     this.running = true;
     const loop = async () => {
-      await this.pollOnce();
+      await this.runBurstCycle();
       if (this.running) {
         this.timer = setTimeout(loop, intervalMs);
       }
