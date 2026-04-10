@@ -671,22 +671,18 @@ export class EnrichmentPoller {
   }
 
   private async publishRejection(task: Task, reason: string): Promise<boolean> {
-    const sessionId = task.session_id ?? generateSessionId();
-    const taskWithSession = task.session_id ? task : { ...task, session_id: sessionId };
-
-    await this.publishPhase(taskWithSession, 'completed');
+    await this.publishPhase(task, 'completed');
 
     try {
       const body = {
         job_id: task.task_id,
         task_id: task.task_id,
         task_type: task.task_type,
-        session_id: sessionId,
         status: 'failure' as const,
         exit_code: null,
         stdout: reason,
         stderr: '',
-        ...(taskWithSession.task_source ? { task_source: taskWithSession.task_source } : {}),
+        ...(task.task_source ? { task_source: task.task_source } : {}),
       };
 
       const res = await fetch(`${this.apiUrl}/results`, {

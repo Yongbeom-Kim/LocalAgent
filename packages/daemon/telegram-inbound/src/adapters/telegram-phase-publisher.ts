@@ -34,7 +34,6 @@ export class TelegramPhasePublisher {
     taskId: string;
     taskType: string;
     taskSource: TaskSource;
-    sessionId: string;
     reason: string;
   }): Promise<void> {
     await fetch(`${this.apiUrl}/results`, {
@@ -49,7 +48,6 @@ export class TelegramPhasePublisher {
         task_type: params.taskType,
         phase: 'completed',
         task_source: params.taskSource,
-        session_id: params.sessionId,
         metadata: { emitted_by: 'telegram-listener', note: 'synthetic-failure' },
       }),
     });
@@ -65,7 +63,6 @@ export class TelegramPhasePublisher {
         job_id: params.taskId,
         task_id: params.taskId,
         task_type: params.taskType,
-        session_id: params.sessionId,
         status: 'failure',
         exit_code: null,
         stdout: params.reason,

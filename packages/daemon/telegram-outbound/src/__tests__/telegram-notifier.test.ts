@@ -231,42 +231,6 @@ describe('TelegramNotifier', () => {
     }));
   });
 
-  it('routes direct telegram status messages without persisted session state', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 611 } }) });
-
-    await createNotifier().notifyStatus({
-      chatId: '-100456789',
-      topicId: '42',
-      sessionId: 'telegram-reject:-100456789:42',
-      text: '*Status:* completed',
-    });
-
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.chat_id).toBe('-100456789');
-    expect(body.message_thread_id).toBe(42);
-    expect(sessionRepository.getSessionById).not.toHaveBeenCalled();
-    expect(telegramHistoryRepository.recordOutboundTelegramMessage).not.toHaveBeenCalled();
-  });
-
-  it('routes direct telegram results without persisted session state', async () => {
-    mockFetch.mockResolvedValueOnce({ ok: true, json: () => Promise.resolve({ ok: true, result: { message_id: 612 } }) });
-
-    await createNotifier().notifyResult({
-      chatId: '-100456789',
-      topicId: '42',
-      result: createResult({
-        session_id: 'telegram-reject:-100456789:42',
-        task_source: { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '10' },
-      }),
-    });
-
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.chat_id).toBe('-100456789');
-    expect(body.message_thread_id).toBe(42);
-    expect(sessionRepository.getSessionById).not.toHaveBeenCalled();
-    expect(telegramHistoryRepository.recordOutboundTelegramMessage).not.toHaveBeenCalled();
-  });
-
   it('does not create destinations for missing or inactive sessions', async () => {
     sessionRepository.getSessionById.mockResolvedValueOnce(null).mockResolvedValueOnce({
       sessionId: 'session-1',

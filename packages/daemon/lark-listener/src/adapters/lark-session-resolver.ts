@@ -22,7 +22,7 @@ export interface ResolvedLarkCanonicalTask {
 export type LarkSessionResolutionResult =
   | { kind: 'accepted'; task: ResolvedLarkCanonicalTask }
   | { kind: 'duplicate'; reason: string }
-  | { kind: 'rejected'; reason: string; sessionId?: string };
+  | { kind: 'rejected'; reason: string };
 
 type LarkHistoryWriter = Pick<
   LarkHistoryRepository,
@@ -57,14 +57,6 @@ export class LarkSessionResolver {
 
     let sessionId = liveThread?.sessionId ?? null;
     if (!sessionId) {
-      if (!classification.shouldMaterializeRootState) {
-        return {
-          kind: 'rejected',
-          reason: 'Thread session is not ready yet. Retry after the root message is processed.',
-          sessionId: envelope.root_message_id,
-        };
-      }
-
       sessionId = generateSessionId();
     }
 

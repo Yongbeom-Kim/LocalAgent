@@ -212,7 +212,7 @@ describe('LarkSessionResolver', () => {
     }));
   });
 
-  it('rejects thread replies until the root session is materialized', async () => {
+  it('starts a brand-new session when a deleted thread receives a later reply', async () => {
     const result = await resolver.resolve({
       envelope: {
         platform: 'lark',
@@ -245,11 +245,14 @@ describe('LarkSessionResolver', () => {
     });
 
     expect(result).toEqual({
-      kind: 'rejected',
-      reason: 'Thread session is not ready yet. Retry after the root message is processed.',
-      sessionId: 'om_root1',
+      kind: 'accepted',
+      task: {
+        taskType: 'thread_reply',
+        payload: 'follow up',
+        taskSource: { source: 'lark', message_id: 'om_reply1' },
+        sessionId: 'sess-new',
+        contextRef: { platform: 'lark', root_key: 'om_root1' },
+      },
     });
-    expect(sessionRepository.upsertSession).not.toHaveBeenCalled();
-    expect(sessionPlatformLinkRepository.upsertLink).not.toHaveBeenCalled();
   });
 });

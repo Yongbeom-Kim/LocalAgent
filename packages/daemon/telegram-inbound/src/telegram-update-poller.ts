@@ -177,13 +177,11 @@ export class TelegramUpdatePoller {
     }
 
     const syntheticTaskId = `telegram-reject:${taskSource.chat_id}:${taskSource.message_id}`;
-    const syntheticSessionId = `telegram-reject:${taskSource.chat_id}:${'topic_id' in taskSource ? taskSource.topic_id : taskSource.message_id}`;
 
     await this.phasePublisher.publishCompletedSyntheticFailure({
       taskId: syntheticTaskId,
       taskType: TELEGRAM_INBOUND_TASK_TYPE,
       taskSource,
-      sessionId: syntheticSessionId,
       reason,
     });
   }
