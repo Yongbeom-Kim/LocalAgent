@@ -5,6 +5,14 @@ import { DEFAULT_API_URL } from '@local-agent/shared';
 const mockFetch = vi.fn();
 const AUTH_ENV = { API_AUTH_TOKEN: 'test-token' };
 
+vi.mock('@local-agent/shared', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@local-agent/shared')>();
+  return {
+    ...actual,
+    generateSessionId: vi.fn(() => 'generated-session-id'),
+  };
+});
+
 import * as submitModule from '../commands/submit';
 
 describe('submitTask', () => {
@@ -42,6 +50,7 @@ describe('submitTask', () => {
       success: true,
       taskType: 'generic',
       submittedAt: '2026-03-26T10:00:00.000Z',
+      sessionId: 'generated-session-id',
     });
   });
 
@@ -77,6 +86,7 @@ describe('submitTask', () => {
         payload: 'review this',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'generated-session-id',
       }),
     });
   });
@@ -112,8 +122,40 @@ describe('submitTask', () => {
         payload: 'review this diff',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'generated-session-id',
       }),
     });
+  });
+
+  it('generates session_id when one is not provided', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 201,
+      json: async () => ({
+        task_id: 'task-123',
+        task_type: 'code_review',
+        submitted_at: '2026-03-26T10:00:00.000Z',
+      }),
+    });
+
+    await submitModule.submitTask({
+      payload: 'review this diff',
+      type: 'code_review',
+      executor: 'claude',
+      model: 'sonnet',
+      apiUrl: 'http://localhost:3000',
+      env: AUTH_ENV,
+    });
+
+    expect(mockFetch).toHaveBeenCalledWith('http://localhost:3000/tasks', expect.objectContaining({
+      body: JSON.stringify({
+        task_type: 'code_review',
+        payload: 'review this diff',
+        executor: 'claude',
+        executor_model: 'sonnet',
+        session_id: 'generated-session-id',
+      }),
+    }));
   });
 
   it('includes explicit session_id when provided', async () => {
@@ -184,6 +226,7 @@ describe('submitTask', () => {
         payload: 'review this diff',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'generated-session-id',
       }),
     });
   });
@@ -219,6 +262,7 @@ describe('submitTask', () => {
         payload: 'review this diff',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'generated-session-id',
       }),
     });
   });
@@ -255,6 +299,7 @@ describe('submitTask', () => {
         payload: 'review this diff',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'generated-session-id',
       }),
     });
   });
@@ -304,6 +349,7 @@ describe('submitTask', () => {
         payload: 'review this diff',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'generated-session-id',
       }),
     });
   });
@@ -438,6 +484,7 @@ describe('registerSubmitCommand', () => {
       success: true,
       taskType: 'generic',
       submittedAt: '2026-03-26T10:00:00.000Z',
+      sessionId: 'generated-session-id',
     });
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -471,6 +518,7 @@ describe('registerSubmitCommand', () => {
       apiUrl: 'http://example.com:3000',
     });
     expect(logSpy).toHaveBeenCalledWith('Task submitted successfully.');
+    expect(logSpy).toHaveBeenCalledWith('  Session ID: generated-session-id');
   });
 
   it('wires explicit token from CLI options into submitTask', async () => {
@@ -478,6 +526,7 @@ describe('registerSubmitCommand', () => {
       success: true,
       taskType: 'generic',
       submittedAt: '2026-03-26T10:00:00.000Z',
+      sessionId: 'generated-session-id',
     });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -518,6 +567,7 @@ describe('registerSubmitCommand', () => {
       success: true,
       taskType: 'generic',
       submittedAt: '2026-03-26T10:00:00.000Z',
+      sessionId: 'session-123',
     });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 
@@ -558,6 +608,7 @@ describe('registerSubmitCommand', () => {
       success: true,
       taskType: 'generic',
       submittedAt: '2026-03-26T10:00:00.000Z',
+      sessionId: 'generated-session-id',
     });
     vi.spyOn(console, 'log').mockImplementation(() => undefined);
 

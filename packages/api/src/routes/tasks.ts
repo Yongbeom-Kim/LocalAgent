@@ -55,8 +55,8 @@ export function createTaskRoutes(
         return;
       }
 
-      if (session_id !== undefined && typeof session_id !== 'string') {
-        res.status(400).json({ error: 'session_id must be a string if provided' });
+      if (typeof session_id !== 'string' || session_id.length === 0) {
+        res.status(400).json({ error: 'session_id is required and must be a non-empty string' });
         return;
       }
 
@@ -67,10 +67,6 @@ export function createTaskRoutes(
           return;
         }
 
-        if (session_id === undefined) {
-          res.status(400).json({ error: 'session_id is required when session metadata is provided' });
-          return;
-        }
       }
 
       if (context_ref !== undefined) {
@@ -120,11 +116,11 @@ export function createTaskRoutes(
         submitted_at: new Date(intakeAtMs).toISOString(),
         ...(typeof executor === 'string' ? { executor } : {}),
         ...(typeof executor_model === 'string' ? { executor_model } : {}),
-        ...(session_id !== undefined ? { session_id } : {}),
+        session_id,
         ...(context_ref !== undefined ? { context_ref } : {}),
         ...(task_source ? { task_source } : {}),
       };
-      if (session !== undefined && typeof session_id === 'string') {
+      if (session !== undefined) {
         const sessionMetadata = session as {
           fallbackSeedText?: string;
           fallbackOrigin?: string;

@@ -1,7 +1,7 @@
 import { buildApiAuthHeaders, type TaskContextRef, type TaskSource } from '@local-agent/shared';
 
 export interface TelegramCanonicalTaskSubmitOptions {
-  sessionId?: string;
+  sessionId: string;
   contextRef?: TaskContextRef;
 }
 
@@ -17,7 +17,7 @@ export class TelegramTaskSubmitter {
     taskSource: TaskSource,
     executor?: string,
     executorModel?: string,
-    options: TelegramCanonicalTaskSubmitOptions = {},
+    options: TelegramCanonicalTaskSubmitOptions,
   ): Promise<string | null> {
     const res = await fetch(`${this.apiUrl}/tasks`, {
       method: 'POST',
@@ -28,10 +28,10 @@ export class TelegramTaskSubmitter {
       body: JSON.stringify({
         task_type: taskType,
         payload,
+        session_id: options.sessionId,
         task_source: taskSource,
         ...(executor ? { executor } : {}),
         ...(executorModel ? { executor_model: executorModel } : {}),
-        ...(options.sessionId ? { session_id: options.sessionId } : {}),
         ...(options.contextRef ? { context_ref: options.contextRef } : {}),
       }),
     });

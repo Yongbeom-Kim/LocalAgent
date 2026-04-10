@@ -61,7 +61,7 @@ describe('TaskSubmitter', () => {
       .mockRejectedValueOnce(new Error('Network error'))
       .mockRejectedValueOnce(new Error('Network error'));
 
-    const promise = submitter.submit('generic', 'hello', undefined, 'claude', 'sonnet');
+    const promise = submitter.submit('generic', 'hello', undefined, 'claude', 'sonnet', { sessionId: 'sess-1' });
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(4000);
@@ -74,7 +74,7 @@ describe('TaskSubmitter', () => {
   it('does not retry task submissions on auth failures (401/403)', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 401, json: () => Promise.resolve({}) });
 
-    const result = await submitter.submit('generic', 'hello');
+    const result = await submitter.submit('generic', 'hello', undefined, undefined, undefined, { sessionId: 'sess-1' });
 
     expect(result).toBeNull();
     expect(mockFetch).toHaveBeenCalledTimes(1);

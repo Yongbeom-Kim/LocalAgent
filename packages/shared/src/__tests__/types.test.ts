@@ -431,17 +431,19 @@ describe('TaskSubmission routing fields', () => {
     const task: TaskSubmission = {
       task_type: 'cleanup',
       payload: '',
+      session_id: 'session-cleanup-1',
     };
     expect(task.executor).toBeUndefined();
   });
 
-  it('allows legacy task submissions without canonical routing fields', () => {
+  it('requires canonical routing fields on TaskSubmission', () => {
     const task: TaskSubmission = {
       task_type: 'generic',
       payload: 'hello',
+      session_id: 'session-hello-1',
     };
 
-    expect(task.session_id).toBeUndefined();
+    expect(task.session_id).toBe('session-hello-1');
     expect(task.context_ref).toBeUndefined();
   });
 

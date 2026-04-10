@@ -179,8 +179,8 @@ export interface TaskSubmission {
   payload: string;
   executor?: string;
   executor_model?: string;
-  // Optional explicit execution target.
-  session_id?: string;
+  // Canonical execution target; producers must generate one for new sessions.
+  session_id: string;
   session?: TaskSessionMetadata;
   context_ref?: TaskContextRef;
   task_source?: TaskSource;
@@ -193,7 +193,7 @@ export interface Task {
   executor?: string;
   executor_model?: string;
   submitted_at: string;
-  session_id?: string;
+  session_id: string;
   context_ref?: TaskContextRef;
   task_source?: TaskSource;
 }

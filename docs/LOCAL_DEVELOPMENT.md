@@ -160,8 +160,14 @@ npm run dev --prefix packages/daemon/lark-listener
 
 ```bash
 # Any terminal (project root)
-npm run dev --prefix packages/cli -- submit --payload "hello world"
+npm run dev --prefix packages/cli -- submit \
+  --payload "hello world" \
+  --type generic \
+  --executor claude \
+  --model sonnet
 ```
+
+The CLI now always submits a canonical `session_id`. If you omit `--session-id`, it generates one locally and prints it after submission.
 
 If you want to pass the token explicitly instead of relying on `.env`:
 

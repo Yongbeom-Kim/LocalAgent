@@ -62,6 +62,7 @@ function createTask(overrides?: Partial<Task>): Task {
     task_type: 'code_review',
     payload: 'Review this',
     submitted_at: '2026-03-29T00:00:00.000Z',
+    session_id: 'generated-session-id',
     executor: 'claude',
     executor_model: 'sonnet',
     ...overrides,
@@ -696,7 +697,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
   });
 
-  it('generates new session_id when no thread', async () => {
+  it('uses explicit session_id when no thread', async () => {
     const task = createTask({ payload: 'hello' });
     const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
@@ -708,12 +709,12 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
-  it('generates new session_id when thread has no inherited session_id', async () => {
+  it('keeps explicit session_id when thread has no inherited session_id', async () => {
     const task = createTask({
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'hello',
@@ -729,11 +730,11 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
-  it('generates new session_id when thread fetch returns null', async () => {
+  it('keeps explicit session_id when thread fetch returns null', async () => {
     const task = createTask({
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'hello',
@@ -749,7 +750,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
@@ -860,7 +861,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
   });
 
-  it('includes generated session_id, task_source, and placeholder executors in gc job', async () => {
+  it('includes explicit session_id, task_source, and placeholder executors in gc job', async () => {
     const task = createTask({
       task_type: 'gc',
       payload: '24h',
@@ -875,7 +876,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
@@ -1000,9 +1001,9 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({
         task_type: 'cleanup',
-        payload: buildCleanupSubtreePayload(['inherited-session-id']),
+        payload: buildCleanupSubtreePayload(['generated-session-id']),
       }),
-      'inherited-session-id',
+      'generated-session-id',
       undefined,
     );
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {

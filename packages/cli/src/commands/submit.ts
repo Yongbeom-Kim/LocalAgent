@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import {
   DEFAULT_API_URL,
   buildApiAuthHeaders,
+  generateSessionId,
   resolveApiClientToken,
   type TaskSubmission,
   type TaskExecutorType,
@@ -22,6 +23,7 @@ export interface SubmitResult {
   success: boolean;
   taskType?: string;
   submittedAt?: string;
+  sessionId?: string;
   error?: string;
 }
 
@@ -40,12 +42,13 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
   }
 
   const url = `${options.apiUrl.replace(/\/+$/, '')}/tasks`;
+  const sessionId = options.sessionId ?? generateSessionId();
   const body: TaskSubmission = {
     task_type: options.type,
     payload: options.payload,
     executor: options.executor,
     executor_model: options.model,
-    ...(options.sessionId ? { session_id: options.sessionId } : {}),
+    session_id: sessionId,
   };
 
   let response: Response;
@@ -78,6 +81,7 @@ export async function submitTask(options: SubmitOptions): Promise<SubmitResult> 
       success: true,
       taskType: data.task_type,
       submittedAt: data.submitted_at,
+      sessionId,
     };
   } catch {
     return { success: false, error: 'invalid response from server (non-JSON body)' };
@@ -97,7 +101,7 @@ export function registerSubmitCommand(
     .requiredOption('-m, --model <string>', 'Executor model')
     .option('-u, --api-url <string>', 'API base URL')
     .option('--token <value>', 'API bearer token')
-    .option('--session-id <value>', 'Explicit target session id')
+    .option('--session-id <value>', 'Explicit target session id; auto-generated when omitted')
     .action(
       async (opts: {
         payload: string;
@@ -124,6 +128,7 @@ export function registerSubmitCommand(
           console.log('Task submitted successfully.');
           console.log(`  Type: ${result.taskType}`);
           console.log(`  Submitted at: ${result.submittedAt}`);
+          console.log(`  Session ID: ${result.sessionId}`);
         } else {
           console.error(`Error: Failed to submit task — ${result.error}`);
           process.exit(1);
