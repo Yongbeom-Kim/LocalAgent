@@ -54,10 +54,18 @@ export class TelegramPoller {
           task_id?: string;
           session_id?: string;
           phase?: string;
+          task_source?: { source?: string; chat_id?: string; topic_id?: string };
         };
 
         try {
-          if (phaseEvent.session_id) {
+          if (phaseEvent.task_source?.source === 'telegram' && phaseEvent.task_source.chat_id) {
+            await this.notifier.notifyStatus({
+              chatId: phaseEvent.task_source.chat_id,
+              topicId: phaseEvent.task_source.topic_id,
+              sessionId: phaseEvent.session_id,
+              text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
+            });
+          } else if (phaseEvent.session_id) {
             await this.notifier.notifyStatus({
               sessionId: phaseEvent.session_id,
               text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
@@ -75,7 +83,15 @@ export class TelegramPoller {
       logger.info({ result_id: result.result_id, job_id: result.job_id, task_id: result.task_id }, 'Received result');
 
       try {
-        await this.notifier.notify(result);
+        if (result.task_source?.source === 'telegram') {
+          await this.notifier.notifyResult({
+            chatId: result.task_source.chat_id,
+            topicId: 'topic_id' in result.task_source ? result.task_source.topic_id : undefined,
+            result,
+          });
+        } else {
+          await this.notifier.notify(result);
+        }
       } catch (err) {
         logger.warn({ result_id: result.result_id, err }, 'Result event dispatch failed');
       }

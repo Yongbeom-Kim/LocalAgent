@@ -3,11 +3,13 @@ import { TaskResult } from '@local-agent/shared';
 
 const mockNotify = vi.fn().mockResolvedValue(undefined);
 const mockNotifyStatus = vi.fn().mockResolvedValue(undefined);
+const mockNotifyResult = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../adapters/telegram-notifier', () => ({
   TelegramNotifier: vi.fn().mockImplementation(() => ({
     notify: mockNotify,
     notifyStatus: mockNotifyStatus,
+    notifyResult: mockNotifyResult,
   })),
 }));
 
@@ -97,6 +99,36 @@ describe('TelegramPoller', () => {
       });
     });
 
+    it('routes telegram phase events by direct telegram task_source', async () => {
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({
+            event_kind: 'phase',
+            event: {
+              event_id: 'evt-telegram-1',
+              task_id: 'task-telegram-1',
+              session_id: 'telegram-reject:-100456789:42',
+              phase: 'completed',
+              task_source: { source: 'telegram', chat_id: '-100456789', topic_id: '42' },
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      expect(mockNotifyStatus).toHaveBeenCalledWith({
+        chatId: '-100456789',
+        topicId: '42',
+        sessionId: 'telegram-reject:-100456789:42',
+        text: '*Status:* completed',
+      });
+    });
+
     it('routes all result events through notifier.notify', async () => {
       const bridgedResult: TaskResult = {
         ...sampleResult,
@@ -117,6 +149,33 @@ describe('TelegramPoller', () => {
       await poller.pollOnce();
 
       expect(mockNotify).toHaveBeenCalledWith(bridgedResult);
+    });
+
+    it('routes telegram result events through notifier.notifyResult with direct destination', async () => {
+      const telegramResult: TaskResult = {
+        ...sampleResult,
+        session_id: 'telegram-reject:-100456789:42',
+        task_source: { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '10' },
+      };
+
+      mockFetch
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ event_kind: 'result', event: telegramResult }),
+        })
+        .mockResolvedValueOnce({
+          status: 200,
+          json: () => Promise.resolve({ acknowledged: true }),
+        });
+
+      await poller.pollOnce();
+
+      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockNotifyResult).toHaveBeenCalledWith({
+        chatId: '-100456789',
+        topicId: '42',
+        result: telegramResult,
+      });
     });
 
     it('does nothing when queue is empty (204)', async () => {

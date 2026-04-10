@@ -49,6 +49,7 @@ describe('TelegramUpdatePoller', () => {
 
     expect(phasePublisher.publishCompletedSyntheticFailure).toHaveBeenCalledWith(expect.objectContaining({
       taskSource: { source: 'telegram', chat_id: '-100456789', message_id: '10' },
+      sessionId: 'telegram-reject:-100456789:10',
     }));
   });
 

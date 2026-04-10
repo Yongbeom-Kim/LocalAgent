@@ -77,8 +77,8 @@ type SessionPlatformLinkRepositoryLike = Pick<
 
 interface TelegramDestination {
   chatId: string;
-  topicId: string;
-  sessionId: string;
+  topicId?: string;
+  sessionId?: string;
 }
 
 export class TelegramNotifier {
@@ -135,19 +135,19 @@ export class TelegramNotifier {
     });
   }
 
-  async notifyStatus(params: { sessionId?: string; text: string }): Promise<void> {
-    if (!params.sessionId) {
-      return;
-    }
-
-    const destination = await this.resolveDestination(params.sessionId);
+  async notifyStatus(params: { chatId?: string; topicId?: string; sessionId?: string; text: string }): Promise<void> {
+    const destination = await this.resolveDestination({
+      chatId: params.chatId,
+      topicId: params.topicId,
+      sessionId: params.sessionId,
+    });
     if (!destination) {
       return;
     }
 
     const messageId = await this.sendMessageToChat({
       chatId: destination.chatId,
-      messageThreadId: Number(destination.topicId),
+      messageThreadId: destination.topicId ? Number(destination.topicId) : undefined,
       text: params.text,
       parseMode: 'MarkdownV2',
     });
@@ -163,12 +163,13 @@ export class TelegramNotifier {
     });
   }
 
-  async notifyResult(params: { result: TaskResult }): Promise<void> {
-    if (!params.result.session_id) {
-      return;
-    }
-
-    const destination = await this.resolveDestination(params.result.session_id);
+  async notifyResult(params: { chatId?: string; topicId?: string; result: TaskResult }): Promise<void> {
+    const destination = await this.resolveDestination({
+      chatId: params.chatId,
+      topicId: params.topicId,
+      sessionId: params.result.session_id,
+      contextRef: params.result.context_ref,
+    });
     if (!destination) {
       return;
     }
@@ -177,7 +178,7 @@ export class TelegramNotifier {
     const createdAtMs = Date.now();
     const messageId = await this.sendMessageToChat({
       chatId: destination.chatId,
-      messageThreadId: Number(destination.topicId),
+      messageThreadId: destination.topicId ? Number(destination.topicId) : undefined,
       text,
       parseMode: 'MarkdownV2',
     });
@@ -200,6 +201,10 @@ export class TelegramNotifier {
   }
 
   private async resolveCleanupRootSessionId(sessionId: string, destination: TelegramDestination): Promise<string> {
+    if (!destination.topicId) {
+      return sessionId;
+    }
+
     const thread = await this.telegramHistoryRepository?.getTelegramThreadByTopic(destination.chatId, destination.topicId);
     return thread?.rootSessionId ?? sessionId;
   }
@@ -269,11 +274,36 @@ export class TelegramNotifier {
     return String(data.result?.message_id ?? `telegram_outbound_${Date.now()}`);
   }
 
-  private async resolveDestination(sessionId: string): Promise<TelegramDestination | null> {
+  private async resolveDestination(params: {
+    chatId?: string;
+    topicId?: string;
+    sessionId?: string;
+    contextRef?: { platform: 'lark' | 'telegram'; root_key: string };
+  }): Promise<TelegramDestination | null> {
+    if (params.chatId) {
+      return {
+        chatId: params.chatId,
+        topicId: params.topicId,
+        sessionId: params.sessionId,
+      };
+    }
+
+    if (params.contextRef?.platform === TELEGRAM_PLATFORM) {
+      return {
+        ...this.parseExternalThreadKey(params.contextRef.root_key),
+        sessionId: params.sessionId,
+      };
+    }
+
+    if (!params.sessionId) {
+      return null;
+    }
+
     if (!this.sessionRepository || !this.sessionPlatformLinkRepository || !this.telegramHistoryRepository) {
       return null;
     }
 
+    const sessionId = params.sessionId;
     const session = await this.sessionRepository.getSessionById(sessionId);
     if (!session || session.status !== 'active') {
       return null;
@@ -410,7 +440,7 @@ export class TelegramNotifier {
     createdAtMs: number;
     statusMessageId?: string;
   }): Promise<void> {
-    if (!this.telegramHistoryRepository) {
+    if (!this.telegramHistoryRepository || !params.destination.topicId || !params.destination.sessionId) {
       return;
     }
 
