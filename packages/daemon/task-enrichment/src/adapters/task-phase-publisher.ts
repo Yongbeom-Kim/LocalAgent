@@ -15,7 +15,7 @@ export class TaskPhasePublisher {
       task_id: task.task_id,
       task_type: task.task_type,
       phase,
-      ...(task.session_id ? { session_id: task.session_id } : {}),
+      session_id: task.session_id,
       ...(task.context_ref ? { context_ref: task.context_ref } : {}),
       ...(task.task_source ? { task_source: task.task_source } : {}),
       metadata: { emitted_by: 'task-enrichment' },
