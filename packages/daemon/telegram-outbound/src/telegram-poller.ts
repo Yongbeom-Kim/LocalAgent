@@ -1,9 +1,9 @@
-import { buildApiAuthHeaders, type MirrorTaskEvent, TaskResult, createLogger } from '@local-agent/shared';
+import { buildApiAuthHeaders, TaskResult, createLogger } from '@local-agent/shared';
 import { TelegramNotifier } from './adapters/telegram-notifier';
 
 const logger = createLogger('telegram-daemon:poller');
 
-type TaskEventKind = 'result' | 'phase' | 'mirror';
+type TaskEventKind = 'result' | 'phase';
 
 interface TaskEventEnvelope {
   event_kind: TaskEventKind;
@@ -54,18 +54,10 @@ export class TelegramPoller {
           task_id?: string;
           session_id?: string;
           phase?: string;
-          task_source?: { source?: string; chat_id?: string; topic_id?: string };
         };
 
         try {
-          if (phaseEvent.task_source?.source === 'telegram' && phaseEvent.task_source.chat_id) {
-            await this.notifier.notifyStatus({
-              chatId: phaseEvent.task_source.chat_id,
-              topicId: phaseEvent.task_source.topic_id,
-              sessionId: phaseEvent.session_id,
-              text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
-            });
-          } else if (phaseEvent.session_id) {
+          if (phaseEvent.session_id) {
             await this.notifier.notifyStatus({
               sessionId: phaseEvent.session_id,
               text: `*Status:* ${phaseEvent.phase ?? 'unknown'}`,
@@ -79,34 +71,11 @@ export class TelegramPoller {
         return { fetchedWork: true };
       }
 
-      if (event.event_kind === 'mirror') {
-        const mirrorEvent = event.event as MirrorTaskEvent;
-        try {
-          if (mirrorEvent.task_source.source !== 'telegram') {
-            await this.notifier.notifyMirror(mirrorEvent);
-          }
-        } catch (err) {
-          logger.warn({ mirror_id: mirrorEvent.mirror_id, err }, 'Mirror event dispatch failed');
-        }
-        await this.ackDelivery(event.id, 'Task event');
-        return { fetchedWork: true };
-      }
-
       const result = event.event as TaskResult;
       logger.info({ result_id: result.result_id, job_id: result.job_id, task_id: result.task_id }, 'Received result');
 
       try {
-        if (result.task_source?.source === 'telegram') {
-          await this.notifier.notifyResult({
-            chatId: result.task_source.chat_id,
-            topicId: 'topic_id' in result.task_source ? result.task_source.topic_id : undefined,
-            result,
-          });
-        } else if (result.session_id) {
-          await this.notifier.notifyResult({ result });
-        } else {
-          await this.notifier.notify(result);
-        }
+        await this.notifier.notify(result);
       } catch (err) {
         logger.warn({ result_id: result.result_id, err }, 'Result event dispatch failed');
       }
@@ -167,14 +136,6 @@ export class TelegramPoller {
       return value.event_id ?? `phase-${Date.now()}`;
     }
 
-    if (eventKind === 'mirror') {
-      const value = event as { event?: { mirror_id?: string }; mirror_id?: string };
-      if (value.event?.mirror_id) {
-        return value.event.mirror_id;
-      }
-      return value.mirror_id ?? `mirror-${Date.now()}`;
-    }
-
     const value = event as { event?: { result_id?: string }; result_id?: string };
     if (value.event?.result_id) {
       return value.event.result_id;
@@ -188,10 +149,7 @@ export class TelegramPoller {
     }
 
     const candidate = payload as Record<string, unknown>;
-    return (
-      (candidate.event_kind === 'phase' || candidate.event_kind === 'result' || candidate.event_kind === 'mirror') &&
-      'event' in candidate
-    );
+    return (candidate.event_kind === 'phase' || candidate.event_kind === 'result') && 'event' in candidate;
   }
 
   private isTaskEventEnvelopeLegacy(payload: unknown): payload is TaskEventEnvelopeLegacy {
@@ -200,7 +158,7 @@ export class TelegramPoller {
     }
 
     const candidate = payload as Record<string, unknown>;
-    if (candidate.event_kind !== 'phase' && candidate.event_kind !== 'result' && candidate.event_kind !== 'mirror') {
+    if (candidate.event_kind !== 'phase' && candidate.event_kind !== 'result') {
       return false;
     }
 
@@ -232,7 +190,7 @@ export class TelegramPoller {
         this.timer = setTimeout(loop, intervalMs);
       }
     };
-    loop();
+    void loop();
   }
 
   stop(): void {

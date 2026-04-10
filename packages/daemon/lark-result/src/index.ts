@@ -2,7 +2,6 @@ import { loadLarkDaemonConfig } from './config';
 import {
   SessionPlatformLinkRepository,
   SessionRepository,
-  SessionBridgeRepository,
   createLogger,
   DEFAULT_LARK_QUEUE_NAME,
   createSqliteClient,
@@ -37,7 +36,6 @@ async function main() {
   const larkHistoryRepository = new LarkHistoryRepository(sqliteClient.db);
   const sessionRepository = new SessionRepository(sqliteClient.db);
   const sessionPlatformLinkRepository = new SessionPlatformLinkRepository(sqliteClient.db);
-  const sessionBridgeRepository = new SessionBridgeRepository(sqliteClient.db);
 
   logger.info('Lark SQLite outbound persistence enabled');
 
@@ -47,7 +45,6 @@ async function main() {
     config.larkRecipientId,
     larkHistoryRepository,
     undefined,
-    sessionBridgeRepository,
     sessionRepository,
     sessionPlatformLinkRepository,
   );

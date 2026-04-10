@@ -639,7 +639,6 @@ export class EnrichmentPoller {
       status: 'active',
       createdAtMs: timestampMs,
       updatedAtMs: timestampMs,
-      endedAtMs: null,
     });
   }
 

@@ -53,46 +53,33 @@ export class LarkSessionResolver {
     }
 
     const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(envelope.root_message_id);
-    const existingLinks = await this.sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey(
-      'lark',
-      envelope.root_message_id,
-    );
-    const existingLink = existingLinks[0] ?? null;
+    const liveThread = existingThread && existingThread.status !== 'audit_only' ? existingThread : null;
 
-    let sessionId = existingThread?.sessionId ?? existingLink?.sessionId ?? null;
-    if (!sessionId && existingThread && existingThread.status !== 'audit_only') {
-      sessionId = existingThread.sessionId;
-    }
-
+    let sessionId = liveThread?.sessionId ?? null;
     if (!sessionId) {
-      if (!classification.shouldMaterializeRootState) {
-        return { kind: 'rejected', reason: 'Thread session is not ready yet. Retry after the root message is processed.' };
-      }
       sessionId = generateSessionId();
     }
 
     const taskType = classification.task.task_type;
-    const executor = classification.task.executor ?? existingThread?.executor ?? null;
-    const executorModel = classification.task.executor_model ?? existingThread?.executorModel ?? null;
+    const executor = classification.task.executor ?? liveThread?.executor ?? null;
+    const executorModel = classification.task.executor_model ?? liveThread?.executorModel ?? null;
 
     await this.sessionRepository.upsertSession({
       sessionId,
-      taskType: classification.shouldMaterializeRootState ? taskType : (existingThread?.taskType ?? taskType),
+      taskType: classification.shouldMaterializeRootState ? taskType : (liveThread?.taskType ?? taskType),
       executor,
       executorModel,
       status: 'active',
-      createdAtMs: existingThread?.createdAtMs ?? envelope.occurred_at_ms,
+      createdAtMs: liveThread?.createdAtMs ?? envelope.occurred_at_ms,
       updatedAtMs: envelope.occurred_at_ms,
-      endedAtMs: null,
     });
 
     await this.sessionPlatformLinkRepository.upsertLink({
       sessionId,
       platform: 'lark',
       externalThreadKey: envelope.root_message_id,
-      createdAtMs: existingLink?.createdAtMs ?? existingThread?.createdAtMs ?? envelope.occurred_at_ms,
+      createdAtMs: liveThread?.createdAtMs ?? envelope.occurred_at_ms,
       updatedAtMs: envelope.occurred_at_ms,
-      endedAtMs: null,
     });
 
     await this.larkHistoryRepository.upsertLarkThreadState({
@@ -101,13 +88,12 @@ export class LarkSessionResolver {
       sessionId,
       source: 'lark',
       chatType: envelope.chat_type,
-      taskType: classification.shouldMaterializeRootState ? taskType : (existingThread?.taskType ?? taskType),
+      taskType: classification.shouldMaterializeRootState ? taskType : (liveThread?.taskType ?? taskType),
       executor: executor ?? 'claude',
       executorModel: executorModel ?? 'sonnet',
       status: 'active',
-      createdAtMs: existingThread?.createdAtMs ?? envelope.occurred_at_ms,
+      createdAtMs: liveThread?.createdAtMs ?? envelope.occurred_at_ms,
       updatedAtMs: envelope.occurred_at_ms,
-      endedAtMs: null,
     });
 
     return {

@@ -30,7 +30,6 @@ export const larkThreadsTable = sqliteTable(
     status: text('status').notNull(),
     createdAtMs: integer('created_at_ms').notNull(),
     updatedAtMs: integer('updated_at_ms').notNull(),
-    endedAtMs: integer('ended_at_ms'),
   },
   (table) => ({
     threadIdUnique: uniqueIndex('lark_threads_thread_id_unique').on(table.threadId),
@@ -96,7 +95,6 @@ export const telegramThreadsTable = sqliteTable(
     metadataJson: text('metadata_json'),
     createdAtMs: integer('created_at_ms').notNull(),
     updatedAtMs: integer('updated_at_ms').notNull(),
-    endedAtMs: integer('ended_at_ms'),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.chatId, table.topicId] }),
@@ -154,7 +152,6 @@ export const sessionsTable = sqliteTable(
     status: text('status').notNull(),
     createdAtMs: integer('created_at_ms').notNull(),
     updatedAtMs: integer('updated_at_ms').notNull(),
-    endedAtMs: integer('ended_at_ms'),
     fallbackSeedText: text('fallback_seed_text'),
     fallbackOrigin: text('fallback_origin'),
     fallbackTitleHint: text('fallback_title_hint'),
@@ -177,12 +174,10 @@ export const sessionPlatformLinksTable = sqliteTable(
       .references(() => sessionsTable.sessionId),
     platform: text('platform').notNull(),
     externalThreadKey: text('external_thread_key'),
-    linkStatus: text('link_status').notNull().default('active'),
     claimToken: text('claim_token'),
     claimExpiresAtMs: integer('claim_expires_at_ms'),
     createdAtMs: integer('created_at_ms').notNull(),
     updatedAtMs: integer('updated_at_ms').notNull(),
-    endedAtMs: integer('ended_at_ms'),
   },
   (table) => ({
     pk: primaryKey({ columns: [table.sessionId, table.platform] }),
@@ -194,33 +189,6 @@ export const sessionPlatformLinksTable = sqliteTable(
   }),
 );
 
-export const sessionBridgesTable = sqliteTable(
-  'session_bridges',
-  {
-    rootSessionId: text('root_session_id').primaryKey(),
-    larkRootMessageId: text('lark_root_message_id').notNull().unique(),
-    telegramChatId: text('telegram_chat_id').notNull(),
-    telegramTopicId: text('telegram_topic_id').notNull(),
-    createdAtMs: integer('created_at_ms').notNull(),
-    updatedAtMs: integer('updated_at_ms').notNull(),
-    endedAtMs: integer('ended_at_ms'),
-  },
-  (table) => ({
-    telegramTopicUnique: uniqueIndex('session_bridges_telegram_topic_unique').on(
-      table.telegramChatId,
-      table.telegramTopicId,
-    ),
-    larkRootFk: foreignKey({
-      columns: [table.larkRootMessageId],
-      foreignColumns: [larkThreadsTable.rootMessageId],
-    }),
-    telegramTopicFk: foreignKey({
-      columns: [table.telegramChatId, table.telegramTopicId],
-      foreignColumns: [telegramThreadsTable.chatId, telegramThreadsTable.topicId],
-    }),
-  }),
-);
-
 export const sqliteSchema = {
   schemaVersionTable,
   larkThreadsTable,
@@ -229,7 +197,6 @@ export const sqliteSchema = {
   telegramMessagesTable,
   sessionsTable,
   sessionPlatformLinksTable,
-  sessionBridgesTable,
 };
 
 export type SqliteSchema = typeof sqliteSchema;

@@ -179,9 +179,8 @@ export interface TaskSubmission {
   payload: string;
   executor?: string;
   executor_model?: string;
-  // Optional explicit execution target. When omitted, routing may derive or generate one.
+  // Optional explicit execution target.
   session_id?: string;
-  // Optional reporting-channel anchor used for shared root/child fanout flows.
   session?: TaskSessionMetadata;
   context_ref?: TaskContextRef;
   task_source?: TaskSource;
@@ -194,9 +193,7 @@ export interface Task {
   executor?: string;
   executor_model?: string;
   submitted_at: string;
-  // Execution target session. This is distinct from the reporting-channel anchor.
   session_id?: string;
-  // Reporting-channel anchor used to route fanout notifications deterministically.
   context_ref?: TaskContextRef;
   task_source?: TaskSource;
 }
@@ -336,7 +333,7 @@ export interface TaskPhaseEventMetadata {
 
 export interface TaskPhaseEventSubmission {
   task_id: string;
-  session_id?: string;
+  session_id: string;
   context_ref?: TaskContextRef;
   task_type: string;
   phase: TaskPhase;
@@ -511,7 +508,7 @@ export interface TaskResultSubmission {
   job_id: string;
   task_id: string;
   task_type: string;
-  session_id?: string;
+  session_id: string;
   context_ref?: TaskContextRef;
   executor?: TaskExecutorType;
   executor_model?: string;
@@ -531,24 +528,7 @@ export interface TaskResultEvent extends TaskResult {
   event_kind: 'result';
 }
 
-export interface MirrorTaskEventSubmission {
-  task_id: string;
-  session_id: string;
-  task_type: string;
-  context_ref?: TaskContextRef;
-  task_source: TaskSource;
-  mirror_id: string;
-  author_type: 'user';
-  text: string;
-  origin_message_id: string;
-}
-
-export interface MirrorTaskEvent extends MirrorTaskEventSubmission {
-  event_kind: 'mirror';
-  emitted_at: string;
-}
-
-export type TaskEvent = TaskResultEvent | TaskPhaseEvent | MirrorTaskEvent;
+export type TaskEvent = TaskResultEvent | TaskPhaseEvent;
 
 export function isValidTaskEvent(value: unknown): value is TaskEvent {
   if (typeof value !== 'object' || value === null) return false;
@@ -559,6 +539,7 @@ export function isValidTaskEvent(value: unknown): value is TaskEvent {
       isNonEmptyString(obj.result_id) &&
       isNonEmptyString(obj.job_id) &&
       isNonEmptyString(obj.task_id) &&
+      isNonEmptyString(obj.session_id) &&
       isNonEmptyString(obj.task_type) &&
       RESULT_STATUSES.includes(obj.status as ResultStatus) &&
       (obj.exit_code === null || typeof obj.exit_code === 'number') &&
@@ -573,24 +554,11 @@ export function isValidTaskEvent(value: unknown): value is TaskEvent {
     return (
       isNonEmptyString(obj.event_id) &&
       isNonEmptyString(obj.task_id) &&
+      isNonEmptyString(obj.session_id) &&
       isNonEmptyString(obj.task_type) &&
       isValidTaskPhase(obj.phase) &&
       isNonEmptyString(obj.emitted_at) &&
       (obj.task_source === undefined || isValidTaskSource(obj.task_source))
-    );
-  }
-
-  if (obj.event_kind === 'mirror') {
-    return (
-      isNonEmptyString(obj.task_id) &&
-      isNonEmptyString(obj.session_id) &&
-      isNonEmptyString(obj.task_type) &&
-      isValidTaskSource(obj.task_source) &&
-      isNonEmptyString(obj.mirror_id) &&
-      obj.author_type === 'user' &&
-      typeof obj.text === 'string' &&
-      isNonEmptyString(obj.origin_message_id) &&
-      isNonEmptyString(obj.emitted_at)
     );
   }
 

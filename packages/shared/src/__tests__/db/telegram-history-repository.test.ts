@@ -153,7 +153,6 @@ async function bootstrapTelegramTables(connection: Awaited<ReturnType<typeof cre
       metadata_json TEXT,
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
-      ended_at_ms INTEGER,
       PRIMARY KEY (chat_id, topic_id)
     )
   `);

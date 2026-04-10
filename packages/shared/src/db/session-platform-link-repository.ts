@@ -3,7 +3,6 @@ import type { LibSQLDatabase } from 'drizzle-orm/libsql';
 import { sessionPlatformLinksTable, type SqliteSchema } from './schema';
 
 export type SessionPlatform = 'lark' | 'telegram';
-export type SessionPlatformLinkStatus = 'pending' | 'active' | 'ended';
 
 export interface UpsertSessionPlatformLinkParams {
   sessionId: string;
@@ -11,7 +10,6 @@ export interface UpsertSessionPlatformLinkParams {
   externalThreadKey: string;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs?: number | null;
 }
 
 export interface ClaimPendingSessionPlatformLinkParams {
@@ -41,20 +39,14 @@ export interface SessionPlatformLinkRow {
   sessionId: string;
   platform: SessionPlatform;
   externalThreadKey: string | null;
-  linkStatus: SessionPlatformLinkStatus;
   claimToken: string | null;
   claimExpiresAtMs: number | null;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs: number | null;
 }
 
 function isSessionPlatform(value: string): value is SessionPlatform {
   return value === 'lark' || value === 'telegram';
-}
-
-function isSessionPlatformLinkStatus(value: string): value is SessionPlatformLinkStatus {
-  return value === 'pending' || value === 'active' || value === 'ended';
 }
 
 function toSessionPlatformLinkRow(
@@ -63,12 +55,10 @@ function toSessionPlatformLinkRow(
         sessionId: string;
         platform: string;
         externalThreadKey: string | null;
-        linkStatus: string;
         claimToken: string | null;
         claimExpiresAtMs: number | null;
         createdAtMs: number;
         updatedAtMs: number;
-        endedAtMs: number | null;
       }
     | undefined,
 ): SessionPlatformLinkRow | null {
@@ -80,14 +70,9 @@ function toSessionPlatformLinkRow(
     throw new Error(`Unexpected session platform: ${row.platform}`);
   }
 
-  if (!isSessionPlatformLinkStatus(row.linkStatus)) {
-    throw new Error(`Unexpected session platform link status: ${row.linkStatus}`);
-  }
-
   return {
     ...row,
     platform: row.platform,
-    linkStatus: row.linkStatus,
   };
 }
 
@@ -105,27 +90,18 @@ export class SessionPlatformLinkRepository {
         sessionId: params.sessionId,
         platform: params.platform,
         externalThreadKey: params.externalThreadKey,
-        linkStatus: params.endedAtMs == null ? 'active' : 'ended',
         claimToken: null,
         claimExpiresAtMs: null,
         createdAtMs: params.createdAtMs,
         updatedAtMs: params.updatedAtMs,
-        endedAtMs: params.endedAtMs ?? null,
       })
       .onConflictDoUpdate({
         target: [sessionPlatformLinksTable.sessionId, sessionPlatformLinksTable.platform],
         set: {
           externalThreadKey: params.externalThreadKey,
-          linkStatus: params.endedAtMs == null ? 'active' : 'ended',
           claimToken: null,
           claimExpiresAtMs: null,
           updatedAtMs: sql`MAX(${sessionPlatformLinksTable.updatedAtMs}, ${params.updatedAtMs})`,
-          endedAtMs: sql`CASE
-            WHEN ${params.endedAtMs ?? null} IS NULL THEN ${sessionPlatformLinksTable.endedAtMs}
-            WHEN ${sessionPlatformLinksTable.endedAtMs} IS NULL THEN ${params.endedAtMs ?? null}
-            WHEN ${params.endedAtMs ?? null} > ${sessionPlatformLinksTable.endedAtMs} THEN ${params.endedAtMs ?? null}
-            ELSE ${sessionPlatformLinksTable.endedAtMs}
-          END`,
         },
       });
   }
@@ -149,14 +125,12 @@ export class SessionPlatformLinkRepository {
           sessionId: params.sessionId,
           platform: params.platform,
           externalThreadKey: null,
-          linkStatus: 'pending',
           claimToken: params.claimToken,
           claimExpiresAtMs: params.claimExpiresAtMs,
           createdAtMs: params.nowMs,
           updatedAtMs: params.nowMs,
-          endedAtMs: null,
         });
-      } else if (existingRow.linkStatus === 'active' || existingRow.linkStatus === 'ended') {
+      } else if (existingRow.externalThreadKey !== null) {
         return existingRow;
       } else {
         const claimIsOwnedByOther =
@@ -173,7 +147,6 @@ export class SessionPlatformLinkRepository {
           .update(sessionPlatformLinksTable)
           .set({
             externalThreadKey: null,
-            linkStatus: 'pending',
             claimToken: params.claimToken,
             claimExpiresAtMs: params.claimExpiresAtMs,
             updatedAtMs: params.nowMs,
@@ -211,18 +184,17 @@ export class SessionPlatformLinkRepository {
       .update(sessionPlatformLinksTable)
       .set({
         externalThreadKey: params.externalThreadKey,
-        linkStatus: 'active',
         claimToken: null,
         claimExpiresAtMs: null,
         updatedAtMs: params.updatedAtMs,
-        endedAtMs: null,
       })
       .where(
         and(
           eq(sessionPlatformLinksTable.sessionId, params.sessionId),
           eq(sessionPlatformLinksTable.platform, params.platform),
-          eq(sessionPlatformLinksTable.linkStatus, 'pending'),
+          isNotNull(sessionPlatformLinksTable.claimToken),
           eq(sessionPlatformLinksTable.claimToken, params.claimToken),
+          sql`${sessionPlatformLinksTable.externalThreadKey} IS NULL`,
           or(
             sql`${sessionPlatformLinksTable.claimExpiresAtMs} IS NULL`,
             sql`${sessionPlatformLinksTable.claimExpiresAtMs} >= ${params.updatedAtMs}`,
@@ -235,20 +207,13 @@ export class SessionPlatformLinkRepository {
 
   async releaseSessionPlatformClaim(params: ReleaseSessionPlatformClaimParams): Promise<boolean> {
     const result = await this.db
-      .update(sessionPlatformLinksTable)
-      .set({
-        externalThreadKey: null,
-        linkStatus: 'pending',
-        claimToken: null,
-        claimExpiresAtMs: null,
-        updatedAtMs: params.updatedAtMs,
-      })
+      .delete(sessionPlatformLinksTable)
       .where(
         and(
           eq(sessionPlatformLinksTable.sessionId, params.sessionId),
           eq(sessionPlatformLinksTable.platform, params.platform),
-          eq(sessionPlatformLinksTable.linkStatus, 'pending'),
           eq(sessionPlatformLinksTable.claimToken, params.claimToken),
+          sql`${sessionPlatformLinksTable.externalThreadKey} IS NULL`,
         ),
       );
 
@@ -270,7 +235,6 @@ export class SessionPlatformLinkRepository {
         and(
           eq(sessionPlatformLinksTable.sessionId, sessionId),
           eq(sessionPlatformLinksTable.platform, platform),
-          eq(sessionPlatformLinksTable.linkStatus, 'active'),
           isNotNull(sessionPlatformLinksTable.externalThreadKey),
         ),
       )
@@ -318,7 +282,6 @@ export class SessionPlatformLinkRepository {
         and(
           eq(sessionPlatformLinksTable.platform, platform),
           eq(sessionPlatformLinksTable.externalThreadKey, externalThreadKey),
-          eq(sessionPlatformLinksTable.linkStatus, 'active'),
         ),
       )
       .orderBy(sessionPlatformLinksTable.createdAtMs, sessionPlatformLinksTable.sessionId);
@@ -331,36 +294,6 @@ export class SessionPlatformLinkRepository {
     externalThreadKey: string,
   ): Promise<SessionPlatformLinkRow | null> {
     return this.getLinkByPlatformAndExternalThreadKey(platform, externalThreadKey);
-  }
-
-  async markSessionPlatformLinkEnded(
-    sessionId: string,
-    platform: SessionPlatform,
-    endedAtMs: number,
-  ): Promise<void> {
-    await this.db
-      .update(sessionPlatformLinksTable)
-      .set({
-        linkStatus: 'ended',
-        claimToken: null,
-        claimExpiresAtMs: null,
-        endedAtMs,
-        updatedAtMs: endedAtMs,
-      })
-      .where(and(eq(sessionPlatformLinksTable.sessionId, sessionId), eq(sessionPlatformLinksTable.platform, platform)));
-  }
-
-  async markLinksEnded(sessionId: string, endedAtMs: number): Promise<void> {
-    await this.db
-      .update(sessionPlatformLinksTable)
-      .set({
-        linkStatus: 'ended',
-        claimToken: null,
-        claimExpiresAtMs: null,
-        endedAtMs,
-        updatedAtMs: endedAtMs,
-      })
-      .where(eq(sessionPlatformLinksTable.sessionId, sessionId));
   }
 
   async deleteLinksBySessionId(sessionId: string): Promise<void> {

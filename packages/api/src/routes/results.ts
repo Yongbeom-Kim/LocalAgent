@@ -1,7 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { v4 as uuidv4 } from 'uuid';
 import {
-  type MirrorTaskEvent,
   TaskPhaseEvent,
   TaskResultEvent,
   TASK_EVENT_KINDS,
@@ -53,16 +52,16 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
           res.status(400).json({ error: 'task_type is required and must be a string' });
           return;
         }
+        if (typeof session_id !== 'string' || !session_id) {
+          res.status(400).json({ error: 'session_id is required and must be a non-empty string' });
+          return;
+        }
         if (!isValidTaskPhase(phase)) {
           res.status(400).json({ error: 'phase is required and must be a valid task phase' });
           return;
         }
         if (task_source !== undefined && !isValidTaskSource(task_source)) {
           res.status(400).json({ error: 'task_source must be a valid source object' });
-          return;
-        }
-        if (session_id !== undefined && typeof session_id !== 'string') {
-          res.status(400).json({ error: 'session_id must be a string if provided' });
           return;
         }
         if (context_ref !== undefined && !isValidTaskContextRef(context_ref)) {
@@ -113,11 +112,11 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
           event_kind: 'phase',
           event_id: uuidv4(),
           task_id,
+          session_id,
           task_type,
           phase,
           emitted_at: new Date().toISOString(),
           ...(task_source ? { task_source } : {}),
-          ...(session_id !== undefined ? { session_id } : {}),
           ...(context_ref !== undefined ? { context_ref } : {}),
           ...(executor !== undefined ? { executor } : {}),
           ...(executor_model !== undefined ? { executor_model } : {}),
@@ -132,75 +131,6 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         }
 
         res.status(201).json(phaseEvent);
-        return;
-      }
-
-      if (eventKind === 'mirror') {
-        const {
-          task_id,
-          session_id,
-          task_type,
-          task_source,
-          mirror_id,
-          author_type,
-          text,
-          origin_message_id,
-        } = req.body;
-
-        if (typeof task_id !== 'string' || !task_id) {
-          res.status(400).json({ error: 'task_id is required and must be a string' });
-          return;
-        }
-        if (typeof session_id !== 'string' || !session_id) {
-          res.status(400).json({ error: 'session_id is required and must be a string' });
-          return;
-        }
-        if (typeof task_type !== 'string' || !task_type) {
-          res.status(400).json({ error: 'task_type is required and must be a string' });
-          return;
-        }
-        if (!isValidTaskSource(task_source)) {
-          res.status(400).json({ error: 'task_source is required and must be a valid source object' });
-          return;
-        }
-        if (typeof mirror_id !== 'string' || !mirror_id) {
-          res.status(400).json({ error: 'mirror_id is required and must be a string' });
-          return;
-        }
-        if (author_type !== 'user') {
-          res.status(400).json({ error: 'author_type is required and must be user' });
-          return;
-        }
-        if (typeof text !== 'string') {
-          res.status(400).json({ error: 'text is required and must be a string' });
-          return;
-        }
-        if (typeof origin_message_id !== 'string' || !origin_message_id) {
-          res.status(400).json({ error: 'origin_message_id is required and must be a string' });
-          return;
-        }
-
-        const mirrorEvent: MirrorTaskEvent = {
-          event_kind: 'mirror',
-          task_id,
-          session_id,
-          task_type,
-          task_source,
-          mirror_id,
-          author_type: 'user',
-          text,
-          origin_message_id,
-          emitted_at: new Date().toISOString(),
-        };
-
-        const buffered = await rabbitmq.publishToExchange(DEFAULT_RESULTS_EXCHANGE_NAME, mirrorEvent);
-
-        if (!buffered) {
-          res.status(503).json({ error: 'Server busy, try again later' });
-          return;
-        }
-
-        res.status(201).json(mirrorEvent);
         return;
       }
 
@@ -240,8 +170,8 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         res.status(400).json({ error: 'task_type must be a string if provided' });
         return;
       }
-      if (session_id !== undefined && typeof session_id !== 'string') {
-        res.status(400).json({ error: 'session_id must be a string if provided' });
+      if (typeof session_id !== 'string' || !session_id) {
+        res.status(400).json({ error: 'session_id is required and must be a non-empty string' });
         return;
       }
       if (context_ref !== undefined && !isValidTaskContextRef(context_ref)) {
@@ -271,8 +201,8 @@ export function createResultRoutes(rabbitmq: RabbitMQService): Router {
         stdout: typeof stdout === 'string' ? stdout : '',
         stderr: typeof stderr === 'string' ? stderr : '',
         completed_at: new Date().toISOString(),
+        session_id,
         ...(task_source ? { task_source } : {}),
-        ...(session_id !== undefined ? { session_id } : {}),
         ...(context_ref !== undefined ? { context_ref } : {}),
         ...(executor !== undefined ? { executor } : {}),
         ...(executor_model !== undefined ? { executor_model } : {}),

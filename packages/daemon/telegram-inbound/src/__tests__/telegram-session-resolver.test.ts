@@ -76,14 +76,6 @@ describe('TelegramSessionResolver', () => {
   });
 
   it('reuses the mapped session_id for topic follow-up messages', async () => {
-    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValue([{
-      sessionId: 'sess-1',
-      platform: 'telegram',
-      externalThreadKey: '-100456789:42',
-      createdAtMs: 1,
-      updatedAtMs: 1,
-      endedAtMs: null,
-    }]);
     telegramHistoryRepository.getTelegramThreadByTopic.mockResolvedValue({
       chatId: '-100456789',
       topicId: '42',
@@ -98,7 +90,6 @@ describe('TelegramSessionResolver', () => {
       metadataJson: null,
       createdAtMs: 1,
       updatedAtMs: 1,
-      endedAtMs: null,
     });
 
     const result = await resolver.resolve({
@@ -133,24 +124,6 @@ describe('TelegramSessionResolver', () => {
   });
 
   it('keeps the reporting-channel root session when child attachments exist on the same topic', async () => {
-    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValue([
-      {
-        sessionId: 'root-session',
-        platform: 'telegram',
-        externalThreadKey: '-100456789:42',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-        endedAtMs: null,
-      },
-      {
-        sessionId: 'child-session',
-        platform: 'telegram',
-        externalThreadKey: '-100456789:42',
-        createdAtMs: 2,
-        updatedAtMs: 2,
-        endedAtMs: null,
-      },
-    ]);
     telegramHistoryRepository.getTelegramThreadByTopic.mockResolvedValue({
       chatId: '-100456789',
       topicId: '42',
@@ -166,7 +139,6 @@ describe('TelegramSessionResolver', () => {
       metadataJson: null,
       createdAtMs: 1,
       updatedAtMs: 1,
-      endedAtMs: null,
     });
 
     const result = await resolver.resolve({
@@ -192,6 +164,36 @@ describe('TelegramSessionResolver', () => {
         taskSource: { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '12' },
         sessionId: 'root-session',
         contextRef: { platform: 'telegram', root_key: '-100456789:42' },
+      },
+    });
+  });
+
+  it('starts a brand-new session when a deleted topic receives a later reply', async () => {
+    const result = await resolver.resolve({
+      platform: 'telegram',
+      schema_version: 1,
+      chat_id: '-100456789',
+      topic_id: '42',
+      message_id: '13',
+      sender_id: '7',
+      sender_is_bot: false,
+      message_type: 'text',
+      raw_content: '/task deploy claude sonnet ship it again',
+      normalized_text: '/task deploy claude sonnet ship it again',
+      is_normalizable: true,
+      occurred_at_ms: 4,
+    });
+
+    expect(result).toEqual({
+      kind: 'accepted',
+      task: {
+        taskType: 'deploy',
+        payload: 'ship it again',
+        taskSource: { source: 'telegram', chat_id: '-100456789', topic_id: '42', message_id: '13' },
+        sessionId: 'sess-new',
+        contextRef: { platform: 'telegram', root_key: '-100456789:42' },
+        executor: 'claude',
+        executorModel: 'sonnet',
       },
     });
   });

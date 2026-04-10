@@ -66,7 +66,6 @@ export interface UpsertLarkThreadStateParams {
   status: string;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs?: number | null;
 }
 
 export interface LarkThreadRow {
@@ -82,7 +81,6 @@ export interface LarkThreadRow {
   status: string;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs: number | null;
 }
 
 export interface LarkMessageRow {
@@ -125,7 +123,6 @@ function toLarkThreadRow(
         status: string;
         createdAtMs: number;
         updatedAtMs: number;
-        endedAtMs: number | null;
       }
     | undefined,
 ): LarkThreadRow | null {
@@ -192,7 +189,6 @@ export class LarkHistoryRepository {
       status: params.status,
       createdAtMs: params.threadCreatedAtMs,
       updatedAtMs: params.threadUpdatedAtMs,
-      endedAtMs: null,
     });
 
     if (params.message.metadataJson !== null) {
@@ -237,7 +233,6 @@ export class LarkHistoryRepository {
           status: DEFAULT_AUDIT_ONLY_STATUS,
           createdAtMs: envelope.occurred_at_ms,
           updatedAtMs: envelope.occurred_at_ms,
-          endedAtMs: null,
         })
         .onConflictDoUpdate({
           target: larkThreadsTable.rootMessageId,
@@ -370,20 +365,12 @@ export class LarkHistoryRepository {
         executorModel: params.executorModel,
         status: 'active',
         updatedAtMs: params.updatedAtMs,
-        endedAtMs: null,
       })
       .where(eq(larkThreadsTable.rootSessionId, params.sessionId));
   }
 
   async markLarkThreadEnded(sessionId: string, endedAtMs: number): Promise<void> {
-    await this.db
-      .update(larkThreadsTable)
-      .set({
-        status: 'ended',
-        endedAtMs,
-        updatedAtMs: endedAtMs,
-      })
-      .where(eq(larkThreadsTable.rootSessionId, sessionId));
+    await this.deleteLarkRowsBySessionId(sessionId);
   }
 
   async upsertLarkThreadState(params: UpsertLarkThreadStateParams): Promise<void> {
@@ -402,7 +389,6 @@ export class LarkHistoryRepository {
           status: params.status,
           createdAtMs: params.createdAtMs,
           updatedAtMs: params.updatedAtMs,
-          endedAtMs: params.endedAtMs ?? null,
         })
         .onConflictDoUpdate({
           target: larkThreadsTable.rootMessageId,
@@ -421,7 +407,6 @@ export class LarkHistoryRepository {
             executorModel: params.executorModel,
             status: params.status,
             updatedAtMs: params.updatedAtMs,
-            endedAtMs: params.endedAtMs ?? null,
           },
         });
 

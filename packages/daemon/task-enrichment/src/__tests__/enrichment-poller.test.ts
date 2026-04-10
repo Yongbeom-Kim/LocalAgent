@@ -1384,7 +1384,6 @@ describe('TelegramThreadContextFetcher', () => {
         metadataJson: null,
         createdAtMs: 100,
         updatedAtMs: 100,
-        endedAtMs: null,
       }),
       listTelegramMessagesForTopic: vi.fn().mockResolvedValue([
         {
@@ -1529,9 +1528,10 @@ describe('EnrichmentPoller canonical ingress flow', () => {
     await poller.pollOnce();
 
     expect(telegramThreadContextFetcher.fetchThreadContext).toHaveBeenCalledWith('-100', '42');
-    expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/results', expect.objectContaining({
-      body: expect.stringContaining('"event_kind":"mirror"'),
-    }));
+    expect(mockFetch).not.toHaveBeenCalledWith(
+      'http://localhost:3000/results',
+      expect.objectContaining({ body: expect.stringContaining('"author_type"') }),
+    );
   });
 
   it('keeps explicit child session ids on telegram topics and persists root lineage', async () => {

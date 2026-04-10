@@ -1,8 +1,6 @@
 import {
-  MirrorTaskEvent,
   SessionPlatformLinkRepository,
   SessionRepository,
-  SessionBridgeRepository,
   TaskResult,
   createLogger,
   LarkHistoryRepository,
@@ -31,11 +29,8 @@ type LarkHistoryRepositoryLike = Pick<
   LarkHistoryRepository,
   | 'recordOutboundLarkMessage'
   | 'markLarkThreadNewInstance'
-  | 'getLarkMessageByMessageId'
   | 'getLarkThreadByRootMessageId'
-  | 'getLarkMessagesForThread'
   | 'upsertLarkThreadState'
-  | 'markLarkThreadEnded'
   | 'deleteLarkRowsBySessionId'
   | 'deleteLarkRowsBySessionIds'
 >;
@@ -51,7 +46,6 @@ type SessionPlatformLinkRepositoryLike = Pick<
   | 'claimPendingLink'
   | 'activateClaimedLink'
   | 'releaseExpiredOrFailedClaim'
-  | 'markLinksEnded'
   | 'deleteLinksBySessionId'
   | 'getLinkBySessionIdAndPlatform'
   | 'deleteLinksBySessionIds'
@@ -60,18 +54,13 @@ type SessionPlatformLinkRepositoryLike = Pick<
 interface LarkThreadDestination {
   rootMessageId: string;
   threadId: string | null;
-  sessionId?: string;
+  sessionId: string;
   source: string;
   chatType: string | null;
   taskType: string;
   executor: string;
   executorModel: string;
   createdAtMs: number;
-}
-
-interface ReplyDestination {
-  replyMessageId: string;
-  rootMessageId: string;
 }
 
 export class LarkNotifier {
@@ -81,28 +70,25 @@ export class LarkNotifier {
     private readonly recipientId: string,
     private readonly larkHistoryRepository?: LarkHistoryRepositoryLike,
     private readonly tokenProvider: TokenProvider = new LarkTenantTokenProvider(appId, appSecret),
-    private readonly sessionBridgeRepository?: Pick<
-      SessionBridgeRepository,
-      'getBridgeBySessionId' | 'markBridgeEnded' | 'deleteBridgeBySessionId'
-    >,
     private readonly sessionRepository?: SessionRepositoryLike,
     private readonly sessionPlatformLinkRepository?: SessionPlatformLinkRepositoryLike,
   ) {}
 
   async notify(result: TaskResult): Promise<void> {
+    if (!result.session_id) {
+      return;
+    }
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         await this.sendResultNotification(result);
         return;
       } catch (err) {
-        logger.warn(
-          { result_id: result.result_id, attempt, err },
-          'Lark notification attempt failed',
-        );
+        logger.warn({ result_id: result.result_id, attempt, err }, 'Lark notification attempt failed');
         if (attempt === MAX_RETRIES) {
           logger.error(
             { result_id: result.result_id },
-            `Lark notification failed after ${MAX_RETRIES} attempts — giving up`,
+            `Lark notification failed after ${MAX_RETRIES} attempts; giving up`,
           );
         }
       }
@@ -119,155 +105,37 @@ export class LarkNotifier {
         await this.sendPhaseNotification(event);
         return;
       } catch (err) {
-        logger.warn(
-          { event_id: event.event_id, attempt, err },
-          'Lark phase notification attempt failed',
-        );
+        logger.warn({ event_id: event.event_id, attempt, err }, 'Lark phase notification attempt failed');
         if (attempt === MAX_RETRIES) {
           logger.error(
             { event_id: event.event_id },
-            `Lark phase notification failed after ${MAX_RETRIES} attempts — giving up`,
+            `Lark phase notification failed after ${MAX_RETRIES} attempts; giving up`,
           );
         }
       }
     }
   }
 
-  async notifyMirror(event: MirrorTaskEvent): Promise<void> {
-    if (!this.larkHistoryRepository || !this.sessionBridgeRepository) {
-      return;
-    }
-
-    const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(event.session_id);
-    if (!bridge) {
-      return;
-    }
-
-    const existingMessages = await this.larkHistoryRepository.getLarkMessagesForThread(bridge.larkRootMessageId);
-    const duplicate = existingMessages.some((message) => {
-      if (message.direction !== 'outbound' || !message.metadataJson) {
-        return false;
-      }
-
-      try {
-        const metadata = JSON.parse(message.metadataJson) as { mirror_id?: string };
-        return metadata.mirror_id === event.mirror_id;
-      } catch {
-        return false;
-      }
-    });
-
-    if (duplicate) {
-      return;
-    }
-
-    const token = await this.tokenProvider.getTenantAccessToken();
-    const createdAtMs = Date.now();
-    const rawContent = JSON.stringify({ text: event.text });
-
-    const msgRes = await fetch(LARK_REPLY_URL(bridge.larkRootMessageId), {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        msg_type: 'text',
-        content: rawContent,
-        reply_in_thread: true,
-      }),
-    });
-
-    const msgData = (await msgRes.json()) as { code: number; data?: { message_id?: string } };
-    if (msgData.code !== 0) {
-      throw new Error(`Lark mirror send failed with code ${msgData.code}`);
-    }
-
-    const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(bridge.larkRootMessageId);
-    await this.larkHistoryRepository.recordOutboundLarkMessage({
-      messageId: msgData.data?.message_id ?? this.buildSyntheticOutboundMessageId(event.mirror_id),
-      source: event.task_source.source,
-      rootMessageId: bridge.larkRootMessageId,
-      sessionId: event.session_id,
-      threadId: existingThread?.threadId ?? null,
-      messageType: 'text',
-      rawContent,
-      normalizedText: event.text,
-      metadataJson: JSON.stringify({
-        mirror_origin: event.task_source.source,
-        origin_message_id: event.origin_message_id,
-        mirror_id: event.mirror_id,
-        mirrored_by: 'local-agent',
-      }),
-      createdAtMs,
-    });
-  }
-
   private async sendResultNotification(result: TaskResult): Promise<void> {
-    const token = await this.tokenProvider.getTenantAccessToken();
-    const text = this.buildResultText(result);
-
-    if (result.task_source?.source === 'lark') {
-      await this.clearBotOwnedPhaseReactionsBeforeReply(result.task_source.message_id, token);
-      const msgRes = await this.replyInThread(result.task_source.message_id, text, token);
-      await this.persistDirectReply(result, text, msgRes.data?.message_id);
-      if (
-        result.session_id &&
-        this.isNewInstanceReply(result) &&
-        result.executor &&
-        result.executor_model &&
-        this.larkHistoryRepository
-      ) {
-        await this.larkHistoryRepository.markLarkThreadNewInstance({
-          sessionId: result.session_id,
-          executor: result.executor,
-          executorModel: result.executor_model,
-          updatedAtMs: Date.now(),
-        });
-      }
-      return;
-    }
-
-    const replyDestination = await this.resolveReplyDestination(result);
-    if (replyDestination) {
-      await this.clearBotOwnedPhaseReactionsBeforeReply(replyDestination.replyMessageId, token);
-      const msgRes = await this.replyInThread(replyDestination.replyMessageId, text, token);
-      await this.persistDirectReply(result, text, msgRes.data?.message_id);
-      if (
-        result.session_id &&
-        this.isNewInstanceReply(result) &&
-        result.executor &&
-        result.executor_model &&
-        this.larkHistoryRepository
-      ) {
-        await this.larkHistoryRepository.markLarkThreadNewInstance({
-          sessionId: result.session_id,
-          executor: result.executor,
-          executorModel: result.executor_model,
-          updatedAtMs: Date.now(),
-        });
-      }
-      return;
-    }
-
     const destination = await this.resolveOrCreateFallbackThread({
       sessionId: result.session_id,
       taskType: result.task_type,
       executor: result.executor,
       executorModel: result.executor_model,
-      token,
     });
-
     if (!destination) {
-      await this.sendDirectMessage(text, token);
       return;
     }
+
+    const token = await this.tokenProvider.getTenantAccessToken();
+    const text = this.buildResultText(result);
+    await this.clearBotOwnedPhaseReactionsBeforeReply(destination.rootMessageId, token);
 
     const createdAtMs = Date.now();
     const msgRes = await this.replyInThread(destination.rootMessageId, text, token);
     await this.persistThreadReply({
       destination,
-      sessionId: result.session_id ?? destination.sessionId,
+      sessionId: result.session_id,
       taskType: result.task_type,
       executor: result.executor,
       executorModel: result.executor_model,
@@ -278,13 +146,12 @@ export class LarkNotifier {
       status: result.task_type === 'cleanup' ? 'ended' : 'active',
     });
 
-    if (result.session_id && result.task_type === 'cleanup') {
-      const cleanupRootSessionId = await this.resolveCleanupRootSessionId(result, destination.rootMessageId);
+    if (result.task_type === 'cleanup') {
+      const cleanupRootSessionId = await this.resolveCleanupRootSessionId(result.session_id, destination.rootMessageId);
       await this.cleanupTerminalSessionRows(cleanupRootSessionId, createdAtMs);
     }
 
     if (
-      result.session_id &&
       this.isNewInstanceReply(result) &&
       result.executor &&
       result.executor_model &&
@@ -300,19 +167,17 @@ export class LarkNotifier {
   }
 
   private async sendPhaseNotification(event: TaskPhaseEvent): Promise<void> {
-    const token = await this.tokenProvider.getTenantAccessToken();
     const destination = await this.resolveOrCreateFallbackThread({
       sessionId: event.session_id,
       taskType: event.task_type,
       executor: event.executor,
       executorModel: event.executor_model,
-      token,
     });
-
     if (!destination) {
       return;
     }
 
+    const token = await this.tokenProvider.getTenantAccessToken();
     const text = `Status: ${event.phase}`;
     const msgRes = await this.replyInThread(destination.rootMessageId, text, token);
     await this.persistThreadReply({
@@ -335,7 +200,7 @@ export class LarkNotifier {
         ? [`executor: ${result.executor}`, `model: ${result.executor_model}`]
         : []),
       `task_type: ${result.task_type}`,
-      ...(result.session_id ? [`session_id: ${result.session_id}`] : []),
+      `session_id: ${result.session_id}`,
       `Task ID: ${result.task_id}`,
       `Job ID: ${result.job_id}`,
       `status: ${result.status}`,
@@ -389,13 +254,17 @@ export class LarkNotifier {
   }
 
   private async resolveOrCreateFallbackThread(params: {
-    sessionId?: string;
+    sessionId: string;
     taskType: string;
     executor?: string;
     executorModel?: string;
-    token: string;
   }): Promise<LarkThreadDestination | null> {
-    if (!params.sessionId || !this.larkHistoryRepository || !this.sessionRepository || !this.sessionPlatformLinkRepository) {
+    if (!this.larkHistoryRepository || !this.sessionRepository || !this.sessionPlatformLinkRepository) {
+      return null;
+    }
+
+    const session = await this.sessionRepository.getSessionById(params.sessionId);
+    if (!session || session.status !== 'active') {
       return null;
     }
 
@@ -404,11 +273,16 @@ export class LarkNotifier {
       LARK_PLATFORM,
     );
     if (activeLink?.externalThreadKey) {
-      return this.loadPersistedDestination(activeLink.externalThreadKey, params.sessionId, params.taskType, params.executor, params.executorModel);
+      return this.loadPersistedDestination(
+        activeLink.externalThreadKey,
+        params.sessionId,
+        params.taskType,
+        params.executor,
+        params.executorModel,
+      );
     }
 
-    const session = await this.sessionRepository.getSessionById(params.sessionId);
-    const fallbackSeedText = session?.fallbackSeedText?.trim();
+    const fallbackSeedText = session.fallbackSeedText?.trim();
     if (!fallbackSeedText) {
       return null;
     }
@@ -423,19 +297,33 @@ export class LarkNotifier {
       nowMs,
     });
 
-    if (claim.linkStatus === 'active' && claim.externalThreadKey) {
-      return this.loadPersistedDestination(claim.externalThreadKey, params.sessionId, params.taskType, params.executor, params.executorModel);
+    if (claim.externalThreadKey) {
+      return this.loadPersistedDestination(
+        claim.externalThreadKey,
+        params.sessionId,
+        params.taskType,
+        params.executor,
+        params.executorModel,
+      );
     }
 
     if (claim.claimToken !== claimToken) {
       const reread = await this.sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform(params.sessionId, LARK_PLATFORM);
       return reread?.externalThreadKey
-        ? this.loadPersistedDestination(reread.externalThreadKey, params.sessionId, params.taskType, params.executor, params.executorModel)
+        ? this.loadPersistedDestination(
+            reread.externalThreadKey,
+            params.sessionId,
+            params.taskType,
+            params.executor,
+            params.executorModel,
+          )
         : null;
     }
 
+    const token = await this.tokenProvider.getTenantAccessToken();
+
     try {
-      const seedRes = await this.sendDirectMessage(fallbackSeedText, params.token);
+      const seedRes = await this.sendDirectMessage(fallbackSeedText, token);
       const rootMessageId = seedRes.data?.message_id;
       if (!rootMessageId) {
         throw new Error('Lark fallback seed message did not return a message_id');
@@ -445,27 +333,26 @@ export class LarkNotifier {
         rootMessageId,
         threadId: null,
         sessionId: params.sessionId,
-        source: session?.fallbackOrigin ?? 'fallback',
+        source: session.fallbackOrigin ?? 'fallback',
         chatType: null,
-        taskType: session?.taskType ?? params.taskType,
-        executor: session?.executor ?? params.executor ?? 'claude',
-        executorModel: session?.executorModel ?? params.executorModel ?? 'sonnet',
+        taskType: session.taskType ?? params.taskType,
+        executor: session.executor ?? params.executor ?? 'claude',
+        executorModel: session.executorModel ?? params.executorModel ?? 'sonnet',
         status: 'active',
         createdAtMs: nowMs,
         updatedAtMs: nowMs,
-        endedAtMs: null,
       });
 
       await this.larkHistoryRepository.recordOutboundLarkMessage({
         messageId: rootMessageId,
-        source: session?.fallbackOrigin ?? 'fallback',
+        source: session.fallbackOrigin ?? 'fallback',
         rootMessageId,
         sessionId: params.sessionId,
         threadId: null,
         messageType: 'text',
         rawContent: JSON.stringify({ text: fallbackSeedText }),
         normalizedText: fallbackSeedText,
-        metadataJson: JSON.stringify({ event_kind: 'fallback_seed', fallback_origin: session?.fallbackOrigin ?? null }),
+        metadataJson: JSON.stringify({ event_kind: 'fallback_seed', fallback_origin: session.fallbackOrigin ?? null }),
         createdAtMs: nowMs,
       });
 
@@ -499,11 +386,11 @@ export class LarkNotifier {
         rootMessageId,
         threadId: null,
         sessionId: params.sessionId,
-        source: session?.fallbackOrigin ?? 'fallback',
+        source: session.fallbackOrigin ?? 'fallback',
         chatType: null,
-        taskType: session?.taskType ?? params.taskType,
-        executor: session?.executor ?? params.executor ?? 'claude',
-        executorModel: session?.executorModel ?? params.executorModel ?? 'sonnet',
+        taskType: session.taskType ?? params.taskType,
+        executor: session.executor ?? params.executor ?? 'claude',
+        executorModel: session.executorModel ?? params.executorModel ?? 'sonnet',
         createdAtMs: nowMs,
       };
     } catch (error) {
@@ -538,96 +425,9 @@ export class LarkNotifier {
     };
   }
 
-  private async resolveReplyDestination(result: TaskResult): Promise<ReplyDestination | null> {
-    const rootMessageId = await this.resolveLarkRootMessageId(result);
-    if (!rootMessageId) {
-      return null;
-    }
-
-    return {
-      replyMessageId: rootMessageId,
-      rootMessageId,
-    };
-  }
-
-  private async resolveLarkRootMessageId(result: TaskResult): Promise<string | null> {
-    if (result.context_ref?.platform === 'lark') {
-      return result.context_ref.root_key;
-    }
-
-    if (result.task_source?.source === 'lark') {
-      const sourceMessage = await this.larkHistoryRepository?.getLarkMessageByMessageId(result.task_source.message_id);
-      return sourceMessage?.rootMessageId ?? result.task_source.message_id;
-    }
-
-    if (result.session_id && this.sessionPlatformLinkRepository?.getLinkBySessionIdAndPlatform) {
-      const link = await this.sessionPlatformLinkRepository.getLinkBySessionIdAndPlatform(result.session_id, 'lark');
-      if (link?.externalThreadKey) {
-        return link.externalThreadKey;
-      }
-    }
-
-    if (result.session_id && this.sessionBridgeRepository) {
-      const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(result.session_id);
-      if (bridge) {
-        return bridge.larkRootMessageId;
-      }
-    }
-
-    return null;
-  }
-
-  private async persistDirectReply(
-    result: TaskResult,
-    text: string,
-    messageIdFromResponse?: string,
-  ): Promise<void> {
-    if (!result.session_id || !this.larkHistoryRepository) {
-      return;
-    }
-
-    const rootMessageId = await this.resolveLarkRootMessageId(result);
-    if (!rootMessageId) {
-      return;
-    }
-
-    const sourceMessage = result.task_source?.source === 'lark'
-      ? await this.larkHistoryRepository.getLarkMessageByMessageId(result.task_source.message_id)
-      : null;
-    const existingThread = await this.larkHistoryRepository.getLarkThreadByRootMessageId(rootMessageId);
-
-    await this.persistThreadReply({
-      destination: {
-        rootMessageId,
-        threadId: sourceMessage?.threadId ?? existingThread?.threadId ?? null,
-        sessionId: result.session_id,
-        source: 'lark',
-        chatType: existingThread?.chatType ?? null,
-        taskType: existingThread?.taskType ?? result.task_type,
-        executor: existingThread?.executor ?? result.executor ?? 'claude',
-        executorModel: existingThread?.executorModel ?? result.executor_model ?? 'sonnet',
-        createdAtMs: existingThread?.createdAtMs ?? sourceMessage?.createdAtMs ?? Date.now(),
-      },
-      sessionId: result.session_id,
-      taskType: result.task_type,
-      executor: result.executor,
-      executorModel: result.executor_model,
-      text,
-      messageId: messageIdFromResponse ?? this.buildSyntheticOutboundMessageId(result.result_id),
-      metadataJson: JSON.stringify({ event_kind: this.getOutboundEventKind(result), result_id: result.result_id }),
-      createdAtMs: Date.now(),
-      status: result.task_type === 'cleanup' ? 'ended' : 'active',
-    });
-
-    if (result.task_type === 'cleanup') {
-      const cleanupRootSessionId = await this.resolveCleanupRootSessionId(result, rootMessageId);
-      await this.cleanupTerminalSessionRows(cleanupRootSessionId, Date.now());
-    }
-  }
-
   private async persistThreadReply(params: {
     destination: LarkThreadDestination;
-    sessionId?: string;
+    sessionId: string;
     taskType: string;
     executor?: string;
     executorModel?: string;
@@ -637,7 +437,7 @@ export class LarkNotifier {
     createdAtMs: number;
     status: string;
   }): Promise<void> {
-    if (!this.larkHistoryRepository || !params.sessionId) {
+    if (!this.larkHistoryRepository) {
       return;
     }
 
@@ -653,7 +453,6 @@ export class LarkNotifier {
       status: params.status,
       createdAtMs: params.destination.createdAtMs,
       updatedAtMs: params.createdAtMs,
-      endedAtMs: params.status === 'ended' ? params.createdAtMs : null,
     });
 
     const outboundParams: RecordOutboundLarkMessageParams = {
@@ -672,31 +471,14 @@ export class LarkNotifier {
     await this.larkHistoryRepository.recordOutboundLarkMessage(outboundParams);
   }
 
-  private async resolveCleanupRootSessionId(result: TaskResult, rootMessageId: string): Promise<string> {
+  private async resolveCleanupRootSessionId(sessionId: string, rootMessageId: string): Promise<string> {
     const thread = await this.larkHistoryRepository?.getLarkThreadByRootMessageId(rootMessageId);
-    if (thread?.rootSessionId) {
-      return thread.rootSessionId;
-    }
-
-    if (result.session_id && this.sessionPlatformLinkRepository?.getLinkBySessionIdAndPlatform) {
-      const link = await this.sessionPlatformLinkRepository.getLinkBySessionIdAndPlatform(result.session_id, 'lark');
-      if (link?.externalThreadKey) {
-        const linkedThread = await this.larkHistoryRepository?.getLarkThreadByRootMessageId(link.externalThreadKey);
-        if (linkedThread?.rootSessionId) {
-          return linkedThread.rootSessionId;
-        }
-      }
-    }
-
-    return result.session_id ?? '';
+    return thread?.rootSessionId ?? sessionId;
   }
 
   private async cleanupTerminalSessionRows(rootSessionId: string, endedAtMs: number): Promise<void> {
-    await this.larkHistoryRepository?.markLarkThreadEnded?.(rootSessionId, endedAtMs);
-
-    const bridge = await this.sessionBridgeRepository?.getBridgeBySessionId(rootSessionId);
-    if (bridge) {
-      await this.sessionBridgeRepository?.markBridgeEnded(rootSessionId, endedAtMs);
+    if (!rootSessionId) {
+      return;
     }
 
     const descendantSessionIds = this.sessionRepository?.listDescendantSessionIds
@@ -706,11 +488,6 @@ export class LarkNotifier {
 
     for (const sessionId of sessionIds) {
       await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
-      await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
-    }
-
-    if (bridge) {
-      await this.sessionBridgeRepository?.deleteBridgeBySessionId(rootSessionId);
     }
 
     if (this.larkHistoryRepository?.deleteLarkRowsBySessionIds) {

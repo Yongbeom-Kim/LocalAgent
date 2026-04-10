@@ -28,7 +28,6 @@ describe('LarkSessionResolver', () => {
     };
     sessionRepository = { upsertSession: vi.fn().mockResolvedValue(undefined) };
     sessionPlatformLinkRepository = {
-      listLinksByPlatformAndExternalThreadKey: vi.fn().mockResolvedValue([]),
       upsertLink: vi.fn().mockResolvedValue(undefined),
     };
     resolver = new LarkSessionResolver(larkHistoryRepository, sessionRepository, sessionPlatformLinkRepository);
@@ -89,14 +88,6 @@ describe('LarkSessionResolver', () => {
   });
 
   it('reuses the mapped session for thread follow-up messages', async () => {
-    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValueOnce([{
-      sessionId: 'sess-existing',
-      platform: 'lark',
-      externalThreadKey: 'om_root1',
-      createdAtMs: 1,
-      updatedAtMs: 1,
-      endedAtMs: null,
-    }]);
     larkHistoryRepository.getLarkThreadByRootMessageId.mockResolvedValueOnce({
       rootMessageId: 'om_root1',
       threadId: 'omt_1',
@@ -109,7 +100,6 @@ describe('LarkSessionResolver', () => {
       status: 'active',
       createdAtMs: 1,
       updatedAtMs: 1,
-      endedAtMs: null,
     });
 
     const result = await resolver.resolve({
@@ -160,24 +150,6 @@ describe('LarkSessionResolver', () => {
   });
 
   it('keeps the reporting-channel root session when child attachments already exist', async () => {
-    sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey.mockResolvedValueOnce([
-      {
-        sessionId: 'root-session',
-        platform: 'lark',
-        externalThreadKey: 'om_root_shared',
-        createdAtMs: 1,
-        updatedAtMs: 1,
-        endedAtMs: null,
-      },
-      {
-        sessionId: 'child-session',
-        platform: 'lark',
-        externalThreadKey: 'om_root_shared',
-        createdAtMs: 2,
-        updatedAtMs: 2,
-        endedAtMs: null,
-      },
-    ]);
     larkHistoryRepository.getLarkThreadByRootMessageId.mockResolvedValueOnce({
       rootMessageId: 'om_root_shared',
       threadId: 'omt_shared',
@@ -191,7 +163,6 @@ describe('LarkSessionResolver', () => {
       status: 'active',
       createdAtMs: 1,
       updatedAtMs: 1,
-      endedAtMs: null,
     });
 
     const result = await resolver.resolve({
@@ -241,7 +212,7 @@ describe('LarkSessionResolver', () => {
     }));
   });
 
-  it('rejects thread follow-up messages when the root session does not exist yet', async () => {
+  it('starts a brand-new session when a deleted thread receives a later reply', async () => {
     const result = await resolver.resolve({
       envelope: {
         platform: 'lark',
@@ -274,8 +245,14 @@ describe('LarkSessionResolver', () => {
     });
 
     expect(result).toEqual({
-      kind: 'rejected',
-      reason: 'Thread session is not ready yet. Retry after the root message is processed.',
+      kind: 'accepted',
+      task: {
+        taskType: 'thread_reply',
+        payload: 'follow up',
+        taskSource: { source: 'lark', message_id: 'om_reply1' },
+        sessionId: 'sess-new',
+        contextRef: { platform: 'lark', root_key: 'om_root1' },
+      },
     });
   });
 });

@@ -16,7 +16,6 @@ export interface UpsertTelegramThreadStateParams {
   metadataJson?: string | null;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs?: number | null;
 }
 
 export interface RecordTelegramMessageParams {
@@ -48,7 +47,6 @@ export interface TelegramThreadRow {
   metadataJson: string | null;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs: number | null;
 }
 
 export interface TelegramMessageRow {
@@ -81,7 +79,6 @@ function toTelegramThreadRow(
         metadataJson: string | null;
         createdAtMs: number;
         updatedAtMs: number;
-        endedAtMs: number | null;
       }
     | undefined,
 ): TelegramThreadRow | null {
@@ -115,7 +112,6 @@ export class TelegramHistoryRepository {
         metadataJson: params.metadataJson ?? null,
         createdAtMs: params.createdAtMs,
         updatedAtMs: params.updatedAtMs,
-        endedAtMs: params.endedAtMs ?? null,
       })
       .onConflictDoUpdate({
         target: [telegramThreadsTable.chatId, telegramThreadsTable.topicId],
@@ -130,7 +126,6 @@ export class TelegramHistoryRepository {
           statusMessageId: sql`COALESCE(${params.statusMessageId ?? null}, ${telegramThreadsTable.statusMessageId})`,
           metadataJson: sql`COALESCE(${params.metadataJson ?? null}, ${telegramThreadsTable.metadataJson})`,
           updatedAtMs: params.updatedAtMs,
-          endedAtMs: params.endedAtMs ?? null,
         },
       });
   }
@@ -196,20 +191,12 @@ export class TelegramHistoryRepository {
         executorModel: params.executorModel,
         status: 'active',
         updatedAtMs: params.updatedAtMs,
-        endedAtMs: null,
       })
       .where(eq(telegramThreadsTable.rootSessionId, params.sessionId));
   }
 
   async markTelegramThreadEnded(sessionId: string, endedAtMs: number): Promise<void> {
-    await this.db
-      .update(telegramThreadsTable)
-      .set({
-        status: 'ended',
-        endedAtMs,
-        updatedAtMs: endedAtMs,
-      })
-      .where(eq(telegramThreadsTable.rootSessionId, sessionId));
+    await this.deleteTelegramRowsBySessionId(sessionId);
   }
 
   async getStaleTelegramSessionIdsBeforeUpdatedAt(cutoffMs: number): Promise<string[]> {

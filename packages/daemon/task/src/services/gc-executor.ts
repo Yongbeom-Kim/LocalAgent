@@ -6,7 +6,6 @@ import {
   SESSION_BASE_DIR,
   createLogger,
   LarkHistoryRepository,
-  SessionBridgeRepository,
   SessionPlatformLinkRepository,
   SessionRepository,
   TelegramHistoryRepository,
@@ -85,16 +84,6 @@ const deleteRowsBySessionIdFromDb: DeleteRowsBySessionId = async (sessionId: str
         throw error;
       }
     }
-
-    try {
-      const bridgeRepository = new SessionBridgeRepository(client.db);
-      await bridgeRepository.deleteBridgeByRootSessionId(sessionId);
-    } catch (error) {
-      if (!isMissingTableError(error)) {
-        throw error;
-      }
-    }
-
     try {
       await sessionPlatformLinkRepository.deleteLinksBySessionIds(sessionIds);
     } catch (error) {

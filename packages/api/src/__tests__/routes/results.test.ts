@@ -58,6 +58,7 @@ function validSubmission() {
   return {
     job_id: 'job-456',
     task_id: 'task-123',
+    session_id: 'session-123',
     status: 'success',
     exit_code: 0,
     stdout: 'output text',
@@ -69,6 +70,7 @@ function validPhaseSubmission() {
   return {
     event_kind: 'phase',
     task_id: 'task-123',
+    session_id: 'session-123',
     task_type: 'generic',
     phase: 'queued',
     task_source: { source: 'lark', message_id: 'om_abc123' },
@@ -77,25 +79,6 @@ function validPhaseSubmission() {
       thread_id: 'thread-1',
       note: 'queued for session worker',
     },
-  };
-}
-
-function validMirrorSubmission() {
-  return {
-    event_kind: 'mirror',
-    task_id: 'task-123',
-    session_id: 'session-123',
-    task_type: 'generic',
-    task_source: {
-      source: 'telegram',
-      chat_id: '-100123',
-      topic_id: '42',
-      message_id: '99',
-    },
-    mirror_id: 'mirror-123',
-    author_type: 'user',
-    text: 'hello',
-    origin_message_id: '99',
   };
 }
 
@@ -151,16 +134,12 @@ describe('POST /results', () => {
     );
   });
 
-  it('returns 201 without session_id when absent', async () => {
+  it('returns 400 when session_id is absent', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/results'))
-      .send(validSubmission());
-    expect(res.status).toBe(201);
-    expect(res.body.session_id).toBeUndefined();
-    expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
-      'results',
-      expect.not.objectContaining({ session_id: expect.anything() }),
-    );
+      .send((({ session_id, ...rest }) => rest)(validSubmission()));
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('session_id is required and must be a non-empty string');
   });
 
   it('returns 400 when session_id is not a string', async () => {
@@ -352,30 +331,18 @@ describe('POST /results', () => {
     expect(res.body.metadata).toEqual({ emitted_by: 'telegram-listener' });
   });
 
-  it('accepts mirror POST /results', async () => {
+  it('returns 400 when phase session_id is missing', async () => {
     const app = buildApp();
-    const payload = validMirrorSubmission();
-
-    const res = await authedRequest(request(app).post('/results')).send(payload);
-
-    expect(res.status).toBe(201);
-    expect(res.body.event_kind).toBe('mirror');
-    expect(res.body.mirror_id).toBe('mirror-123');
-    expect(res.body.emitted_at).toEqual(expect.any(String));
-    expect(mockRabbitMQ.publishToExchange).toHaveBeenCalledWith(
-      'results',
-      expect.objectContaining({
-        event_kind: 'mirror',
-        mirror_id: 'mirror-123',
-        session_id: 'session-123',
-      }),
-    );
+    const res = await authedRequest(request(app).post('/results'))
+      .send({ ...validPhaseSubmission(), session_id: undefined });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('session_id is required and must be a non-empty string');
   });
 
   it('returns 400 when event_kind is unknown', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/results'))
-      .send({ ...validSubmission(), event_kind: 'unknown' });
+      .send({ ...validSubmission(), event_kind: 'unknown-kind' });
     expect(res.status).toBe(400);
   });
 });

@@ -125,7 +125,6 @@ describe('POST /tasks', () => {
       fallbackTitleHint: 'Morning review',
       createdAtMs: expect.any(Number),
       updatedAtMs: expect.any(Number),
-      endedAtMs: null,
     }));
     expect(mockSessionRepository.upsertSession.mock.invocationCallOrder[0]).toBeLessThan(
       mockRabbitMQ.publish.mock.invocationCallOrder[0],

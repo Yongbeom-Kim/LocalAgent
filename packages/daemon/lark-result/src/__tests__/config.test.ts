@@ -33,7 +33,7 @@ describe('loadLarkDaemonConfig', () => {
       LARK_APP_SECRET: 'secret456',
       LARK_RECIPIENT_ID: 'user789',
       LOCAL_AGENT_DB_PATH: '/tmp/other.sqlite',
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '13',
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '14',
     });
     expect(config.apiUrl).toBe('http://other:4000');
     expect(config.apiAuthEnabled).toBe(true);
@@ -44,7 +44,7 @@ describe('loadLarkDaemonConfig', () => {
     expect(config.larkAppSecret).toBe('secret456');
     expect(config.larkRecipientId).toBe('user789');
     expect(config.dbPath).toBe('/tmp/other.sqlite');
-    expect(config.expectedSchemaVersion).toBe(13);
+    expect(config.expectedSchemaVersion).toBe(14);
   });
 
   it('allows startup without token when API_AUTH_DISABLED is 1', () => {

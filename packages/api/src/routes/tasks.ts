@@ -144,7 +144,6 @@ export function createTaskRoutes(
           status: 'active',
           createdAtMs: intakeAtMs,
           updatedAtMs: intakeAtMs,
-          endedAtMs: null,
           fallbackSeedText: sessionMetadata.fallbackSeedText ?? null,
           fallbackOrigin: sessionMetadata.fallbackOrigin ?? null,
           fallbackTitleHint: sessionMetadata.fallbackTitleHint ?? null,
