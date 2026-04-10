@@ -14,10 +14,10 @@ export class TelegramTaskSubmitter {
   async submit(
     taskType: string,
     payload: string,
+    options: TelegramCanonicalTaskSubmitOptions,
     taskSource: TaskSource,
     executor?: string,
     executorModel?: string,
-    options: TelegramCanonicalTaskSubmitOptions,
   ): Promise<string | null> {
     const res = await fetch(`${this.apiUrl}/tasks`, {
       method: 'POST',

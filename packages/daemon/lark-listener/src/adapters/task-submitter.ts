@@ -32,10 +32,10 @@ export class TaskSubmitter {
   async submit(
     taskType: string,
     payload: string,
+    options: CanonicalTaskSubmitOptions,
     taskSource?: TaskSource,
     executor?: string,
     executorModel?: string,
-    options: CanonicalTaskSubmitOptions,
   ): Promise<string | null> {
     const body: TaskSubmission = {
       task_type: taskType,

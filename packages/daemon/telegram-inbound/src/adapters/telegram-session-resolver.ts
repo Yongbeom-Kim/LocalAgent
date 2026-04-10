@@ -63,6 +63,7 @@ export class TelegramSessionResolver {
         task_type: 'telegram_inbound',
         payload: envelope.is_normalizable ? envelope.normalized_text : envelope.raw_content,
         submitted_at: new Date(envelope.occurred_at_ms).toISOString(),
+        session_id: existingThread?.sessionId ?? generateSessionId(),
       },
       envelope,
       Boolean(existingThread),

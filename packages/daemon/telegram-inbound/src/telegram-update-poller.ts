@@ -150,13 +150,13 @@ export class TelegramUpdatePoller {
     const taskId = await this.taskSubmitter.submit(
       resolved.task.taskType,
       resolved.task.payload,
-      resolved.task.taskSource,
-      resolved.task.executor,
-      resolved.task.executorModel,
       {
         sessionId: resolved.task.sessionId,
         contextRef: resolved.task.contextRef,
       },
+      resolved.task.taskSource,
+      resolved.task.executor,
+      resolved.task.executorModel,
     );
     if (!taskId) {
       logger.error({ update_id: update.update_id, message_id: messageId }, 'Failed to submit telegram canonical task');

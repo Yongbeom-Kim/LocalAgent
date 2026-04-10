@@ -101,13 +101,13 @@ export class MessageHandler {
     const taskId = await this.submitter.submit(
       resolved.task.taskType,
       resolved.task.payload,
-      resolved.task.taskSource,
-      resolved.task.executor,
-      resolved.task.executorModel,
       {
         sessionId: resolved.task.sessionId,
         contextRef: resolved.task.contextRef,
       },
+      resolved.task.taskSource,
+      resolved.task.executor,
+      resolved.task.executorModel,
     );
     if (!taskId) {
       logger.error({ message_id: messageId }, 'Failed to enqueue task');
