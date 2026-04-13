@@ -68,6 +68,7 @@ describe('GcExecutor', () => {
       job_id: 'job-gc-001',
       task_id: 'task-gc-001',
       task_type: 'gc',
+      session_id: 'session-gc-001',
       status: 'success',
       exit_code: 0,
       stdout: 'GC complete: removed 0 session dir(s), retained 0 session dir(s), deleted 0 DB session(s).',

@@ -438,6 +438,7 @@ describe('TaskOrchestrator', () => {
       job_id: 'job-456',
       task_id: 'test-123',
       task_type: 'generic',
+      session_id: 'session-789',
       status: 'failure',
       exit_code: 1,
       stdout: 'hook stdout',
