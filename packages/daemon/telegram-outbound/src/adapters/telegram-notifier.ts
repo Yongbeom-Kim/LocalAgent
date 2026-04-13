@@ -1,9 +1,7 @@
 import {
   SessionPlatformLinkRepository,
   SessionRepository,
-  SessionBridgeRepository,
   TelegramHistoryRepository,
-  type MirrorTaskEvent,
   TaskResult,
   createLogger,
 } from '@local-agent/shared';
@@ -15,7 +13,6 @@ const TELEGRAM_API_BASE = 'https://api.telegram.org/bot';
 const TELEGRAM_PLATFORM = 'telegram';
 const CLAIM_TTL_MS = 60_000;
 
-// MarkdownV2 special chars that must be escaped outside code blocks
 const MARKDOWNV2_ESCAPE_REGEX = /([_*\[\]()~`>#+\-=|{}.!\\])/g;
 
 export function escapeMarkdownV2(text: string): string {
@@ -55,12 +52,9 @@ export class TelegramTopicManager implements TelegramTopicManagerLike {
 
 type TelegramHistoryRepositoryLike = Pick<
   TelegramHistoryRepository,
-  | 'getTelegramThreadBySessionId'
   | 'getTelegramThreadByTopic'
-  | 'listTelegramMessagesForTopic'
   | 'recordOutboundTelegramMessage'
   | 'upsertTelegramThreadState'
-  | 'markTelegramThreadEnded'
   | 'deleteTelegramRowsBySessionId'
   | 'deleteTelegramRowsBySessionIds'
 >;
@@ -76,7 +70,6 @@ type SessionPlatformLinkRepositoryLike = Pick<
   | 'claimPendingLink'
   | 'activateClaimedLink'
   | 'releaseExpiredOrFailedClaim'
-  | 'markLinksEnded'
   | 'deleteLinksBySessionId'
   | 'getLinkBySessionIdAndPlatform'
   | 'deleteLinksBySessionIds'
@@ -84,8 +77,8 @@ type SessionPlatformLinkRepositoryLike = Pick<
 
 interface TelegramDestination {
   chatId: string;
-  topicId?: string;
-  sessionId?: string;
+  topicId: string;
+  sessionId: string;
 }
 
 export class TelegramNotifier {
@@ -95,10 +88,6 @@ export class TelegramNotifier {
     private readonly botToken: string,
     private readonly forumGroupId: string,
     private readonly telegramHistoryRepository?: TelegramHistoryRepositoryLike,
-    private readonly sessionBridgeRepository?: Pick<
-      SessionBridgeRepository,
-      'getBridgeBySessionId' | 'getBridgeByTelegramTopic' | 'markBridgeEnded' | 'deleteBridgeBySessionId'
-    >,
     private readonly sessionRepository?: SessionRepositoryLike,
     private readonly sessionPlatformLinkRepository?: SessionPlatformLinkRepositoryLike,
     private readonly topicManager: TelegramTopicManagerLike = new TelegramTopicManager(botToken),
@@ -118,19 +107,20 @@ export class TelegramNotifier {
   }
 
   async notify(result: TaskResult): Promise<void> {
+    if (!result.session_id) {
+      return;
+    }
+
     for (let attempt = 1; attempt <= DEFAULT_TELEGRAM_MAX_RETRIES; attempt++) {
       try {
-        await this.sendMessage(result);
+        await this.notifyResult({ result });
         return;
       } catch (err) {
-        logger.warn(
-          { result_id: result.result_id, attempt, err },
-          'Telegram notification attempt failed',
-        );
+        logger.warn({ result_id: result.result_id, attempt, err }, 'Telegram notification attempt failed');
         if (attempt === DEFAULT_TELEGRAM_MAX_RETRIES) {
           logger.error(
             { result_id: result.result_id },
-            `Telegram notification failed after ${DEFAULT_TELEGRAM_MAX_RETRIES} attempts — giving up`,
+            `Telegram notification failed after ${DEFAULT_TELEGRAM_MAX_RETRIES} attempts; giving up`,
           );
         }
       }
@@ -145,73 +135,19 @@ export class TelegramNotifier {
     });
   }
 
-  async notifyMirror(event: MirrorTaskEvent): Promise<void> {
-    if (!this.telegramHistoryRepository || !this.sessionBridgeRepository) {
+  async notifyStatus(params: { sessionId?: string; text: string }): Promise<void> {
+    if (!params.sessionId) {
       return;
     }
 
-    const bridge = await this.sessionBridgeRepository.getBridgeBySessionId(event.session_id);
-    if (!bridge) {
-      return;
-    }
-
-    const existingMessages = await this.telegramHistoryRepository.listTelegramMessagesForTopic(
-      bridge.telegramChatId,
-      bridge.telegramTopicId,
-    );
-    const duplicate = existingMessages.some((message) => {
-      if (message.direction !== 'outbound' || !message.metadataJson) {
-        return false;
-      }
-
-      try {
-        const metadata = JSON.parse(message.metadataJson) as { mirror_id?: string };
-        return metadata.mirror_id === event.mirror_id;
-      } catch {
-        return false;
-      }
-    });
-
-    if (duplicate) {
-      return;
-    }
-
-    const sentMessageId = await this.sendMessageToChat({
-      chatId: bridge.telegramChatId,
-      messageThreadId: Number(bridge.telegramTopicId),
-      text: event.text,
-      parseMode: undefined,
-    });
-
-    await this.telegramHistoryRepository.recordOutboundTelegramMessage({
-      chatId: bridge.telegramChatId,
-      topicId: bridge.telegramTopicId,
-      messageId: sentMessageId,
-      sessionId: event.session_id,
-      direction: 'outbound',
-      senderType: 'bot',
-      messageType: 'text',
-      rawContent: event.text,
-      normalizedText: event.text,
-      metadataJson: JSON.stringify({
-        mirror_origin: event.task_source.source,
-        origin_message_id: event.origin_message_id,
-        mirror_id: event.mirror_id,
-        mirrored_by: 'local-agent',
-      }),
-      createdAtMs: Date.now(),
-    });
-  }
-
-  async notifyStatus(params: { chatId?: string; topicId?: string; sessionId?: string; text: string }): Promise<void> {
-    const destination = await this.resolveDestination(params);
+    const destination = await this.resolveDestination(params.sessionId);
     if (!destination) {
       return;
     }
 
     const messageId = await this.sendMessageToChat({
       chatId: destination.chatId,
-      messageThreadId: destination.topicId ? Number(destination.topicId) : undefined,
+      messageThreadId: Number(destination.topicId),
       text: params.text,
       parseMode: 'MarkdownV2',
     });
@@ -227,22 +163,21 @@ export class TelegramNotifier {
     });
   }
 
-  async notifyResult(params: { chatId?: string; topicId?: string; result: TaskResult }): Promise<void> {
-    const destination = await this.resolveDestination({
-      chatId: params.chatId,
-      topicId: params.topicId,
-      sessionId: params.result.session_id,
-      contextRef: params.result.context_ref,
-    });
+  async notifyResult(params: { result: TaskResult }): Promise<void> {
+    if (!params.result.session_id) {
+      return;
+    }
 
+    const destination = await this.resolveDestination(params.result.session_id);
     if (!destination) {
       return;
     }
 
     const text = this.formatMessage(params.result);
+    const createdAtMs = Date.now();
     const messageId = await this.sendMessageToChat({
       chatId: destination.chatId,
-      messageThreadId: destination.topicId ? Number(destination.topicId) : undefined,
+      messageThreadId: Number(destination.topicId),
       text,
       parseMode: 'MarkdownV2',
     });
@@ -255,47 +190,23 @@ export class TelegramNotifier {
       taskType: params.result.task_type,
       executor: params.result.executor,
       executorModel: params.result.executor_model,
-      createdAtMs: Date.now(),
+      createdAtMs,
     });
 
     if (params.result.task_type === 'cleanup') {
-      const cleanupRootSessionId = await this.resolveCleanupRootSessionId(params.result, destination);
-      await this.cleanupTerminalSessionRows(cleanupRootSessionId, Date.now());
+      const cleanupRootSessionId = await this.resolveCleanupRootSessionId(params.result.session_id, destination);
+      await this.cleanupTerminalSessionRows(cleanupRootSessionId, createdAtMs);
     }
   }
 
-  private async resolveCleanupRootSessionId(result: TaskResult, destination: TelegramDestination): Promise<string> {
-    if (destination.topicId) {
-      const thread = await this.telegramHistoryRepository?.getTelegramThreadByTopic(destination.chatId, destination.topicId);
-      if (thread?.rootSessionId) {
-        return thread.rootSessionId;
-      }
-    }
-
-    if (result.session_id && this.sessionPlatformLinkRepository?.getLinkBySessionIdAndPlatform) {
-      const link = await this.sessionPlatformLinkRepository.getLinkBySessionIdAndPlatform(result.session_id, TELEGRAM_PLATFORM);
-      if (link?.externalThreadKey) {
-        const { chatId, topicId } = this.parseExternalThreadKey(link.externalThreadKey);
-        const thread = await this.telegramHistoryRepository?.getTelegramThreadByTopic(chatId, topicId);
-        if (thread?.rootSessionId) {
-          return thread.rootSessionId;
-        }
-      }
-    }
-
-    return result.session_id ?? destination.sessionId ?? '';
+  private async resolveCleanupRootSessionId(sessionId: string, destination: TelegramDestination): Promise<string> {
+    const thread = await this.telegramHistoryRepository?.getTelegramThreadByTopic(destination.chatId, destination.topicId);
+    return thread?.rootSessionId ?? sessionId;
   }
 
   private async cleanupTerminalSessionRows(rootSessionId: string, endedAtMs: number): Promise<void> {
     if (!rootSessionId) {
       return;
-    }
-
-    await this.telegramHistoryRepository?.markTelegramThreadEnded(rootSessionId, endedAtMs);
-
-    const bridge = await this.sessionBridgeRepository?.getBridgeBySessionId(rootSessionId);
-    if (bridge) {
-      await this.sessionBridgeRepository?.markBridgeEnded(rootSessionId, endedAtMs);
     }
 
     const descendantSessionIds = this.sessionRepository?.listDescendantSessionIds
@@ -305,11 +216,6 @@ export class TelegramNotifier {
 
     for (const sessionId of sessionIds) {
       await this.sessionRepository?.markSessionEnded(sessionId, endedAtMs);
-      await this.sessionPlatformLinkRepository?.markLinksEnded(sessionId, endedAtMs);
-    }
-
-    if (bridge) {
-      await this.sessionBridgeRepository?.deleteBridgeBySessionId(rootSessionId);
     }
 
     if (this.telegramHistoryRepository?.deleteTelegramRowsBySessionIds) {
@@ -335,10 +241,6 @@ export class TelegramNotifier {
         await this.sessionRepository?.deleteSessionById(sessionId);
       }
     }
-  }
-
-  private async sendMessage(result: TaskResult): Promise<void> {
-    await this.notifyResult({ result });
   }
 
   private async sendMessageToChat(params: {
@@ -367,92 +269,61 @@ export class TelegramNotifier {
     return String(data.result?.message_id ?? `telegram_outbound_${Date.now()}`);
   }
 
-  private async resolveDestination(params: {
-    chatId?: string;
-    topicId?: string;
-    sessionId?: string;
-    contextRef?: { platform: 'lark' | 'telegram'; root_key: string };
-  }): Promise<TelegramDestination | null> {
-    if (params.chatId) {
-      return {
-        chatId: params.chatId,
-        topicId: params.topicId,
-        sessionId: params.sessionId,
-      };
+  private async resolveDestination(sessionId: string): Promise<TelegramDestination | null> {
+    if (!this.sessionRepository || !this.sessionPlatformLinkRepository || !this.telegramHistoryRepository) {
+      return null;
     }
 
-    if (params.contextRef?.platform === TELEGRAM_PLATFORM) {
-      return {
-        ...this.parseExternalThreadKey(params.contextRef.root_key),
-        sessionId: params.sessionId,
-      };
+    const session = await this.sessionRepository.getSessionById(sessionId);
+    if (!session || session.status !== 'active') {
+      return null;
     }
 
-    if (!params.sessionId) {
-      return { chatId: this.forumGroupId };
-    }
-
-    const activeLink = await this.sessionPlatformLinkRepository?.getActiveLinkBySessionAndPlatform(
-      params.sessionId,
+    const activeLink = await this.sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform(
+      sessionId,
       TELEGRAM_PLATFORM,
     );
     if (activeLink?.externalThreadKey) {
-      return {
-        ...this.parseExternalThreadKey(activeLink.externalThreadKey),
-        sessionId: params.sessionId,
-      };
+      const { chatId, topicId } = this.parseExternalThreadKey(activeLink.externalThreadKey);
+      return { chatId, topicId, sessionId };
     }
 
-    const bridge = await this.sessionBridgeRepository?.getBridgeBySessionId(params.sessionId);
-    if (bridge) {
-      return {
-        chatId: bridge.telegramChatId,
-        topicId: bridge.telegramTopicId,
-        sessionId: params.sessionId,
-      };
-    }
-
-    if (!this.sessionRepository || !this.sessionPlatformLinkRepository || !this.telegramHistoryRepository) {
-      return { chatId: this.forumGroupId, sessionId: params.sessionId };
-    }
-
-    const session = await this.sessionRepository.getSessionById(params.sessionId);
-    const fallbackSeedText = session?.fallbackSeedText?.trim();
+    const fallbackSeedText = session.fallbackSeedText?.trim();
     if (!fallbackSeedText) {
-      return { chatId: this.forumGroupId, sessionId: params.sessionId };
+      return null;
     }
 
-    const claimToken = this.buildClaimToken(params.sessionId);
+    const claimToken = this.buildClaimToken(sessionId);
     const nowMs = Date.now();
     const claim = await this.sessionPlatformLinkRepository.claimPendingLink({
-      sessionId: params.sessionId,
+      sessionId,
       platform: TELEGRAM_PLATFORM,
       claimToken,
       claimExpiresAtMs: nowMs + CLAIM_TTL_MS,
       nowMs,
     });
 
-    if (claim.linkStatus === 'active' && claim.externalThreadKey) {
-      return {
-        ...this.parseExternalThreadKey(claim.externalThreadKey),
-        sessionId: params.sessionId,
-      };
+    if (claim.externalThreadKey) {
+      const { chatId, topicId } = this.parseExternalThreadKey(claim.externalThreadKey);
+      return { chatId, topicId, sessionId };
     }
 
     if (claim.claimToken !== claimToken) {
       const reread = await this.sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform(
-        params.sessionId,
+        sessionId,
         TELEGRAM_PLATFORM,
       );
-      return reread?.externalThreadKey
-        ? { ...this.parseExternalThreadKey(reread.externalThreadKey), sessionId: params.sessionId }
-        : null;
+      if (!reread?.externalThreadKey) {
+        return null;
+      }
+      const { chatId, topicId } = this.parseExternalThreadKey(reread.externalThreadKey);
+      return { chatId, topicId, sessionId };
     }
 
     try {
       const topic = await this.topicManager.createForumTopic(
         this.forumGroupId,
-        this.buildFallbackTopicName(session?.fallbackTitleHint ?? null, fallbackSeedText),
+        this.buildFallbackTopicName(session.fallbackTitleHint ?? null, fallbackSeedText),
       );
       const topicId = String(topic.message_thread_id);
       const seedMessageId = await this.sendMessageToChat({
@@ -465,36 +336,35 @@ export class TelegramNotifier {
       await this.telegramHistoryRepository.upsertTelegramThreadState({
         chatId: this.forumGroupId,
         topicId,
-        sessionId: params.sessionId,
-        source: session?.fallbackOrigin ?? 'fallback',
-        taskType: session?.taskType ?? 'generic',
-        executor: session?.executor ?? 'claude',
-        executorModel: session?.executorModel ?? 'sonnet',
+        sessionId,
+        source: session.fallbackOrigin ?? 'fallback',
+        taskType: session.taskType ?? 'generic',
+        executor: session.executor ?? 'claude',
+        executorModel: session.executorModel ?? 'sonnet',
         status: 'active',
         seedMessageId,
         statusMessageId: null,
-        metadataJson: JSON.stringify({ topic_name: topic.name, fallback_origin: session?.fallbackOrigin ?? null }),
+        metadataJson: JSON.stringify({ topic_name: topic.name, fallback_origin: session.fallbackOrigin ?? null }),
         createdAtMs: nowMs,
         updatedAtMs: nowMs,
-        endedAtMs: null,
       });
 
       await this.telegramHistoryRepository.recordOutboundTelegramMessage({
         chatId: this.forumGroupId,
         topicId,
         messageId: seedMessageId,
-        sessionId: params.sessionId,
+        sessionId,
         direction: 'outbound',
         senderType: 'bot',
         messageType: 'text',
         rawContent: fallbackSeedText,
         normalizedText: fallbackSeedText,
-        metadataJson: JSON.stringify({ event_kind: 'fallback_seed', fallback_origin: session?.fallbackOrigin ?? null }),
+        metadataJson: JSON.stringify({ event_kind: 'fallback_seed', fallback_origin: session.fallbackOrigin ?? null }),
         createdAtMs: nowMs,
       });
 
       const activated = await this.sessionPlatformLinkRepository.activateClaimedLink({
-        sessionId: params.sessionId,
+        sessionId,
         platform: TELEGRAM_PLATFORM,
         claimToken: claim.claimToken,
         externalThreadKey,
@@ -503,24 +373,24 @@ export class TelegramNotifier {
 
       if (!activated) {
         const reread = await this.sessionPlatformLinkRepository.getActiveLinkBySessionAndPlatform(
-          params.sessionId,
+          sessionId,
           TELEGRAM_PLATFORM,
         );
         if (!reread?.externalThreadKey) {
-          throw new Error(`Failed to activate Telegram fallback topic for session ${params.sessionId}`);
+          throw new Error(`Failed to activate Telegram fallback topic for session ${sessionId}`);
         }
-
-        return { ...this.parseExternalThreadKey(reread.externalThreadKey), sessionId: params.sessionId };
+        const { chatId, topicId: canonicalTopicId } = this.parseExternalThreadKey(reread.externalThreadKey);
+        return { chatId, topicId: canonicalTopicId, sessionId };
       }
 
       return {
         chatId: this.forumGroupId,
         topicId,
-        sessionId: params.sessionId,
+        sessionId,
       };
     } catch (error) {
       await this.sessionPlatformLinkRepository.releaseExpiredOrFailedClaim({
-        sessionId: params.sessionId,
+        sessionId,
         platform: TELEGRAM_PLATFORM,
         claimToken: claim.claimToken,
         updatedAtMs: Date.now(),
@@ -540,7 +410,7 @@ export class TelegramNotifier {
     createdAtMs: number;
     statusMessageId?: string;
   }): Promise<void> {
-    if (!this.telegramHistoryRepository || !params.destination.topicId || !params.destination.sessionId) {
+    if (!this.telegramHistoryRepository) {
       return;
     }
 
@@ -577,7 +447,6 @@ export class TelegramNotifier {
       metadataJson: thread?.metadataJson ?? null,
       createdAtMs: thread?.createdAtMs ?? params.createdAtMs,
       updatedAtMs: params.createdAtMs,
-      endedAtMs: thread?.endedAtMs ?? null,
     });
   }
 
@@ -624,7 +493,8 @@ export class TelegramNotifier {
     }
 
     return [
-      `*Job* \`${result.job_id}\` \\(Task \`${result.task_id}\`\\) — *${status}*`,
+      `*Job* \`${result.job_id}\` \(Task \`${result.task_id}\`\) - *${status}*`,
+      `*Session:* \`${escapeMarkdownV2(result.session_id ?? '')}\``,
       `*Exit code:* \`${exitCode}\``,
       `*Output:*`,
       outputSection,

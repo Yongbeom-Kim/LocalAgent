@@ -1,17 +1,13 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { type MirrorTaskEvent, TaskResult } from '@local-agent/shared';
+import { TaskResult } from '@local-agent/shared';
 
 const mockNotify = vi.fn().mockResolvedValue(undefined);
 const mockNotifyStatus = vi.fn().mockResolvedValue(undefined);
-const mockNotifyResult = vi.fn().mockResolvedValue(undefined);
-const mockNotifyMirror = vi.fn().mockResolvedValue(undefined);
 
 vi.mock('../adapters/telegram-notifier', () => ({
   TelegramNotifier: vi.fn().mockImplementation(() => ({
     notify: mockNotify,
     notifyStatus: mockNotifyStatus,
-    notifyResult: mockNotifyResult,
-    notifyMirror: mockNotifyMirror,
   })),
 }));
 
@@ -31,22 +27,6 @@ const sampleResult: TaskResult = {
   stdout: 'output',
   stderr: '',
   completed_at: '2026-03-29T00:00:00.000Z',
-};
-
-const sampleMirror: MirrorTaskEvent = {
-  event_kind: 'mirror',
-  task_id: 'task-123',
-  session_id: 'session-123',
-  task_type: 'generic',
-  task_source: {
-    source: 'lark',
-    message_id: 'om_1',
-  },
-  mirror_id: 'mirror-1',
-  author_type: 'user',
-  text: 'hello',
-  origin_message_id: 'om_1',
-  emitted_at: '2026-04-06T00:00:00.000Z',
 };
 
 describe('TelegramPoller', () => {
@@ -86,7 +66,7 @@ describe('TelegramPoller', () => {
       });
     });
 
-    it('routes telegram phase events to status notifier and acks by event_id', async () => {
+    it('routes phase events to status notifier with session_id only and acks by event_id', async () => {
       mockFetch
         .mockResolvedValueOnce({
           status: 200,
@@ -95,8 +75,8 @@ describe('TelegramPoller', () => {
             event: {
               event_id: 'evt-1',
               task_id: 'task-123',
+              session_id: 'session-123',
               phase: 'queued',
-              task_source: { source: 'telegram', chat_id: '-100123', topic_id: '42', message_id: '99' },
             },
           }),
         })
@@ -108,9 +88,7 @@ describe('TelegramPoller', () => {
       await poller.pollOnce();
 
       expect(mockNotifyStatus).toHaveBeenCalledWith({
-        chatId: '-100123',
-        topicId: '42',
-        sessionId: undefined,
+        sessionId: 'session-123',
         text: '*Status:* queued',
       });
       expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/evt-1/ack', {
@@ -119,57 +97,7 @@ describe('TelegramPoller', () => {
       });
     });
 
-    it('routes mirror events to telegram delivery and acks by mirror_id', async () => {
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ event_kind: 'mirror', event: sampleMirror }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-
-      expect(mockNotifyMirror).toHaveBeenCalledWith(sampleMirror);
-      expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/results/telegram-messages/mirror-1/ack', {
-        headers: { Authorization: 'Bearer secret' },
-        method: 'POST',
-      });
-    });
-
-    it('routes telegram-sourced results into topic-aware result delivery', async () => {
-      const telegramResult: TaskResult = {
-        ...sampleResult,
-        task_source: {
-          source: 'telegram',
-          chat_id: '-100123',
-          topic_id: '42',
-          message_id: '99',
-        },
-      };
-
-      mockFetch
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ event_kind: 'result', event: telegramResult }),
-        })
-        .mockResolvedValueOnce({
-          status: 200,
-          json: () => Promise.resolve({ acknowledged: true }),
-        });
-
-      await poller.pollOnce();
-
-      expect(mockNotifyResult).toHaveBeenCalledWith({
-        chatId: '-100123',
-        topicId: '42',
-        result: telegramResult,
-      });
-    });
-
-    it('routes non-telegram bridged results through session-aware telegram delivery', async () => {
+    it('routes all result events through notifier.notify', async () => {
       const bridgedResult: TaskResult = {
         ...sampleResult,
         session_id: 'session-123',
@@ -188,8 +116,7 @@ describe('TelegramPoller', () => {
 
       await poller.pollOnce();
 
-      expect(mockNotifyResult).toHaveBeenCalledWith({ result: bridgedResult });
-      expect(mockNotify).not.toHaveBeenCalled();
+      expect(mockNotify).toHaveBeenCalledWith(bridgedResult);
     });
 
     it('does nothing when queue is empty (204)', async () => {

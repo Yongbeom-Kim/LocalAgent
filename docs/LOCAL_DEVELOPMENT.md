@@ -54,7 +54,7 @@ Copy `.env.example` before starting anything. Service endpoint variables are req
 | `TASK_DAEMON_DISABLE_MACHINE_LOCK` | unset | No; test/debug only |
 | `TASK_DAEMON_STATUS_URL` | Example: `http://127.0.0.1:7070` | Yes for `task-enrichment` |
 | `LOCAL_AGENT_DB_PATH` | Example: `/tmp/local-agent.sqlite` | Yes for `task`, `task-enrichment`, `lark-listener`, `lark-result`, `migrator` |
-| `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` | `13` | Recommended for non-migrator services |
+| `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` | `14` | Recommended for non-migrator services |
 | `LARK_APP_ID` / `LARK_APP_SECRET` / `LARK_RECIPIENT_ID` | Provided by your Lark app | Yes for `lark-listener` and `lark-result` |
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_FORUM_GROUP_ID` | Provided by your Telegram bot/forum group | Yes for Telegram daemons |
 
@@ -160,8 +160,14 @@ npm run dev --prefix packages/daemon/lark-listener
 
 ```bash
 # Any terminal (project root)
-npm run dev --prefix packages/cli -- submit --payload "hello world"
+npm run dev --prefix packages/cli -- submit \
+  --payload "hello world" \
+  --type generic \
+  --executor claude \
+  --model sonnet
 ```
+
+The CLI now always submits a canonical `session_id`. If you omit `--session-id`, it generates one locally and prints it after submission.
 
 If you want to pass the token explicitly instead of relying on `.env`:
 
@@ -195,3 +201,4 @@ Minimum setup: Terminals 1-5.
 - `packages/migrator` owns schema creation and upgrades.
 - DB-backed daemons open the shared SQLite file in WAL mode and assert `LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION` on startup.
 - If the schema version does not match, the service exits fast and requires the migrator to run first.
+- Result delivery routing is now `session_id`-only. `session_platform_links` is the outbound mapping table, and `session_bridges` no longer exists.

@@ -25,7 +25,7 @@ describe('loadEnrichmentDaemonConfig', () => {
       LOG_LEVEL: 'debug',
       TASK_DAEMON_STATUS_URL: 'http://task-daemon:7171',
       LOCAL_AGENT_DB_PATH: '/tmp/other.sqlite',
-      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '13',
+      LOCAL_AGENT_DB_EXPECTED_SCHEMA_VERSION: '14',
       ENRICHMENT_CONFIG_DIR: '/custom/config/dir',
       API_AUTH_TOKEN: 'daemon-token',
     });
@@ -35,7 +35,7 @@ describe('loadEnrichmentDaemonConfig', () => {
     expect(config.taskDaemonStatusUrl).toBe('http://task-daemon:7171');
     expect(config.enrichmentConfigDir).toBe('/custom/config/dir');
     expect(config.dbPath).toBe('/tmp/other.sqlite');
-    expect(config.expectedSchemaVersion).toBe(13);
+    expect(config.expectedSchemaVersion).toBe(14);
   });
 
   it('throws when required env vars are missing', () => {

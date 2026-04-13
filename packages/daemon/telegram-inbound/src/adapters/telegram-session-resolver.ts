@@ -57,28 +57,21 @@ export class TelegramSessionResolver {
       envelope.chat_id,
       envelope.topic_id,
     );
-    const existingLinks = await this.sessionPlatformLinkRepository.listLinksByPlatformAndExternalThreadKey(
-      'telegram',
-      externalThreadKey,
-    );
-    const existingLink = existingLinks[0] ?? null;
     const classification = classifyTelegramInboundEnvelope(
       {
         task_id: `telegram:${envelope.chat_id}:${envelope.message_id}`,
         task_type: 'telegram_inbound',
         payload: envelope.is_normalizable ? envelope.normalized_text : envelope.raw_content,
         submitted_at: new Date(envelope.occurred_at_ms).toISOString(),
+        session_id: existingThread?.sessionId ?? generateSessionId(),
       },
       envelope,
-      Boolean(existingLink ?? existingThread),
+      Boolean(existingThread),
     );
 
-    let sessionId = existingThread?.sessionId ?? existingLink?.sessionId ?? null;
-    if (!sessionId && classification.kind === 'accepted' && classification.shouldMaterializeRootState) {
-      sessionId = generateSessionId();
-    }
+    let sessionId = existingThread?.sessionId ?? null;
     if (!sessionId) {
-      sessionId = `telegram-topic:${externalThreadKey}`;
+      sessionId = generateSessionId();
     }
 
     await this.telegramHistoryRepository.recordInboundTelegramMessage({
@@ -111,15 +104,13 @@ export class TelegramSessionResolver {
       status: 'active',
       createdAtMs: existingThread?.createdAtMs ?? envelope.occurred_at_ms,
       updatedAtMs: envelope.occurred_at_ms,
-      endedAtMs: null,
     });
     await this.sessionPlatformLinkRepository.upsertLink({
       sessionId,
       platform: 'telegram',
       externalThreadKey,
-      createdAtMs: existingLink?.createdAtMs ?? existingThread?.createdAtMs ?? envelope.occurred_at_ms,
+      createdAtMs: existingThread?.createdAtMs ?? envelope.occurred_at_ms,
       updatedAtMs: envelope.occurred_at_ms,
-      endedAtMs: null,
     });
     await this.telegramHistoryRepository.upsertTelegramThreadState({
       chatId: envelope.chat_id,
@@ -133,7 +124,6 @@ export class TelegramSessionResolver {
       seedMessageId: existingThread?.seedMessageId ?? envelope.message_id,
       createdAtMs: existingThread?.createdAtMs ?? envelope.occurred_at_ms,
       updatedAtMs: envelope.occurred_at_ms,
-      endedAtMs: null,
     });
 
     return {

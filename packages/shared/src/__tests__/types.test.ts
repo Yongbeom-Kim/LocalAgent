@@ -362,6 +362,7 @@ describe('TaskResultSubmission executor metadata', () => {
       job_id: 'job-1',
       task_id: 'task-1',
       task_type: 'generic',
+      session_id: 'session-1',
       status: 'success',
       exit_code: 0,
       stdout: 'done',
@@ -430,17 +431,19 @@ describe('TaskSubmission routing fields', () => {
     const task: TaskSubmission = {
       task_type: 'cleanup',
       payload: '',
+      session_id: 'session-cleanup-1',
     };
     expect(task.executor).toBeUndefined();
   });
 
-  it('allows legacy task submissions without canonical routing fields', () => {
+  it('requires canonical routing fields on TaskSubmission', () => {
     const task: TaskSubmission = {
       task_type: 'generic',
       payload: 'hello',
+      session_id: 'session-hello-1',
     };
 
-    expect(task.session_id).toBeUndefined();
+    expect(task.session_id).toBe('session-hello-1');
     expect(task.context_ref).toBeUndefined();
   });
 
@@ -462,6 +465,58 @@ describe('TaskSubmission routing fields', () => {
       platform: 'telegram',
       root_key: '-100123:42',
     });
+  });
+});
+
+describe('session_id-only outbound routing contracts', () => {
+  it('accepts result events only when session_id is present', () => {
+    expect(isValidTaskEvent({
+      event_kind: 'result',
+      result_id: 'result-1',
+      job_id: 'job-1',
+      task_id: 'task-1',
+      task_type: 'generic',
+      session_id: 'session-1',
+      status: 'success',
+      exit_code: 0,
+      stdout: 'done',
+      stderr: '',
+      completed_at: '2026-04-09T00:00:00.000Z',
+    })).toBe(true);
+
+    expect(isValidTaskEvent({
+      event_kind: 'result',
+      result_id: 'result-1',
+      job_id: 'job-1',
+      task_id: 'task-1',
+      task_type: 'generic',
+      status: 'success',
+      exit_code: 0,
+      stdout: 'done',
+      stderr: '',
+      completed_at: '2026-04-09T00:00:00.000Z',
+    })).toBe(false);
+  });
+
+  it('accepts phase events only when session_id is present', () => {
+    expect(isValidTaskEvent({
+      event_kind: 'phase',
+      event_id: 'event-1',
+      task_id: 'task-1',
+      session_id: 'session-1',
+      task_type: 'generic',
+      phase: 'queued',
+      emitted_at: '2026-04-09T00:00:00.000Z',
+    })).toBe(true);
+
+    expect(isValidTaskEvent({
+      event_kind: 'phase',
+      event_id: 'event-1',
+      task_id: 'task-1',
+      task_type: 'generic',
+      phase: 'queued',
+      emitted_at: '2026-04-09T00:00:00.000Z',
+    })).toBe(false);
   });
 });
 
@@ -503,29 +558,10 @@ describe('telegram task source contracts', () => {
   });
 });
 
-describe('mirror task events', () => {
-  it('accepts mirror as a valid task event kind', () => {
-    expect(TASK_EVENT_KINDS).toContain('mirror');
-  });
-
-  it('accepts a mirror event payload with mirror_id and no destination', () => {
-    expect(isValidTaskEvent({
-      event_kind: 'mirror',
-      task_id: 'task-123',
-      session_id: 'session-123',
-      task_type: 'coding',
-      task_source: {
-        source: 'telegram',
-        chat_id: '-100123',
-        topic_id: '42',
-        message_id: '99',
-      },
-      mirror_id: 'mirror-123',
-      author_type: 'user',
-      text: 'hello',
-      origin_message_id: '99',
-      emitted_at: '2026-04-06T10:00:00.000Z',
-    })).toBe(true);
+describe('supported task event kinds', () => {
+  it('does not expose mirror in TASK_EVENT_KINDS', () => {
+    expect(TASK_EVENT_KINDS).toEqual(['result', 'phase']);
+    expect(isValidTaskEvent({ event_kind: 'mirror' })).toBe(false);
   });
 });
 

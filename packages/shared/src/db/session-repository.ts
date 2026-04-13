@@ -11,7 +11,6 @@ export interface UpsertSessionParams {
   status: string;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs?: number | null;
   fallbackSeedText?: string | null;
   fallbackOrigin?: string | null;
   fallbackTitleHint?: string | null;
@@ -26,7 +25,6 @@ export interface SessionRow {
   status: string;
   createdAtMs: number;
   updatedAtMs: number;
-  endedAtMs: number | null;
   fallbackSeedText: string | null;
   fallbackOrigin: string | null;
   fallbackTitleHint: string | null;
@@ -47,7 +45,6 @@ export class SessionRepository {
         status: params.status,
         createdAtMs: params.createdAtMs,
         updatedAtMs: params.updatedAtMs,
-        endedAtMs: params.endedAtMs ?? null,
         fallbackSeedText: params.fallbackSeedText ?? null,
         fallbackOrigin: params.fallbackOrigin ?? null,
         fallbackTitleHint: params.fallbackTitleHint ?? null,
@@ -74,12 +71,6 @@ export class SessionRepository {
           END`,
           createdAtMs: sql`MIN(${sessionsTable.createdAtMs}, ${params.createdAtMs})`,
           updatedAtMs: sql`MAX(${sessionsTable.updatedAtMs}, ${params.updatedAtMs})`,
-          endedAtMs: sql`CASE
-            WHEN ${params.endedAtMs ?? null} IS NULL THEN ${sessionsTable.endedAtMs}
-            WHEN ${sessionsTable.endedAtMs} IS NULL THEN ${params.endedAtMs ?? null}
-            WHEN ${params.endedAtMs ?? null} > ${sessionsTable.endedAtMs} THEN ${params.endedAtMs ?? null}
-            ELSE ${sessionsTable.endedAtMs}
-          END`,
           fallbackSeedText: sql`CASE
             WHEN ${params.updatedAtMs} >= ${sessionsTable.updatedAtMs} THEN ${params.fallbackSeedText ?? null}
             ELSE ${sessionsTable.fallbackSeedText}
@@ -109,7 +100,7 @@ export class SessionRepository {
   async markSessionEnded(sessionId: string, endedAtMs: number): Promise<void> {
     await this.db
       .update(sessionsTable)
-      .set({ endedAtMs, updatedAtMs: endedAtMs, status: 'ended' })
+      .set({ updatedAtMs: endedAtMs, status: 'ended' })
       .where(eq(sessionsTable.sessionId, sessionId));
   }
 

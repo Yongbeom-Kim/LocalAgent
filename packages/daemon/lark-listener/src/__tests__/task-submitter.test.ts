@@ -28,10 +28,10 @@ describe('TaskSubmitter', () => {
     const result = await submitter.submit(
       'generic',
       'hello',
+      { sessionId: 'sess-1', contextRef: { platform: 'lark', root_key: 'om_root1' } },
       { source: 'lark', message_id: 'om_msg1' },
       'claude',
       'sonnet',
-      { sessionId: 'sess-1', contextRef: { platform: 'lark', root_key: 'om_root1' } },
     );
     expect(result).toBe('task-abc');
     expect(mockFetch).toHaveBeenCalledWith(
@@ -61,7 +61,7 @@ describe('TaskSubmitter', () => {
       .mockRejectedValueOnce(new Error('Network error'))
       .mockRejectedValueOnce(new Error('Network error'));
 
-    const promise = submitter.submit('generic', 'hello', undefined, 'claude', 'sonnet');
+    const promise = submitter.submit('generic', 'hello', { sessionId: 'sess-1' }, undefined, 'claude', 'sonnet');
     await vi.advanceTimersByTimeAsync(1000);
     await vi.advanceTimersByTimeAsync(2000);
     await vi.advanceTimersByTimeAsync(4000);
@@ -74,7 +74,7 @@ describe('TaskSubmitter', () => {
   it('does not retry task submissions on auth failures (401/403)', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 401, json: () => Promise.resolve({}) });
 
-    const result = await submitter.submit('generic', 'hello');
+    const result = await submitter.submit('generic', 'hello', { sessionId: 'sess-1' });
 
     expect(result).toBeNull();
     expect(mockFetch).toHaveBeenCalledTimes(1);

@@ -14,6 +14,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     task_type: 'telegram_inbound',
     payload: '{}',
     submitted_at: '2026-04-06T00:00:00.000Z',
+    session_id: 'pending:telegram:-100123:42',
     ...overrides,
   };
 }

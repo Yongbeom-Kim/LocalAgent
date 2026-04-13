@@ -38,6 +38,7 @@ export class LarkCanonicalTaskBuilder {
       task_type: 'lark_inbound',
       payload: envelope.is_normalizable ? envelope.normalized_text : envelope.raw_content,
       submitted_at: new Date(envelope.occurred_at_ms).toISOString(),
+      session_id: `pending:lark:${envelope.root_message_id}`,
     };
 
     return {

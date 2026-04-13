@@ -76,6 +76,7 @@ describe('POST /tasks', () => {
         payload: 'hello',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
     expect(res.body.task_id).toBeDefined();
@@ -89,6 +90,7 @@ describe('POST /tasks', () => {
       submitted_at: expect.any(String),
       executor: 'claude',
       executor_model: 'sonnet',
+      session_id: 'session-123',
     });
     expect(mockSessionRepository.upsertSession).not.toHaveBeenCalled();
   });
@@ -125,7 +127,6 @@ describe('POST /tasks', () => {
       fallbackTitleHint: 'Morning review',
       createdAtMs: expect.any(Number),
       updatedAtMs: expect.any(Number),
-      endedAtMs: null,
     }));
     expect(mockSessionRepository.upsertSession.mock.invocationCallOrder[0]).toBeLessThan(
       mockRabbitMQ.publish.mock.invocationCallOrder[0],
@@ -170,19 +171,16 @@ describe('POST /tasks', () => {
     expect(mockSessionRepository.upsertSession).not.toHaveBeenCalled();
   });
 
-  it('returns 400 when session metadata is present without session_id', async () => {
+  it('returns 400 when session_id is missing', async () => {
     const app = buildApp();
 
     const res = await authedRequest(request(app).post('/tasks')).send({
       task_type: 'generic',
       payload: 'hello',
-      session: {
-        fallbackSeedText: 'hello',
-      },
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('session_id is required when session metadata is provided');
+    expect(res.body.error).toBe('session_id is required and must be a non-empty string');
     expect(mockSessionRepository.upsertSession).not.toHaveBeenCalled();
   });
 
@@ -219,16 +217,16 @@ describe('POST /tasks', () => {
     );
   });
 
-  it('returns 201 without session_id/context_ref for legacy callers', async () => {
+  it('returns 400 when session_id is an empty string', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks')).send({
       task_type: 'generic',
       payload: 'hello',
+      session_id: '',
     });
 
-    expect(res.status).toBe(201);
-    expect(res.body.session_id).toBeUndefined();
-    expect(res.body.context_ref).toBeUndefined();
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('session_id is required and must be a non-empty string');
   });
 
   it('returns 503 when broker publish applies backpressure', async () => {
@@ -240,6 +238,7 @@ describe('POST /tasks', () => {
         payload: 'hello',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
       });
 
     expect(res.status).toBe(503);
@@ -251,7 +250,7 @@ describe('POST /tasks', () => {
   it('returns 503 when task publish cannot reconnect to RabbitMQ', async () => {
     mockRabbitMQ.publish.mockRejectedValueOnce(new RabbitMQUnavailableError());
     const app = buildApp();
-    const res = await authedRequest(request(app).post('/tasks')).send({ task_type: 'generic', payload: 'hello' });
+    const res = await authedRequest(request(app).post('/tasks')).send({ task_type: 'generic', payload: 'hello', session_id: 'session-123' });
     expect(res.status).toBe(503);
     expect(res.body).toEqual({ error: 'RabbitMQ temporarily unavailable' });
   });
@@ -259,14 +258,14 @@ describe('POST /tasks', () => {
   it('returns 400 when task_type missing', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))
-      .send({ payload: 'hello' });
+      .send({ payload: 'hello', session_id: 'session-123' });
     expect(res.status).toBe(400);
   });
 
   it('returns 400 when payload missing', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))
-      .send({ task_type: 'generic' });
+      .send({ task_type: 'generic', session_id: 'session-123' });
     expect(res.status).toBe(400);
   });
 
@@ -279,7 +278,7 @@ describe('POST /tasks', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.error).toBe('session_id must be a string if provided');
+    expect(res.body.error).toBe('session_id is required and must be a non-empty string');
   });
 
   it('returns 400 when context_ref is not an object', async () => {
@@ -287,6 +286,7 @@ describe('POST /tasks', () => {
     const res = await authedRequest(request(app).post('/tasks')).send({
       task_type: 'generic',
       payload: 'hello',
+      session_id: 'session-123',
       context_ref: 'bad',
     });
 
@@ -299,6 +299,7 @@ describe('POST /tasks', () => {
     const res = await authedRequest(request(app).post('/tasks')).send({
       task_type: 'generic',
       payload: 'hello',
+      session_id: 'session-123',
       context_ref: {
         platform: 'discord',
         root_key: 'root-1',
@@ -314,6 +315,7 @@ describe('POST /tasks', () => {
     const res = await authedRequest(request(app).post('/tasks')).send({
       task_type: 'generic',
       payload: 'hello',
+      session_id: 'session-123',
       context_ref: {
         platform: 'telegram',
         root_key: 123,
@@ -333,6 +335,7 @@ describe('POST /tasks', () => {
         payload: 'hello',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
         task_source: taskSource,
       });
     expect(res.status).toBe(201);
@@ -350,6 +353,7 @@ describe('POST /tasks', () => {
         payload: 'hello',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
     expect(res.body.task_source).toBeUndefined();
@@ -363,6 +367,7 @@ describe('POST /tasks', () => {
         payload: 'hello',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
         task_source: { source: 'unknown' },
       });
     expect(res.status).toBe(400);
@@ -376,6 +381,7 @@ describe('POST /tasks', () => {
         payload: 'hello',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
         task_source: { source: 'lark' },
       });
     expect(res.status).toBe(400);
@@ -393,6 +399,7 @@ describe('POST /tasks', () => {
       .send({
         task_type: 'generic',
         payload: 'hello',
+        session_id: 'session-123',
         task_source: taskSource,
       });
 
@@ -408,6 +415,7 @@ describe('POST /tasks', () => {
         payload: 'review this diff',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
   });
@@ -415,21 +423,21 @@ describe('POST /tasks', () => {
   it('accepts non-control task with empty task_type for pipeline help', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))
-      .send({ task_type: '', payload: '' });
+      .send({ task_type: '', payload: '', session_id: 'session-123' });
     expect(res.status).toBe(201);
   });
 
   it('accepts non-control task with task_type only', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))
-      .send({ task_type: 'localagent', payload: '' });
+      .send({ task_type: 'localagent', payload: '', session_id: 'session-123' });
     expect(res.status).toBe(201);
   });
 
   it('accepts non-control task with executor but no model', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))
-      .send({ task_type: 'localagent', payload: '', executor: 'cursor' });
+      .send({ task_type: 'localagent', payload: '', executor: 'cursor', session_id: 'session-123' });
     expect(res.status).toBe(201);
   });
 
@@ -441,6 +449,7 @@ describe('POST /tasks', () => {
         payload: '',
         executor: 'foo',
         executor_model: 'bar',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
   });
@@ -451,6 +460,7 @@ describe('POST /tasks', () => {
       .send({
         task_type: 'localagent',
         payload: '',
+        session_id: 'session-123',
         executor_model: 'auto',
       });
     expect(res.status).toBe(400);
@@ -465,6 +475,7 @@ describe('POST /tasks', () => {
         payload: '',
         executor: 'foo',
         executor_model: 'bar',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(400);
   });
@@ -472,7 +483,7 @@ describe('POST /tasks', () => {
   it('accepts non-control task when executor is omitted (partial routing)', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))
-      .send({ task_type: 'code_review', payload: 'review this diff' });
+      .send({ task_type: 'code_review', payload: 'review this diff', session_id: 'session-123' });
     expect(res.status).toBe(201);
   });
 
@@ -484,6 +495,7 @@ describe('POST /tasks', () => {
         payload: '   ',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
   });
@@ -491,7 +503,7 @@ describe('POST /tasks', () => {
   it('returns 201 when control task omits executor/model', async () => {
     const app = buildApp();
     const res = await authedRequest(request(app).post('/tasks'))
-      .send({ task_type: 'new_instance', payload: '' });
+      .send({ task_type: 'new_instance', payload: '', session_id: 'session-123' });
     expect(res.status).toBe(201);
   });
 
@@ -503,6 +515,7 @@ describe('POST /tasks', () => {
         payload: '',
         executor: 'claude',
         executor_model: 'sonnet',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
   });
@@ -515,6 +528,7 @@ describe('POST /tasks', () => {
         payload: '',
         executor: 'ttcodex',
         executor_model: 'gpt-5.4',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
   });
@@ -526,6 +540,7 @@ describe('POST /tasks', () => {
         task_type: 'code_review',
         payload: 'review this diff',
         executor: 'claude',
+        session_id: 'session-123',
       });
     expect(res.status).toBe(201);
   });
@@ -538,6 +553,7 @@ describe('POST /tasks', () => {
         payload: 'test',
         executor: 'cursor',
         executor_model: 'xyz',
+        session_id: 'session-123',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       });
 
@@ -559,6 +575,7 @@ describe('POST /tasks', () => {
         payload: '',
         executor: 'foo',
         executor_model: 'bar',
+        session_id: 'session-123',
         task_source: { source: 'lark', message_id: 'om_msg1' },
       });
 
@@ -574,6 +591,7 @@ describe('POST /tasks', () => {
         payload: 'review this diff',
         executor: 'foo',
         executor_model: 'bar',
+        session_id: 'session-123',
       });
 
     expect(res.status).toBe(201);
@@ -587,6 +605,7 @@ describe('POST /tasks', () => {
         payload: 'review this diff',
         executor: 'cursor',
         executor_model: 'xyz',
+        session_id: 'session-123',
       });
 
     expect(res.status).toBe(201);

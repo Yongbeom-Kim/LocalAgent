@@ -36,8 +36,6 @@ export {
   type TaskResultSubmission,
   type TaskResult,
   type TaskResultEvent,
-  type MirrorTaskEventSubmission,
-  type MirrorTaskEvent,
   type TaskEvent,
   isValidTaskEvent,
   type ResultStatus,
@@ -152,13 +150,11 @@ export {
   telegramMessagesTable,
   sessionsTable,
   sessionPlatformLinksTable,
-  sessionBridgesTable,
 } from './db/schema';
 export { LarkHistoryRepository } from './db/lark-history-repository';
 export { TelegramHistoryRepository } from './db/telegram-history-repository';
 export { SessionRepository } from './db/session-repository';
 export { SessionPlatformLinkRepository } from './db/session-platform-link-repository';
-export { SessionBridgeRepository } from './db/session-bridge-repository';
 export { formatLarkPromptHistory, formatTelegramPromptHistory } from './db/history-format';
 export type { SqliteConfig, SqliteClient } from './db/types';
 export type {
@@ -181,14 +177,12 @@ export type {
 export type { SessionRow, UpsertSessionParams } from './db/session-repository';
 export type {
   SessionPlatform,
-  SessionPlatformLinkStatus,
   SessionPlatformLinkRow,
   ClaimPendingSessionPlatformLinkParams,
   ActivateClaimedSessionPlatformLinkParams,
   ReleaseSessionPlatformClaimParams,
   UpsertSessionPlatformLinkParams,
 } from './db/session-platform-link-repository';
-export type { SessionBridgeRow, UpsertSessionBridgeParams } from './db/session-bridge-repository';
 
 export {
   CLEANUP_SUBTREE_PAYLOAD_VERSION,

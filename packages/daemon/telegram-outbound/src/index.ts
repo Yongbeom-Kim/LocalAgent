@@ -2,7 +2,6 @@ import { loadTelegramDaemonConfig } from './config';
 import {
   SessionPlatformLinkRepository,
   SessionRepository,
-  SessionBridgeRepository,
   TelegramHistoryRepository,
   assertExpectedSchemaVersion,
   createLogger,
@@ -36,13 +35,11 @@ async function main() {
   const telegramHistoryRepository = new TelegramHistoryRepository(sqliteClient.db);
   const sessionRepository = new SessionRepository(sqliteClient.db);
   const sessionPlatformLinkRepository = new SessionPlatformLinkRepository(sqliteClient.db);
-  const sessionBridgeRepository = new SessionBridgeRepository(sqliteClient.db);
 
   const statefulNotifier = new TelegramNotifier(
     config.telegramBotToken,
     config.telegramForumGroupId,
     telegramHistoryRepository,
-    sessionBridgeRepository,
     sessionRepository,
     sessionPlatformLinkRepository,
     new TelegramTopicManager(config.telegramBotToken),

@@ -62,6 +62,7 @@ function createTask(overrides?: Partial<Task>): Task {
     task_type: 'code_review',
     payload: 'Review this',
     submitted_at: '2026-03-29T00:00:00.000Z',
+    session_id: 'generated-session-id',
     executor: 'claude',
     executor_model: 'sonnet',
     ...overrides,
@@ -278,6 +279,7 @@ describe('EnrichmentPoller', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'code_review',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: formatUnknownTaskTypeMessage('code_review', ['deploy', 'code_review', 'default']),
@@ -325,6 +327,7 @@ describe('EnrichmentPoller', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'code_review',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: formatUnknownTaskTypeMessage('bad', ['generic', 'code_review']),
@@ -377,6 +380,7 @@ describe('EnrichmentPoller', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'localagent',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'Invalid model "xyz" for executor "cursor". Available models: auto, composer-2-fast',
@@ -423,6 +427,7 @@ describe('EnrichmentPoller', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: '',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: formatMissingTaskTypeMessage(['generic', 'localagent']),
@@ -471,6 +476,7 @@ describe('EnrichmentPoller', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'localagent',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: formatMissingPayloadMessage(),
@@ -505,6 +511,7 @@ describe('EnrichmentPoller', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'cleanup',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'Cleanup tasks require a Lark task source to resolve the existing session.',
@@ -683,6 +690,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'code_review',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: formatThreadTaskCommandRejectedMessage(),
@@ -696,7 +704,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
   });
 
-  it('generates new session_id when no thread', async () => {
+  it('uses explicit session_id when no thread', async () => {
     const task = createTask({ payload: 'hello' });
     const jobSubmission = createJobSubmission({ payload: 'hello', session_id: 'generated-session-id' });
     mockEnrich.mockReturnValue({ type: 'enriched', job: jobSubmission } as EnrichmentResult);
@@ -708,12 +716,12 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockThreadFetcher.fetchThreadContext).not.toHaveBeenCalled();
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
-  it('generates new session_id when thread has no inherited session_id', async () => {
+  it('keeps explicit session_id when thread has no inherited session_id', async () => {
     const task = createTask({
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'hello',
@@ -729,11 +737,11 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
-  it('generates new session_id when thread fetch returns null', async () => {
+  it('keeps explicit session_id when thread fetch returns null', async () => {
     const task = createTask({
       task_source: { source: 'lark', message_id: 'om_msg1' },
       payload: 'hello',
@@ -749,7 +757,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockEnrich).toHaveBeenCalledWith(expect.objectContaining({ payload: 'hello' }), 'generated-session-id', undefined);
   });
 
@@ -803,6 +811,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'gc',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'The /gc command can only be used as a base message, not inside a thread.',
@@ -847,6 +856,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'gc',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'The /gc command can only be used as a base message, not inside a thread.',
@@ -860,7 +870,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     });
   });
 
-  it('includes generated session_id, task_source, and placeholder executors in gc job', async () => {
+  it('includes explicit session_id, task_source, and placeholder executors in gc job', async () => {
     const task = createTask({
       task_type: 'gc',
       payload: '24h',
@@ -875,7 +885,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
 
     await poller.pollOnce();
 
-    expect(mockGenerateSessionId).toHaveBeenCalledTimes(1);
+    expect(mockGenerateSessionId).not.toHaveBeenCalled();
     expect(mockEnrich).not.toHaveBeenCalled();
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
       method: 'POST',
@@ -917,6 +927,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'cleanup',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: formatThreadOnlyCommandMessage('/end'),
@@ -957,6 +968,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'cleanup',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'Cleanup tasks in existing threads require an inherited session_id from the thread root.',
@@ -1000,9 +1012,9 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
     expect(mockEnrich).toHaveBeenCalledWith(
       expect.objectContaining({
         task_type: 'cleanup',
-        payload: buildCleanupSubtreePayload(['inherited-session-id']),
+        payload: buildCleanupSubtreePayload(['generated-session-id']),
       }),
-      'inherited-session-id',
+      'generated-session-id',
       undefined,
     );
     expect(mockFetch).toHaveBeenNthCalledWith(2, 'http://localhost:3000/jobs', {
@@ -1145,6 +1157,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'status',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'The /status command can only be used inside a thread.',
@@ -1183,6 +1196,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'status',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'The /status command requires an existing session in this thread.',
@@ -1221,6 +1235,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'status',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'Cannot check /status because the inherited thread metadata is incomplete.',
@@ -1357,6 +1372,7 @@ describe('EnrichmentPoller with ThreadContextFetcher', () => {
         job_id: 'task-123',
         task_id: 'task-123',
         task_type: 'status',
+        session_id: 'generated-session-id',
         status: 'failure',
         exit_code: null,
         stdout: 'Failed to check live executor status. Please retry in the thread.',
@@ -1384,7 +1400,6 @@ describe('TelegramThreadContextFetcher', () => {
         metadataJson: null,
         createdAtMs: 100,
         updatedAtMs: 100,
-        endedAtMs: null,
       }),
       listTelegramMessagesForTopic: vi.fn().mockResolvedValue([
         {
@@ -1529,9 +1544,10 @@ describe('EnrichmentPoller canonical ingress flow', () => {
     await poller.pollOnce();
 
     expect(telegramThreadContextFetcher.fetchThreadContext).toHaveBeenCalledWith('-100', '42');
-    expect(mockFetch).not.toHaveBeenCalledWith('http://localhost:3000/results', expect.objectContaining({
-      body: expect.stringContaining('"event_kind":"mirror"'),
-    }));
+    expect(mockFetch).not.toHaveBeenCalledWith(
+      'http://localhost:3000/results',
+      expect.objectContaining({ body: expect.stringContaining('"author_type"') }),
+    );
   });
 
   it('keeps explicit child session ids on telegram topics and persists root lineage', async () => {

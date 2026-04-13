@@ -6,7 +6,6 @@ import {
   SESSION_BASE_DIR,
   createLogger,
   LarkHistoryRepository,
-  SessionBridgeRepository,
   SessionPlatformLinkRepository,
   SessionRepository,
   TelegramHistoryRepository,
@@ -85,16 +84,6 @@ const deleteRowsBySessionIdFromDb: DeleteRowsBySessionId = async (sessionId: str
         throw error;
       }
     }
-
-    try {
-      const bridgeRepository = new SessionBridgeRepository(client.db);
-      await bridgeRepository.deleteBridgeByRootSessionId(sessionId);
-    } catch (error) {
-      if (!isMissingTableError(error)) {
-        throw error;
-      }
-    }
-
     try {
       await sessionPlatformLinkRepository.deleteLinksBySessionIds(sessionIds);
     } catch (error) {
@@ -145,6 +134,7 @@ export class GcExecutor {
         job_id: job.job_id,
         task_id: job.task_id,
         task_type: job.task_type,
+        session_id: job.session_id,
         ...(job.task_source ? { task_source: job.task_source } : {}),
         status: 'success',
         exit_code: 0,
@@ -202,6 +192,7 @@ export class GcExecutor {
       job_id: job.job_id,
       task_id: job.task_id,
       task_type: job.task_type,
+      session_id: job.session_id,
       ...(job.task_source ? { task_source: job.task_source } : {}),
       status: 'success',
       exit_code: 0,

@@ -24,6 +24,7 @@ function createTask(overrides?: Partial<Task>): Task {
     task_type: 'code_review',
     payload: 'Review this code',
     submitted_at: '2026-03-29T00:00:00.000Z',
+    session_id: TEST_SESSION_ID,
     executor: 'claude',
     executor_model: 'sonnet',
     ...overrides,

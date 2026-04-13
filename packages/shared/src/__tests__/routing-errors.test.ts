@@ -80,6 +80,7 @@ describe('progressive /task help', () => {
     const task: TaskSubmission = {
       task_type: 'localagent',
       payload: '',
+      session_id: 'session-localagent-1',
       executor: 'foo',
     };
     expect(task.executor).toBe('foo');

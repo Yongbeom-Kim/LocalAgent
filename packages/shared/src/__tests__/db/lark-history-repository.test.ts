@@ -147,7 +147,6 @@ describe('LarkHistoryRepository', () => {
         status: 'active',
         createdAtMs: 1000,
         updatedAtMs: 1200,
-        endedAtMs: null,
       });
 
       const thread = await repository.getLarkThreadByRootMessageId('om_root_promote');
@@ -512,7 +511,6 @@ describe('LarkHistoryRepository', () => {
         status: 'active',
         createdAtMs: 100,
         updatedAtMs: 100,
-        endedAtMs: null,
       });
 
       await repository.upsertLarkThreadState({
@@ -527,7 +525,6 @@ describe('LarkHistoryRepository', () => {
         status: 'ended',
         createdAtMs: 150,
         updatedAtMs: 150,
-        endedAtMs: 150,
       });
 
       await repository.upsertLarkThreadState({
@@ -542,7 +539,6 @@ describe('LarkHistoryRepository', () => {
         status: 'active',
         createdAtMs: 300,
         updatedAtMs: 300,
-        endedAtMs: null,
       });
 
       await expect(repository.getStaleLarkSessionIdsBeforeUpdatedAt(200)).resolves.toEqual([
@@ -578,7 +574,6 @@ describe('LarkHistoryRepository', () => {
         status: 'active',
         createdAtMs: 500,
         updatedAtMs: 500,
-        endedAtMs: null,
       });
 
       await repository.upsertLarkThreadState({
@@ -593,7 +588,6 @@ describe('LarkHistoryRepository', () => {
         status: 'ended',
         createdAtMs: 600,
         updatedAtMs: 600,
-        endedAtMs: 600,
       });
 
       await expect(repository.getStaleLarkSessionIdsBeforeUpdatedAt(400)).resolves.toEqual([]);
@@ -616,8 +610,7 @@ async function bootstrapLarkTables(connection: Awaited<ReturnType<typeof createS
       executor_model TEXT NOT NULL,
       status TEXT NOT NULL,
       created_at_ms INTEGER NOT NULL,
-      updated_at_ms INTEGER NOT NULL,
-      ended_at_ms INTEGER
+      updated_at_ms INTEGER NOT NULL
     )
   `);
 

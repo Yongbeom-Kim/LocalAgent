@@ -17,6 +17,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
     task_type: 'lark_inbound',
     payload: '{}',
     submitted_at: '2026-04-05T00:00:00.000Z',
+    session_id: 'pending:lark:om_root',
     ...overrides,
   };
 }

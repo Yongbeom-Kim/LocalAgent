@@ -5,7 +5,6 @@ import {
   buildApiAuthHeaders,
   createLogger,
   GC_THREAD_REJECTION_REASON,
-  generateSessionId,
   isControlTaskType,
   formatThreadOnlyCommandMessage,
   formatThreadTaskCommandRejectedMessage,
@@ -314,7 +313,7 @@ export class EnrichmentPoller {
       }
 
       if (isGcTask) {
-        const sessionId = task.session_id ?? generateSessionId();
+        const sessionId = task.session_id;
 
         const jobSubmission: JobSubmission = {
           task_id: task.task_id,
@@ -530,11 +529,11 @@ export class EnrichmentPoller {
         return fetchedWork;
       }
 
-      const explicitSessionId = task.session_id ?? null;
+      const explicitSessionId = task.session_id;
       const inheritedSessionId = threadResult?.kind === 'thread'
         ? (threadResult.inheritedSessionId ?? null)
         : null;
-      const sessionId = explicitSessionId ?? inheritedSessionId ?? generateSessionId();
+      const sessionId = explicitSessionId || inheritedSessionId || task.session_id;
 
       if (explicitSessionId) {
         logger.info({ task_id: task.task_id, explicit_session_id: sessionId }, 'Using explicit session_id for enrichment');
@@ -639,7 +638,6 @@ export class EnrichmentPoller {
       status: 'active',
       createdAtMs: timestampMs,
       updatedAtMs: timestampMs,
-      endedAtMs: null,
     });
   }
 
@@ -679,6 +677,7 @@ export class EnrichmentPoller {
         job_id: task.task_id,
         task_id: task.task_id,
         task_type: task.task_type,
+        session_id: task.session_id,
         status: 'failure' as const,
         exit_code: null,
         stdout: reason,

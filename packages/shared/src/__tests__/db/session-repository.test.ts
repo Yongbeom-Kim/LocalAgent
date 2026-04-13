@@ -43,7 +43,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAtMs: 100,
         updatedAtMs: 100,
-        endedAtMs: null,
         fallbackSeedText: 'daily summary payload',
         fallbackOrigin: 'scheduler',
         fallbackTitleHint: null,
@@ -57,7 +56,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         createdAtMs: 200,
         updatedAtMs: 300,
-        endedAtMs: 300,
         fallbackSeedText: 'daily summary payload v2',
         fallbackOrigin: 'canonical-task',
         fallbackTitleHint: 'Daily Summary',
@@ -72,7 +70,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         createdAtMs: 100,
         updatedAtMs: 300,
-        endedAtMs: 300,
         fallbackSeedText: 'daily summary payload v2',
         fallbackOrigin: 'canonical-task',
         fallbackTitleHint: 'Daily Summary',
@@ -82,7 +79,7 @@ describe('SessionRepository', () => {
     }
   });
 
-  it('marks a canonical session as ended', async () => {
+  it('marks a canonical session as ended without a tombstone timestamp', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-db-test-'));
     tempDirs.push(tempDir);
 
@@ -113,7 +110,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         createdAtMs: 1000,
         updatedAtMs: 1200,
-        endedAtMs: 1200,
         fallbackSeedText: null,
         fallbackOrigin: null,
         fallbackTitleHint: null,
@@ -141,7 +137,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         createdAtMs: 100,
         updatedAtMs: 300,
-        endedAtMs: 300,
         fallbackSeedText: 'ship production',
         fallbackOrigin: 'scheduler',
         fallbackTitleHint: 'Prod Deploy',
@@ -155,7 +150,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAtMs: 200,
         updatedAtMs: 150,
-        endedAtMs: null,
         fallbackSeedText: 'stale payload',
         fallbackOrigin: 'canonical-task',
         fallbackTitleHint: 'Stale Deploy',
@@ -170,7 +164,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         createdAtMs: 100,
         updatedAtMs: 300,
-        endedAtMs: 300,
         fallbackSeedText: 'ship production',
         fallbackOrigin: 'scheduler',
         fallbackTitleHint: 'Prod Deploy',
@@ -216,7 +209,6 @@ describe('SessionRepository', () => {
         status: 'active',
         createdAtMs: 150,
         updatedAtMs: 150,
-        endedAtMs: null,
         fallbackSeedText: null,
         fallbackOrigin: null,
         fallbackTitleHint: null,
@@ -291,7 +283,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         createdAtMs: 120,
         updatedAtMs: 200,
-        endedAtMs: 200,
         fallbackSeedText: null,
         fallbackOrigin: null,
         fallbackTitleHint: null,
@@ -306,7 +297,6 @@ describe('SessionRepository', () => {
         status: 'ended',
         createdAtMs: 120,
         updatedAtMs: 200,
-        endedAtMs: 200,
         fallbackSeedText: null,
         fallbackOrigin: null,
         fallbackTitleHint: null,
@@ -380,7 +370,6 @@ async function bootstrapSessionsTable(connection: Awaited<ReturnType<typeof crea
       status TEXT NOT NULL,
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
-      ended_at_ms INTEGER,
       fallback_seed_text TEXT,
       fallback_origin TEXT,
       fallback_title_hint TEXT,

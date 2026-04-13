@@ -16,7 +16,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 export interface CanonicalTaskSubmitOptions {
-  sessionId?: string;
+  sessionId: string;
   contextRef?: TaskContextRef;
 }
 
@@ -32,18 +32,18 @@ export class TaskSubmitter {
   async submit(
     taskType: string,
     payload: string,
+    options: CanonicalTaskSubmitOptions,
     taskSource?: TaskSource,
     executor?: string,
     executorModel?: string,
-    options: CanonicalTaskSubmitOptions = {},
   ): Promise<string | null> {
     const body: TaskSubmission = {
       task_type: taskType,
       payload,
+      session_id: options.sessionId,
       ...(executor !== undefined ? { executor } : {}),
       ...(executorModel !== undefined ? { executor_model: executorModel } : {}),
       ...(taskSource ? { task_source: taskSource } : {}),
-      ...(options.sessionId ? { session_id: options.sessionId } : {}),
       ...(options.contextRef ? { context_ref: options.contextRef } : {}),
     };
 

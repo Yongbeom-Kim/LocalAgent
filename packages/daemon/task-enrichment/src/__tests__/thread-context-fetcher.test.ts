@@ -81,7 +81,6 @@ describe('ThreadContextFetcher', () => {
       status: 'active',
       createdAtMs: 100,
       updatedAtMs: 300,
-      endedAtMs: null,
     });
     repository.getLarkMessagesForThread.mockResolvedValue([
       {
@@ -165,7 +164,6 @@ describe('ThreadContextFetcher', () => {
       status: 'active',
       createdAtMs: 100,
       updatedAtMs: 500,
-      endedAtMs: null,
     });
     repository.getLarkMessagesForThread.mockResolvedValue([
       {
@@ -251,7 +249,6 @@ describe('ThreadContextFetcher', () => {
       status: 'audit_only',
       createdAtMs: 100,
       updatedAtMs: 200,
-      endedAtMs: null,
     });
 
     const result = await fetcher.fetchThreadContext('om_reply_pending', validTypes);

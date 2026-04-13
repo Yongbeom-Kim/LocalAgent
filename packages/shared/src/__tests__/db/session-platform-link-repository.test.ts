@@ -44,25 +44,26 @@ describe('SessionPlatformLinkRepository', () => {
         sessionId: 'session-1',
         platform: 'lark',
         externalThreadKey: 'om_root_1',
-        linkStatus: 'active',
         claimToken: null,
         claimExpiresAtMs: null,
         createdAtMs: 100,
         updatedAtMs: 100,
-        endedAtMs: null,
       });
 
       expect(await repository.getLinkByPlatformAndExternalThreadKey('telegram', '-100123:42')).toEqual({
         sessionId: 'session-1',
         platform: 'telegram',
         externalThreadKey: '-100123:42',
-        linkStatus: 'active',
         claimToken: null,
         claimExpiresAtMs: null,
         createdAtMs: 100,
         updatedAtMs: 100,
-        endedAtMs: null,
       });
+
+      const linkColumns = await client.connection.execute('PRAGMA table_info(session_platform_links)');
+      const linkColumnNames = linkColumns.rows.map((row) => String(row.name));
+      expect(linkColumnNames).not.toContain('link_status');
+      expect(linkColumnNames).not.toContain('ended_at_ms');
 
       const sessionsColumns = await client.connection.execute('PRAGMA table_info(sessions)');
       const sessionColumnNames = sessionsColumns.rows.map((row) => String(row.name));
@@ -96,12 +97,10 @@ describe('SessionPlatformLinkRepository', () => {
         sessionId: 'session-2',
         platform: 'lark',
         externalThreadKey: null,
-        linkStatus: 'pending',
         claimToken: 'claim-a',
         claimExpiresAtMs: 500,
         createdAtMs: 200,
         updatedAtMs: 200,
-        endedAtMs: null,
       });
 
       const blockedClaim = await repository.claimPendingLink({
@@ -126,12 +125,10 @@ describe('SessionPlatformLinkRepository', () => {
         sessionId: 'session-2',
         platform: 'lark',
         externalThreadKey: null,
-        linkStatus: 'pending',
         claimToken: 'claim-b',
         claimExpiresAtMs: 900,
         createdAtMs: 200,
         updatedAtMs: 600,
-        endedAtMs: null,
       });
 
       expect(
@@ -158,19 +155,17 @@ describe('SessionPlatformLinkRepository', () => {
         sessionId: 'session-2',
         platform: 'lark',
         externalThreadKey: 'om_root_new',
-        linkStatus: 'active',
         claimToken: null,
         claimExpiresAtMs: null,
         createdAtMs: 200,
         updatedAtMs: 650,
-        endedAtMs: null,
       });
     } finally {
       client.close();
     }
   });
 
-  it('releases failed claims, preserves active uniqueness, and marks links ended', async () => {
+  it('releases failed claims by deleting the pending row and allows shared external keys', async () => {
     const tempDir = mkdtempSync(join(tmpdir(), 'local-agent-session-link-db-test-'));
     tempDirs.push(tempDir);
 
@@ -197,22 +192,40 @@ describe('SessionPlatformLinkRepository', () => {
           status,
           created_at_ms,
           updated_at_ms,
-          ended_at_ms,
           fallback_seed_text,
           fallback_origin,
           fallback_title_hint
-        ) VALUES ('session-3', 'coding', NULL, NULL, 'active', 300, 300, NULL, NULL, NULL, NULL)
+        ) VALUES ('session-3', 'coding', NULL, NULL, 'active', 300, 300, NULL, NULL, NULL)
       `);
 
-      await expect(
-        repository.upsertSessionPlatformLink({
+      await repository.upsertSessionPlatformLink({
+        sessionId: 'session-3',
+        platform: 'lark',
+        externalThreadKey: 'om_root_new',
+        createdAtMs: 300,
+        updatedAtMs: 300,
+      });
+
+      expect(await repository.listLinksByPlatformAndExternalThreadKey('lark', 'om_root_new')).toEqual([
+        {
+          sessionId: 'session-2',
+          platform: 'lark',
+          externalThreadKey: 'om_root_new',
+          claimToken: null,
+          claimExpiresAtMs: null,
+          createdAtMs: 200,
+          updatedAtMs: 200,
+        },
+        {
           sessionId: 'session-3',
           platform: 'lark',
           externalThreadKey: 'om_root_new',
+          claimToken: null,
+          claimExpiresAtMs: null,
           createdAtMs: 300,
           updatedAtMs: 300,
-        }),
-      ).rejects.toThrow(/Failed query: insert into "session_platform_links"/);
+        },
+      ]);
 
       const claimed = await repository.claimPendingLink({
         sessionId: 'session-1',
@@ -221,7 +234,7 @@ describe('SessionPlatformLinkRepository', () => {
         claimExpiresAtMs: 800,
         nowMs: 400,
       });
-      expect(claimed.linkStatus).toBe('pending');
+      expect(claimed.externalThreadKey).toBeNull();
 
       expect(
         await repository.releaseExpiredOrFailedClaim({
@@ -232,33 +245,11 @@ describe('SessionPlatformLinkRepository', () => {
         }),
       ).toBe(true);
 
-      expect(await repository.getLinkBySessionAndPlatform('session-1', 'telegram')).toEqual({
-        sessionId: 'session-1',
-        platform: 'telegram',
-        externalThreadKey: null,
-        linkStatus: 'pending',
-        claimToken: null,
-        claimExpiresAtMs: null,
-        createdAtMs: 400,
-        updatedAtMs: 450,
-        endedAtMs: null,
-      });
+      expect(await repository.getLinkBySessionAndPlatform('session-1', 'telegram')).toBeNull();
 
-      await repository.markSessionPlatformLinkEnded('session-2', 'lark', 600);
-
-      expect(await repository.getLinkBySessionAndPlatform('session-2', 'lark')).toEqual({
-        sessionId: 'session-2',
-        platform: 'lark',
-        externalThreadKey: 'om_root_new',
-        linkStatus: 'ended',
-        claimToken: null,
-        claimExpiresAtMs: null,
-        createdAtMs: 200,
-        updatedAtMs: 600,
-        endedAtMs: 600,
-      });
-
+      await repository.deleteLinksBySessionId('session-2');
       expect(await repository.getActiveLinkBySessionAndPlatform('session-2', 'lark')).toBeNull();
+      expect(await repository.getLinkBySessionAndPlatform('session-2', 'lark')).toBeNull();
     } finally {
       client.close();
     }
@@ -277,7 +268,6 @@ async function bootstrapSessionAndLinkTables(
       status TEXT NOT NULL,
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
-      ended_at_ms INTEGER,
       fallback_seed_text TEXT,
       fallback_origin TEXT,
       fallback_title_hint TEXT
@@ -289,21 +279,18 @@ async function bootstrapSessionAndLinkTables(
       session_id TEXT NOT NULL,
       platform TEXT NOT NULL,
       external_thread_key TEXT,
-      link_status TEXT NOT NULL DEFAULT 'active',
       claim_token TEXT,
       claim_expires_at_ms INTEGER,
       created_at_ms INTEGER NOT NULL,
       updated_at_ms INTEGER NOT NULL,
-      ended_at_ms INTEGER,
       PRIMARY KEY (session_id, platform),
       FOREIGN KEY (session_id) REFERENCES sessions(session_id)
     )
   `);
 
   await connection.execute(`
-    CREATE UNIQUE INDEX IF NOT EXISTS session_platform_links_platform_external_thread_key_unique
+    CREATE INDEX IF NOT EXISTS idx_session_platform_links_platform_external_thread_key
     ON session_platform_links (platform, external_thread_key)
-    WHERE external_thread_key IS NOT NULL AND link_status = 'active'
   `);
 
   await connection.execute(`
@@ -315,11 +302,10 @@ async function bootstrapSessionAndLinkTables(
       status,
       created_at_ms,
       updated_at_ms,
-      ended_at_ms,
       fallback_seed_text,
       fallback_origin,
       fallback_title_hint
-    ) VALUES ('session-1', 'coding', NULL, NULL, 'active', 100, 100, NULL, NULL, NULL, NULL)
+    ) VALUES ('session-1', 'coding', NULL, NULL, 'active', 100, 100, NULL, NULL, NULL)
     ON CONFLICT(session_id) DO NOTHING
   `);
 
@@ -332,11 +318,10 @@ async function bootstrapSessionAndLinkTables(
       status,
       created_at_ms,
       updated_at_ms,
-      ended_at_ms,
       fallback_seed_text,
       fallback_origin,
       fallback_title_hint
-    ) VALUES ('session-2', 'coding', 'claude', 'sonnet', 'active', 200, 200, NULL, NULL, NULL, NULL)
+    ) VALUES ('session-2', 'coding', 'claude', 'sonnet', 'active', 200, 200, NULL, NULL, NULL)
     ON CONFLICT(session_id) DO NOTHING
   `);
 }
