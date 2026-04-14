@@ -12,21 +12,21 @@ type Logger interface {
 	LogAttrs(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr)
 }
 
-type Service struct {
+type TaskRunner struct {
 	workerID  string
 	queueName string
 	logger    Logger
 }
 
-func New(cfg models.Config, logger Logger) *Service {
-	return &Service{
+func New(cfg models.Config, logger Logger) *TaskRunner {
+	return &TaskRunner{
 		workerID:  cfg.WorkerID,
 		queueName: cfg.QueueName,
 		logger:    logger,
 	}
 }
 
-func (s *Service) Execute(ctx context.Context, msg models.QueuedMessage) error {
+func (s *TaskRunner) Execute(ctx context.Context, msg models.QueuedMessage) error {
 	payload, err := json.Marshal(msg)
 	if err != nil {
 		return err

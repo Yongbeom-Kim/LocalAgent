@@ -44,7 +44,7 @@ func testConfig(t *testing.T, serverURL string) models.Config {
 	}
 }
 
-func testService(t *testing.T, server http.Handler) *Service {
+func testService(t *testing.T, server http.Handler) *WorkerPoller {
 	t.Helper()
 
 	httpServer := httptest.NewServer(server)

@@ -21,7 +21,7 @@ type Logger interface {
 	LogAttrs(ctx context.Context, level slog.Level, msg string, attrs ...slog.Attr)
 }
 
-type Service struct {
+type WorkerPoller struct {
 	baseURL           *url.URL
 	httpClient        *http.Client
 	workerID          string
@@ -41,12 +41,12 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
-func New(cfg models.Config, httpClient *http.Client, logger Logger) *Service {
+func New(cfg models.Config, httpClient *http.Client, logger Logger) *WorkerPoller {
 	if httpClient == nil {
 		httpClient = &http.Client{}
 	}
 
-	return &Service{
+	return &WorkerPoller{
 		baseURL:           cfg.ServerURL,
 		httpClient:        httpClient,
 		workerID:          cfg.WorkerID,
@@ -59,7 +59,7 @@ func New(cfg models.Config, httpClient *http.Client, logger Logger) *Service {
 	}
 }
 
-func (s *Service) Init(ctx context.Context) error {
+func (s *WorkerPoller) Init(ctx context.Context) error {
 	if err := s.registerUntilSuccess(ctx); err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (s *Service) Init(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) Poll(ctx context.Context, handler func(context.Context, models.QueuedMessage) error) error {
+func (s *WorkerPoller) Poll(ctx context.Context, handler func(context.Context, models.QueuedMessage) error) error {
 	for ctx.Err() == nil {
 		msg, ok, err := s.pollNext(ctx)
 		if err != nil {
@@ -100,7 +100,7 @@ func (s *Service) Poll(ctx context.Context, handler func(context.Context, models
 	return ctx.Err()
 }
 
-func (s *Service) registerUntilSuccess(ctx context.Context) error {
+func (s *WorkerPoller) registerUntilSuccess(ctx context.Context) error {
 	for ctx.Err() == nil {
 		if err := s.register(ctx); err != nil {
 			s.logError(ctx, "initial registration failed", err)
@@ -115,7 +115,7 @@ func (s *Service) registerUntilSuccess(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (s *Service) runHeartbeat(ctx context.Context) {
+func (s *WorkerPoller) runHeartbeat(ctx context.Context) {
 	for ctx.Err() == nil {
 		if err := s.register(ctx); err != nil {
 			s.logError(ctx, "registration failed", err)
@@ -131,7 +131,7 @@ func (s *Service) runHeartbeat(ctx context.Context) {
 	}
 }
 
-func (s *Service) register(ctx context.Context) error {
+func (s *WorkerPoller) register(ctx context.Context) error {
 	resp, err := s.doJSON(ctx, http.MethodPut, "/workers/"+s.workerID+"/registration", struct{}{})
 	if err != nil {
 		return fmt.Errorf("register worker: %w", err)
@@ -154,7 +154,7 @@ func (s *Service) register(ctx context.Context) error {
 	return nil
 }
 
-func (s *Service) pollNext(ctx context.Context) (models.QueuedMessage, bool, error) {
+func (s *WorkerPoller) pollNext(ctx context.Context) (models.QueuedMessage, bool, error) {
 	resp, err := s.doJSON(ctx, http.MethodGet, "/queues/"+s.queueName+"/messages/next", nil)
 	if err != nil {
 		return models.QueuedMessage{}, false, fmt.Errorf("poll next message: %w", err)
@@ -176,7 +176,7 @@ func (s *Service) pollNext(ctx context.Context) (models.QueuedMessage, bool, err
 	return payload, true, nil
 }
 
-func (s *Service) ack(ctx context.Context, messageID string) error {
+func (s *WorkerPoller) ack(ctx context.Context, messageID string) error {
 	resp, err := s.doJSON(ctx, http.MethodDelete, "/queues/"+s.queueName+"/messages/"+messageID, nil)
 	if err != nil {
 		return fmt.Errorf("ack message: %w", err)
@@ -190,7 +190,7 @@ func (s *Service) ack(ctx context.Context, messageID string) error {
 	return nil
 }
 
-func (s *Service) doJSON(ctx context.Context, method, path string, body any) (*http.Response, error) {
+func (s *WorkerPoller) doJSON(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var reader io.Reader
 	if body != nil {
 		payload, err := json.Marshal(body)
@@ -211,11 +211,11 @@ func (s *Service) doJSON(ctx context.Context, method, path string, body any) (*h
 	return s.httpClient.Do(req)
 }
 
-func (s *Service) resolve(path string) string {
+func (s *WorkerPoller) resolve(path string) string {
 	return strings.TrimRight(s.baseURL.String(), "/") + path
 }
 
-func (s *Service) logError(ctx context.Context, message string, err error) {
+func (s *WorkerPoller) logError(ctx context.Context, message string, err error) {
 	if err == nil || ctx.Err() != nil {
 		return
 	}
