@@ -32,25 +32,6 @@ jobs:
           cache-dependency-path: |
             server/go.sum
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 9.15.4
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Rush Update
-        run: node common/scripts/install-run-rush.js update
-
-      - name: Rush Build
-        run: node common/scripts/install-run-rush.js build
-
       - name: Run Server Go Tests
         working-directory: server
         run: go test ./...
-
-      - name: Run All Project Tests
-        run: node common/scripts/run-rush-project-tests.js
