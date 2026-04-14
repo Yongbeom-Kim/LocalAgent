@@ -8,6 +8,7 @@ services:
     environment:
       PORT: "8080"
       RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+      VISIBILITY_TIMEOUT: 60s
     ports:
       - "8080:8080"
 
