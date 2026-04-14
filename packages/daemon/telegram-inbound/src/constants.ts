@@ -1,2 +1,0 @@
-export const DEFAULT_TELEGRAM_MAX_RETRIES = 3;
-export const MAX_MESSAGE_CHARS = 3500;

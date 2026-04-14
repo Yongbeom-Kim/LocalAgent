@@ -1,1 +1,0 @@
-export const DEFAULT_LARK_MAX_RETRIES = 3;
