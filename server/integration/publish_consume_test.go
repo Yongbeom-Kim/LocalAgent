@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Yongbeom-Kim/LocalAgent/server/services"
+	rabbitmqsvc "github.com/Yongbeom-Kim/LocalAgent/server/services/rabbitmq"
 )
 
 func TestPublishMessageAccepted(t *testing.T) {
@@ -90,7 +90,7 @@ func TestPublishMessageMissingExchange(t *testing.T) {
 		"body":        map[string]any{"id": 1},
 	})
 
-	assertErrorMessage(t, rec, http.StatusNotFound, services.ErrExchangeNotFound)
+	assertErrorMessage(t, rec, http.StatusNotFound, rabbitmqsvc.ErrExchangeNotFound)
 }
 
 func TestGetNextMessageMissingQueue(t *testing.T) {
@@ -98,7 +98,7 @@ func TestGetNextMessageMissingQueue(t *testing.T) {
 	app := newTestApp(t, rabbit, 2*time.Second)
 
 	rec := doJSONRequest(t, app.router, http.MethodGet, "/queues/missing-queue/messages/next", nil)
-	assertErrorMessage(t, rec, http.StatusNotFound, services.ErrQueueNotFound)
+	assertErrorMessage(t, rec, http.StatusNotFound, rabbitmqsvc.ErrQueueNotFound)
 }
 
 func TestPublishMessageMalformedJSON(t *testing.T) {

@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/Yongbeom-Kim/LocalAgent/server/cmd"
-	"github.com/Yongbeom-Kim/LocalAgent/server/services"
+	rabbitmqsvc "github.com/Yongbeom-Kim/LocalAgent/server/services/rabbitmq"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
@@ -36,7 +36,7 @@ type testRabbitMQ struct {
 }
 
 type testApp struct {
-	rmq    *services.Rmq
+	rmq    *rabbitmqsvc.Rmq
 	router http.Handler
 }
 
@@ -200,7 +200,7 @@ func waitForAMQPReady(t *testing.T, url string) *amqp.Connection {
 func newTestApp(t *testing.T, rabbit *testRabbitMQ, visibilityTimeout time.Duration) *testApp {
 	t.Helper()
 
-	rmq := services.NewRmq(rabbit.url, visibilityTimeout)
+	rmq := rabbitmqsvc.NewRmq(rabbit.url, visibilityTimeout)
 	if err := rmq.Connect(10, 200*time.Millisecond); err != nil {
 		t.Fatalf("connect service to rabbitmq: %v", err)
 	}
@@ -212,6 +212,44 @@ func newTestApp(t *testing.T, rabbit *testRabbitMQ, visibilityTimeout time.Durat
 
 	app := cmd.NewApp(rmq)
 	return &testApp{rmq: rmq, router: app.Router()}
+}
+
+func bootstrapJobTopology(t *testing.T, app *testApp) {
+	t.Helper()
+
+	if err := rabbitmqsvc.BootstrapJobTopology(context.Background(), app.rmq); err != nil {
+		t.Fatalf("bootstrap job topology: %v", err)
+	}
+}
+
+func assertExchangeExists(t *testing.T, rabbit *testRabbitMQ, name, kind string) {
+	t.Helper()
+
+	if err := rabbit.channel.ExchangeDeclarePassive(name, kind, true, false, false, false, nil); err != nil {
+		t.Fatalf("expected exchange %q to exist: %v", name, err)
+	}
+}
+
+func assertQueueExists(t *testing.T, rabbit *testRabbitMQ, name string) {
+	t.Helper()
+
+	if _, err := rabbit.channel.QueueDeclarePassive(name, false, false, false, false, nil); err != nil {
+		t.Fatalf("expected queue %q to exist: %v", name, err)
+	}
+}
+
+func assertQueueMissing(t *testing.T, rabbit *testRabbitMQ, name string) {
+	t.Helper()
+
+	if _, err := rabbit.channel.QueueDeclarePassive(name, false, false, false, false, nil); err == nil {
+		t.Fatalf("expected queue %q to be missing", name)
+	}
+}
+
+func registerWorker(t *testing.T, handler http.Handler, workerID string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+
+	return doJSONRequest(t, handler, http.MethodPut, "/workers/"+workerID+"/registration", body)
 }
 
 // declareTestTopology provisions explicit exchange, queue, and binding state for one test.

@@ -202,6 +202,50 @@ func (rmq *Rmq) DeclareQueue(ctx context.Context, opts QueueDeclareOptions) (amq
 	return queue, nil
 }
 
+func (rmq *Rmq) QueueExists(ctx context.Context, name string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, fmt.Errorf("check queue %q: %w", name, err)
+	}
+
+	ch, err := rmq.openChannel()
+	if err != nil {
+		return false, fmt.Errorf("check queue %q: %w", name, err)
+	}
+	defer func() { _ = ch.Close() }()
+
+	if _, err := ch.QueueDeclarePassive(name, false, false, false, false, nil); err != nil {
+		classified := classifyAMQPError(err, ErrQueueNotFound)
+		if errors.Is(classified, ErrQueueNotFound) {
+			return false, nil
+		}
+		return false, fmt.Errorf("check queue %q: %w", name, classified)
+	}
+
+	return true, nil
+}
+
+func (rmq *Rmq) DeleteQueue(ctx context.Context, name string) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("delete queue %q: %w", name, err)
+	}
+
+	ch, err := rmq.openChannel()
+	if err != nil {
+		return fmt.Errorf("delete queue %q: %w", name, err)
+	}
+	defer func() { _ = ch.Close() }()
+
+	if _, err := ch.QueueDelete(name, false, false, false); err != nil {
+		classified := classifyAMQPError(err, ErrQueueNotFound)
+		if errors.Is(classified, ErrQueueNotFound) {
+			return nil
+		}
+		return fmt.Errorf("delete queue %q: %w", name, classified)
+	}
+
+	return nil
+}
+
 func (rmq *Rmq) BindQueue(ctx context.Context, opts QueueBindOptions) error {
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("bind queue %q to exchange %q with routing key %q: %w", opts.QueueName, opts.Exchange, opts.RoutingKey, err)
@@ -214,7 +258,8 @@ func (rmq *Rmq) BindQueue(ctx context.Context, opts QueueBindOptions) error {
 	defer func() { _ = ch.Close() }()
 
 	if err := ch.QueueBind(opts.QueueName, opts.RoutingKey, opts.Exchange, opts.NoWait, opts.Args); err != nil {
-		return fmt.Errorf("bind queue %q to exchange %q with routing key %q: %w", opts.QueueName, opts.Exchange, opts.RoutingKey, classifyAMQPError(err, ErrQueueNotFound))
+		// For current callers, NotFound typically means the exchange is missing (server-side bootstrap issue).
+		return fmt.Errorf("bind queue %q to exchange %q with routing key %q: %w", opts.QueueName, opts.Exchange, opts.RoutingKey, classifyAMQPError(err, ErrExchangeNotFound))
 	}
 
 	return nil

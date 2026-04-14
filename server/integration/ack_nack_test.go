@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Yongbeom-Kim/LocalAgent/server/services"
+	rabbitmqsvc "github.com/Yongbeom-Kim/LocalAgent/server/services/rabbitmq"
 )
 
 func TestAckMessageRemovesDelivery(t *testing.T) {
@@ -88,7 +88,7 @@ func TestAckMessageUnknownMessageID(t *testing.T) {
 	topology := declareTestTopology(t, rabbit)
 
 	rec := doJSONRequest(t, app.router, http.MethodDelete, "/queues/"+topology.queue+"/messages/missing", nil)
-	assertErrorMessage(t, rec, http.StatusNotFound, services.ErrMessageNotFound)
+	assertErrorMessage(t, rec, http.StatusNotFound, rabbitmqsvc.ErrMessageNotFound)
 }
 
 func TestAckAndNackWrongQueueReturnConflict(t *testing.T) {
@@ -115,10 +115,10 @@ func TestAckAndNackWrongQueueReturnConflict(t *testing.T) {
 	}
 
 	ackRec := doJSONRequest(t, app.router, http.MethodDelete, "/queues/"+other.queue+"/messages/"+message.MessageID, nil)
-	assertErrorMessage(t, ackRec, http.StatusConflict, services.ErrMessageQueueMismatch)
+	assertErrorMessage(t, ackRec, http.StatusConflict, rabbitmqsvc.ErrMessageQueueMismatch)
 
 	nackRec := doJSONRequest(t, app.router, http.MethodPost, "/queues/"+other.queue+"/messages/"+message.MessageID+"/nack", map[string]any{"requeue": true})
-	assertErrorMessage(t, nackRec, http.StatusConflict, services.ErrMessageQueueMismatch)
+	assertErrorMessage(t, nackRec, http.StatusConflict, rabbitmqsvc.ErrMessageQueueMismatch)
 
 	cleanupRec := doJSONRequest(t, app.router, http.MethodPost, "/queues/"+primary.queue+"/messages/"+message.MessageID+"/nack", map[string]any{"requeue": false})
 	assertStatus(t, cleanupRec, http.StatusNoContent)

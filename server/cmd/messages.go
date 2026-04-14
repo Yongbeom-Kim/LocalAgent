@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Yongbeom-Kim/LocalAgent/server/services"
+	rabbitmqsvc "github.com/Yongbeom-Kim/LocalAgent/server/services/rabbitmq"
 	"github.com/Yongbeom-Kim/LocalAgent/server/utils"
 	amqp "github.com/rabbitmq/amqp091-go"
 )
@@ -39,7 +39,7 @@ func (a *App) handlePublishMessage(w http.ResponseWriter, r *http.Request) {
 		contentType = "application/json"
 	}
 
-	if err := a.rmq.PublishMessage(r.Context(), services.PublishMessageOptions{
+	if err := a.rmq.PublishMessage(r.Context(), rabbitmqsvc.PublishMessageOptions{
 		ExchangeName: exchangeName,
 		RoutingKey:   req.RoutingKey,
 		Body:         body,
@@ -53,7 +53,6 @@ func (a *App) handlePublishMessage(w http.ResponseWriter, r *http.Request) {
 	utils.WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 
-
 func (a *App) handleGetNextMessage(w http.ResponseWriter, r *http.Request) {
 	queueName := r.PathValue("queue")
 	if queueName == "" {
@@ -62,7 +61,7 @@ func (a *App) handleGetNextMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	message, err := a.rmq.GetNextMessage(r.Context(), queueName)
 	if err != nil {
-		if errors.Is(err, services.ErrEmptyQueue) {
+		if errors.Is(err, rabbitmqsvc.ErrEmptyQueue) {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -81,7 +80,6 @@ func (a *App) handleGetNextMessage(w http.ResponseWriter, r *http.Request) {
 		VisibleUntil: message.VisibleUntil,
 	})
 }
-
 
 func (a *App) handleAckMessage(w http.ResponseWriter, r *http.Request) {
 	queueName := r.PathValue("queue")
@@ -103,7 +101,6 @@ func (a *App) handleAckMessage(w http.ResponseWriter, r *http.Request) {
 
 	w.WriteHeader(http.StatusNoContent)
 }
-
 
 func (a *App) handleNackMessage(w http.ResponseWriter, r *http.Request) {
 	queueName := r.PathValue("queue")
@@ -134,15 +131,15 @@ func (a *App) handleNackMessage(w http.ResponseWriter, r *http.Request) {
 
 func writeServiceError(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, services.ErrExchangeNotFound), errors.Is(err, services.ErrQueueNotFound):
+	case errors.Is(err, rabbitmqsvc.ErrExchangeNotFound), errors.Is(err, rabbitmqsvc.ErrQueueNotFound):
 		utils.WriteJSONError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, services.ErrMessageQueueMismatch):
+	case errors.Is(err, rabbitmqsvc.ErrMessageQueueMismatch):
 		utils.WriteJSONError(w, http.StatusConflict, err.Error())
-	case errors.Is(err, services.ErrMessageNotFound):
+	case errors.Is(err, rabbitmqsvc.ErrMessageNotFound):
 		utils.WriteJSONError(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, services.ErrRabbitUnavailable):
+	case errors.Is(err, rabbitmqsvc.ErrRabbitUnavailable):
 		utils.WriteJSONError(w, http.StatusServiceUnavailable, err.Error())
-	case errors.Is(err, services.ErrInvalidMessageBody):
+	case errors.Is(err, rabbitmqsvc.ErrInvalidMessageBody):
 		utils.WriteJSONError(w, http.StatusInternalServerError, err.Error())
 	default:
 		utils.WriteJSONError(w, http.StatusInternalServerError, err.Error())
