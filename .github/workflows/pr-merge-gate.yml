@@ -25,6 +25,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: |
+            server/go.sum
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -40,6 +47,10 @@ jobs:
 
       - name: Rush Build
         run: node common/scripts/install-run-rush.js build
+
+      - name: Run Server Go Tests
+        working-directory: server
+        run: go test ./...
 
       - name: Run All Project Tests
         run: node common/scripts/run-rush-project-tests.js

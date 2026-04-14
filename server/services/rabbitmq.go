@@ -15,7 +15,10 @@ import (
 	amqp "github.com/rabbitmq/amqp091-go"
 )
 
-const defaultVisibilityTimeout = 60 * time.Second
+const (
+	defaultVisibilityTimeout = 60 * time.Second
+	publishConfirmTimeout    = 5 * time.Second
+)
 
 var (
 	ErrRabbitUnavailable    = errors.New("rabbitmq unavailable")
@@ -228,7 +231,13 @@ func (rmq *Rmq) PublishMessage(ctx context.Context, opts PublishMessageOptions) 
 	}
 	defer func() { _ = ch.Close() }()
 
+	if err := ch.Confirm(false); err != nil {
+		return fmt.Errorf("%w: enable publish confirms: %v", ErrRabbitUnavailable, err)
+	}
+
 	closeCh := ch.NotifyClose(make(chan *amqp.Error, 1))
+	confirmCh := ch.NotifyPublish(make(chan amqp.Confirmation, 1))
+
 	if err := ch.PublishWithContext(ctx, opts.ExchangeName, opts.RoutingKey, false, false, amqp.Publishing{
 		Headers:     opts.Headers,
 		ContentType: opts.ContentType,
@@ -238,14 +247,24 @@ func (rmq *Rmq) PublishMessage(ctx context.Context, opts PublishMessageOptions) 
 	}
 
 	select {
-	case amqpErr := <-closeCh:
-		if amqpErr != nil {
+	case amqpErr, ok := <-closeCh:
+		if ok && amqpErr != nil {
 			return classifyAMQPError(amqpErr, ErrExchangeNotFound)
 		}
-	default:
+		return fmt.Errorf("%w: publish channel closed", ErrRabbitUnavailable)
+	case confirmation, ok := <-confirmCh:
+		if !ok {
+			return fmt.Errorf("%w: publish confirmation channel closed", ErrRabbitUnavailable)
+		}
+		if !confirmation.Ack {
+			return fmt.Errorf("%w: publish not acknowledged", ErrRabbitUnavailable)
+		}
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(publishConfirmTimeout):
+		return fmt.Errorf("%w: publish confirmation timeout", ErrRabbitUnavailable)
 	}
-
-	return nil
 }
 
 func (rmq *Rmq) GetNextMessage(ctx context.Context, queueName string) (QueuedMessage, error) {
