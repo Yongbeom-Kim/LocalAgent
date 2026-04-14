@@ -1,0 +1,24 @@
+services:
+  server:
+    build:
+      context: .
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      PORT: "8080"
+      RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672/
+    ports:
+      - "8080:8080"
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    hostname: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
